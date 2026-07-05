@@ -17,3 +17,19 @@ export function captureReferralFromSearch(search: string) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
   document.cookie = `${STORAGE_KEY}=${encodeURIComponent(JSON.stringify(payload))}; expires=${expiresAt.toUTCString()}; path=/`;
 }
+
+export function getStoredReferralCode(): string | null {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as { referral_code: string; expires_at: string };
+    if (new Date(parsed.expires_at).getTime() < Date.now()) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed.referral_code;
+  } catch {
+    return null;
+  }
+}

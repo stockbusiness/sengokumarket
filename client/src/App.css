@@ -29,3 +29,33 @@
 .product-detail fieldset {
   margin: 16px 0;
 }
+
+.cart-page table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 16px 0;
+}
+
+.cart-page td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cart-page input[type='number'] {
+  width: 4em;
+}
+
+.cart-notices {
+  color: #b33;
+}
+
+.checkout-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 480px;
+}
+
+.checkout-error {
+  color: #b33;
+}

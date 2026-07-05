@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 
 interface ValidateResponseItem {
@@ -15,14 +16,13 @@ interface ValidateResponseItem {
 
 export default function CartPage() {
   const { items, updateQuantity, removeItem, replaceItems, totalAmount } = useCart();
+  const navigate = useNavigate();
   const [notices, setNotices] = useState<string[]>([]);
   const [validating, setValidating] = useState(false);
-  const [validated, setValidated] = useState(false);
 
   async function handleProceedToCheckout() {
     setValidating(true);
     setNotices([]);
-    setValidated(false);
     try {
       const res = await fetch('/api/cart/validate', {
         method: 'POST',
@@ -62,7 +62,7 @@ export default function CartPage() {
         replaceItems(nextItems);
         setNotices(newNotices);
       } else {
-        setValidated(true);
+        navigate('/checkout');
       }
     } catch {
       setNotices(['カートの確認中にエラーが発生しました。時間をおいて再度お試しください。']);
@@ -86,8 +86,6 @@ export default function CartPage() {
           ))}
         </ul>
       )}
-
-      {validated && <p>在庫・価格を確認しました。このままご購入手続きへお進みください。(購入者情報入力画面はStep 5で実装予定です)</p>}
 
       <table>
         <tbody>
