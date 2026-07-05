@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { fetchProduct, type ProductDetail } from '../lib/api';
+import { useCart } from '../context/CartContext';
 
 export default function ProductDetailPage() {
   const { idOrSlug } = useParams<{ idOrSlug: string }>();
+  const { addItem } = useCart();
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [variantId, setVariantId] = useState<string>('');
   const [quantity, setQuantity] = useState(1);
+  const [added, setAdded] = useState(false);
 
   useEffect(() => {
     if (!idOrSlug) return;
@@ -65,9 +68,32 @@ export default function ProductDetailPage() {
         />
       </label>
 
-      <button type="button" disabled={!selectedVariant || selectedVariant.availableStock === 0}>
+      <button
+        type="button"
+        disabled={!selectedVariant || selectedVariant.availableStock === 0}
+        onClick={() => {
+          if (!selectedVariant) return;
+          addItem(
+            {
+              productId: product.id,
+              productSlug: product.slug,
+              productName: product.name,
+              variantId: selectedVariant.id,
+              variantName: selectedVariant.name,
+              price: selectedVariant.price,
+            },
+            quantity,
+          );
+          setAdded(true);
+        }}
+      >
         カートに追加
       </button>
+      {added && (
+        <p>
+          カートに追加しました。<Link to="/cart">カートを見る</Link>
+        </p>
+      )}
     </div>
   );
 }

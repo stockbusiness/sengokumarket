@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import productsRouter from './routes/products';
+import cartRouter from './routes/cart';
 
 export function createApp(): Express {
   const app = express();
@@ -19,6 +20,7 @@ export function createApp(): Express {
   });
 
   app.use('/api', productsRouter);
+  app.use('/api', cartRouter);
 
   return app;
 }
