@@ -1,6 +1,7 @@
 import express, { Express } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import productsRouter from './routes/products';
 
 export function createApp(): Express {
   const app = express();
@@ -16,6 +17,8 @@ export function createApp(): Express {
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
+
+  app.use('/api', productsRouter);
 
   return app;
 }

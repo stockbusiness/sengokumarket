@@ -1,0 +1,19 @@
+const STORAGE_KEY = 'sengoku_referral';
+const TTL_DAYS = 30;
+
+export function captureReferralFromSearch(search: string) {
+  const ref = new URLSearchParams(search).get('ref');
+  if (!ref) return;
+
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + TTL_DAYS * 24 * 60 * 60 * 1000);
+  const payload = {
+    referral_code: ref,
+    source: 'url',
+    saved_at: now.toISOString(),
+    expires_at: expiresAt.toISOString(),
+  };
+
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  document.cookie = `${STORAGE_KEY}=${encodeURIComponent(JSON.stringify(payload))}; expires=${expiresAt.toUTCString()}; path=/`;
+}
