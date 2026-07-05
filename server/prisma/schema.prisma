@@ -11,6 +11,17 @@ datasource db {
 // 仕様書v1.5 6章のテーブル定義に対応。
 // status系カラムはTEXTで、有効値はコメントに記載する(コード側で管理)。
 
+// 仕様書外の拡張: Stripe/Resend等の連携設定を管理画面から変更できるようにするための
+// key-valueテーブル。値はSETTINGS_ENCRYPTION_KEYで暗号化してから保存する(平文保存禁止)。
+// DATABASE_URL/JWT_SECRETのような起動必須値はこの対象にせず引き続き.envで管理する。
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   name         String

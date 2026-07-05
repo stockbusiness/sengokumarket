@@ -66,6 +66,10 @@ export default function CheckoutPage() {
         agreedToTerms,
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
       });
+      if (data.stripeCheckoutUrl) {
+        window.location.href = data.stripeCheckoutUrl;
+        return;
+      }
       setResult({ orderNumber: data.orderNumber, totalAmount: data.totalAmount });
     } catch (e) {
       if (e instanceof ApiError && e.code === 'STOCK_INSUFFICIENT') {
@@ -86,7 +90,7 @@ export default function CheckoutPage() {
         <h1>注文を受け付けました</h1>
         <p>注文番号: {result.orderNumber}</p>
         <p>合計金額: {result.totalAmount.toLocaleString()}円(税込)</p>
-        <p>Stripe決済画面への遷移はStep 6で実装予定です。</p>
+        <p>決済画面への遷移に失敗しました。お手数ですがサポートまでお問い合わせください。</p>
       </div>
     );
   }

@@ -81,3 +81,9 @@ export function createCheckoutSession(payload: CreateCheckoutSessionPayload) {
     payload,
   );
 }
+
+export function fetchCheckoutSessionStatus(sessionId: string) {
+  return apiFetch<{ orderNumber: string; paymentStatus: string }>(
+    `/checkout/session/${encodeURIComponent(sessionId)}/status`,
+  );
+}

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
+import type { Order, OrderItem } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
@@ -22,9 +23,8 @@ export interface CreatePendingOrderInput {
 }
 
 export interface CreatePendingOrderResult {
-  orderId: string;
-  orderNumber: string;
-  totalAmount: number;
+  order: Order;
+  items: OrderItem[];
 }
 
 function isNonEmptyString(v: unknown): v is string {
@@ -191,6 +191,28 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       }),
     });
 
-    return { orderId: order.id, orderNumber: order.orderNumber, totalAmount };
+    const items = await tx.orderItem.findMany({ where: { orderId: order.id } });
+
+    return { order, items };
+  });
+}
+
+// Stripe Checkout Session作成に失敗した場合の補償処理。
+// 仮引当した在庫を解放し、注文は決済不可として扱う(再度カートからやり直してもらう)。
+export async function cancelOrderReservation(orderId: string): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (!order || order.paymentStatus !== 'pending') return;
+
+    const items = await tx.orderItem.findMany({ where: { orderId } });
+    for (const item of items) {
+      if (!item.variantId) continue;
+      await tx.productVariant.update({
+        where: { id: item.variantId },
+        data: { reservedStock: { decrement: item.quantity } },
+      });
+    }
+
+    await tx.order.update({ where: { id: orderId }, data: { paymentStatus: 'failed' } });
   });
 }

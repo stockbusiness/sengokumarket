@@ -1,7 +1,16 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+
+// このテストファイルでは注文作成の業務ロジックのみを検証する。
+// 実際のStripe API呼び出しはネットワーク/実キーが必要なため、成功を返すダミー実装に差し替える。
+vi.mock('../services/stripeCheckout', () => ({
+  createStripeCheckoutSession: vi.fn(async () => ({
+    id: `cs_test_${Math.random().toString(36).slice(2)}`,
+    url: 'https://checkout.stripe.com/test-session',
+  })),
+}));
 
 const app = createApp();
 

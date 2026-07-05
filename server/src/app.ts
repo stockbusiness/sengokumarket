@@ -5,14 +5,16 @@ import productsRouter from './routes/products';
 import cartRouter from './routes/cart';
 import checkoutRouter from './routes/checkout';
 import referralsRouter from './routes/referrals';
+import { stripeWebhookHandler } from './routes/stripeWebhook';
 
 export function createApp(): Express {
   const app = express();
 
   app.use(cors({ origin: process.env.APP_URL, credentials: true }));
 
-  // Stripe Webhookルートはここ(express.json()より前)に express.raw() 付きで追加する。
-  // 署名検証には生ボディが必要なため(Step 6で実装。仕様書v1.5 7.3参照)。
+  // Stripe Webhookは署名検証に生ボディが必要なため、express.json()より前に
+  // express.raw()付きで登録する(仕様書v1.5 7.3参照。事故多発地帯につき順序厳守)。
+  app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
 
   app.use(express.json());
   app.use(cookieParser());
