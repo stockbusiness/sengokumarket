@@ -43,6 +43,7 @@ describe('POST /api/cart/validate', () => {
   it('在庫が足りる数量ならvalid=trueを返す', async () => {
     const res = await request(app)
       .post('/api/cart/validate')
+      .set('Origin', 'http://localhost:5173')
       .send({ items: [{ variantId, quantity: 2 }] });
 
     expect(res.status).toBe(200);
@@ -54,6 +55,7 @@ describe('POST /api/cart/validate', () => {
   it('販売可能数(stock - reserved_stock)を超える数量はvalid=falseを返す', async () => {
     const res = await request(app)
       .post('/api/cart/validate')
+      .set('Origin', 'http://localhost:5173')
       .send({ items: [{ variantId, quantity: 3 }] });
 
     expect(res.status).toBe(200);
@@ -64,6 +66,7 @@ describe('POST /api/cart/validate', () => {
   it('存在しないバリエーションはfound=falseを返す', async () => {
     const res = await request(app)
       .post('/api/cart/validate')
+      .set('Origin', 'http://localhost:5173')
       .send({ items: [{ variantId: '00000000-0000-0000-0000-000000000000', quantity: 1 }] });
 
     expect(res.status).toBe(200);
@@ -74,6 +77,7 @@ describe('POST /api/cart/validate', () => {
   it('不正なリクエストは400を返す', async () => {
     const res = await request(app)
       .post('/api/cart/validate')
+      .set('Origin', 'http://localhost:5173')
       .send({ items: [{ variantId, quantity: 0 }] });
 
     expect(res.status).toBe(400);

@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
 import { resolveReferral } from './referral';
+import { isValidEmail } from '../lib/validation';
 
 export interface CheckoutItemInput {
   variantId: string;
@@ -31,13 +32,11 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export function validateCreatePendingOrderInput(body: unknown): CreatePendingOrderInput {
   const b = body as Record<string, unknown>;
 
   if (!isNonEmptyString(b?.customerName)) throw new HttpError(400, 'VALIDATION_ERROR', '氏名を入力してください');
-  if (!isNonEmptyString(b?.customerEmail) || !EMAIL_RE.test(b.customerEmail as string)) {
+  if (!isNonEmptyString(b?.customerEmail) || !isValidEmail(b.customerEmail as string)) {
     throw new HttpError(400, 'VALIDATION_ERROR', 'メールアドレスを正しく入力してください');
   }
   if (!isNonEmptyString(b?.customerPhone)) throw new HttpError(400, 'VALIDATION_ERROR', '電話番号を入力してください');

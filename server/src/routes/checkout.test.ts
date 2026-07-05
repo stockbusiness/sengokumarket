@@ -78,6 +78,7 @@ describe('POST /api/checkout/create-session', () => {
     const email = `normal-checkout-test-${Date.now()}@example.com`;
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     expect(res.status).toBe(201);
@@ -99,6 +100,7 @@ describe('POST /api/checkout/create-session', () => {
     const email = `repeat-checkout-test-${Date.now()}@example.com`;
     await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const userCountAfterFirst = await prisma.user.count({ where: { email } });
@@ -108,6 +110,7 @@ describe('POST /api/checkout/create-session', () => {
 
     await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const userCountAfterSecond = await prisma.user.count({ where: { email } });
@@ -120,6 +123,7 @@ describe('POST /api/checkout/create-session', () => {
 
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 999 }] });
 
     expect(res.status).toBe(409);
@@ -132,6 +136,7 @@ describe('POST /api/checkout/create-session', () => {
   it('規約未同意はTERMS_NOT_AGREEDで400を返す', async () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({
         ...baseCustomer,
         customerEmail: `terms-checkout-test-${Date.now()}@example.com`,
@@ -147,6 +152,7 @@ describe('POST /api/checkout/create-session', () => {
     const email = `noref-checkout-test-${Date.now()}@example.com`;
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
@@ -160,6 +166,7 @@ describe('POST /api/checkout/create-session', () => {
 
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({
         ...baseCustomer,
         customerEmail: email,

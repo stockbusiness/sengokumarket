@@ -46,6 +46,7 @@ describe('POST /api/checkout/create-session (Stripe未設定)', () => {
     const email = `noconfig-test-${Date.now()}@example.com`;
     const res = await request(app)
       .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
       .send({
         customerName: 'テスト太郎',
         customerEmail: email,

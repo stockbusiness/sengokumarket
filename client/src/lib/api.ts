@@ -87,3 +87,11 @@ export function fetchCheckoutSessionStatus(sessionId: string) {
     `/checkout/session/${encodeURIComponent(sessionId)}/status`,
   );
 }
+
+export function requestPasswordReset(email: string) {
+  return apiPost<{ message: string }>('/auth/password-reset/request', { email });
+}
+
+export function confirmPasswordReset(token: string, newPassword: string) {
+  return apiPost<{ ok: boolean }>('/auth/password-reset/confirm', { token, newPassword });
+}

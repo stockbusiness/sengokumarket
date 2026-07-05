@@ -5,7 +5,9 @@ import productsRouter from './routes/products';
 import cartRouter from './routes/cart';
 import checkoutRouter from './routes/checkout';
 import referralsRouter from './routes/referrals';
+import authRouter from './routes/auth';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
+import { requireSameOrigin } from './middleware/csrf';
 
 export function createApp(): Express {
   const app = express();
@@ -23,10 +25,14 @@ export function createApp(): Express {
     res.json({ status: 'ok' });
   });
 
+  // Cookie認証はSameSite=Strict + Origin検証でCSRF対策する(仕様書v1.5 16章)。
+  app.use('/api', requireSameOrigin);
+
   app.use('/api', productsRouter);
   app.use('/api', cartRouter);
   app.use('/api', checkoutRouter);
   app.use('/api', referralsRouter);
+  app.use('/api', authRouter);
 
   return app;
 }
