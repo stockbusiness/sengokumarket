@@ -8,4 +8,279 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// モデル定義はStep 2で追加する(仕様書v1.5 6章参照)
+// 仕様書v1.5 6章のテーブル定義に対応。
+// status系カラムはTEXTで、有効値はコメントに記載する(コード側で管理)。
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String
+  email        String   @unique
+  phone        String?
+  passwordHash String   @map("password_hash")
+  role         String   @default("user") // user | admin
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  wallet              Wallet?
+  orders              Order[]
+  nftIssues           NftIssue[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @unique @map("user_id") @db.Uuid
+  walletAddress String   @map("wallet_address")
+  chain         String   @default("polygon")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("wallets")
+}
+
+model Product {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String   @unique
+  description String?
+  category    String
+  itemType    String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
+  basePrice   Int      @map("base_price")
+  status      String   @default("draft") // draft | published | archived
+  imageUrl    String?  @map("image_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  variants   ProductVariant[]
+  orderItems OrderItem[]
+  nftIssues  NftIssue[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id            String   @id @default(uuid()) @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  name          String
+  sku           String?  @unique
+  price         Int
+  stock         Int      @default(0)
+  reservedStock Int      @default(0) @map("reserved_stock")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  product    Product     @relation(fields: [productId], references: [id])
+  orderItems OrderItem[]
+  nftIssues  NftIssue[]
+
+  @@map("product_variants")
+}
+
+model Order {
+  id                    String    @id @default(uuid()) @db.Uuid
+  orderNumber           String    @unique @map("order_number")
+  userId                String?   @map("user_id") @db.Uuid
+  totalAmount           Int       @map("total_amount")
+  paymentStatus         String    @default("pending") @map("payment_status") // pending | paid | failed | refunded | expired
+  orderStatus           String    @default("pending") @map("order_status") // pending | paid | cancelled | refunded
+  paidAt                DateTime? @map("paid_at")
+  refundedAt            DateTime? @map("refunded_at")
+  expiredAt             DateTime? @map("expired_at")
+  stripeSessionId       String?   @map("stripe_session_id")
+  stripePaymentIntentId String?   @map("stripe_payment_intent_id")
+  referralCode          String?   @map("referral_code")
+  referrerName          String?   @map("referrer_name")
+  agencyName            String?   @map("agency_name")
+  // 以下3項目はreferral_links等への物理FKを張らない(仕様書6.5のDDL通り)
+  agencyId              String?   @map("agency_id") @db.Uuid
+  influencerId          String?   @map("influencer_id") @db.Uuid
+  referralLinkId        String?   @map("referral_link_id") @db.Uuid
+  commissionRate        Decimal   @default(0) @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount      Int       @default(0) @map("commission_amount")
+  commissionStatus      String    @default("pending") @map("commission_status") // pending | approved | paid | cancelled
+  customerName          String    @map("customer_name")
+  customerEmail         String    @map("customer_email")
+  customerPhone         String?   @map("customer_phone")
+  customerPostalCode    String?   @map("customer_postal_code")
+  customerAddress       String?   @map("customer_address")
+  termsAgreedAt         DateTime  @map("terms_agreed_at")
+  termsVersion          String    @map("terms_version")
+  adminNote             String?   @map("admin_note")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  user       User?       @relation(fields: [userId], references: [id])
+  orderItems OrderItem[]
+  nftIssues  NftIssue[]
+  commission Commission?
+
+  @@index([paymentStatus])
+  @@index([paidAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          String   @id @default(uuid()) @db.Uuid
+  orderId     String   @map("order_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  variantId   String?  @map("variant_id") @db.Uuid
+  productName String   @map("product_name")
+  variantName String?  @map("variant_name")
+  itemType    String   @map("item_type") // 注文時点のproducts.item_typeスナップショット
+  quantity    Int
+  unitPrice   Int      @map("unit_price")
+  subtotal    Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  order     Order           @relation(fields: [orderId], references: [id])
+  product   Product         @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  nftIssues NftIssue[]
+
+  @@map("order_items")
+}
+
+model NftIssue {
+  id              String    @id @default(uuid()) @db.Uuid
+  orderId         String    @map("order_id") @db.Uuid
+  orderItemId     String    @map("order_item_id") @db.Uuid
+  userId          String?   @map("user_id") @db.Uuid
+  productId       String    @map("product_id") @db.Uuid
+  variantId       String?   @map("variant_id") @db.Uuid
+  walletAddress   String?   @map("wallet_address")
+  tokenId         String?   @map("token_id")
+  transactionHash String?   @map("transaction_hash")
+  chain           String    @default("polygon")
+  status          String    @default("wallet_required") // wallet_required | ready_to_issue | issued | failed | cancelled
+  issuedAt        DateTime? @map("issued_at")
+  adminNote       String?   @map("admin_note")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  order     Order           @relation(fields: [orderId], references: [id])
+  orderItem OrderItem       @relation(fields: [orderItemId], references: [id])
+  user      User?           @relation(fields: [userId], references: [id])
+  product   Product         @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([status])
+  @@map("nft_issues")
+}
+
+model Notice {
+  id          String    @id @default(uuid()) @db.Uuid
+  title       String
+  body        String
+  status      String    @default("draft") // draft | published
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("notices")
+}
+
+model StripeEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  stripeEventId String   @unique @map("stripe_event_id")
+  eventType     String   @map("event_type")
+  processedAt   DateTime @map("processed_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("stripe_events")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  usedAt    DateTime? @map("used_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("password_reset_tokens")
+}
+
+model Agency {
+  id                    String   @id @default(uuid()) @db.Uuid
+  name                  String
+  code                  String   @unique
+  contactName           String?  @map("contact_name")
+  contactEmail          String?  @map("contact_email")
+  status                String   @default("active") // active | inactive
+  defaultCommissionRate Decimal  @default(0) @map("default_commission_rate") @db.Decimal(5, 2)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  influencers   Influencer[]
+  referralLinks ReferralLink[]
+  commissions   Commission[]
+
+  @@map("agencies")
+}
+
+model Influencer {
+  id                    String   @id @default(uuid()) @db.Uuid
+  agencyId              String?  @map("agency_id") @db.Uuid
+  name                  String
+  code                  String   @unique
+  email                 String?
+  snsUrl                String?  @map("sns_url")
+  status                String   @default("active") // active | inactive
+  defaultCommissionRate Decimal? @map("default_commission_rate") @db.Decimal(5, 2)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  agency        Agency?        @relation(fields: [agencyId], references: [id])
+  referralLinks ReferralLink[]
+  commissions   Commission[]
+
+  @@map("influencers")
+}
+
+model ReferralLink {
+  id             String   @id @default(uuid()) @db.Uuid
+  code           String   @unique
+  agencyId       String?  @map("agency_id") @db.Uuid
+  influencerId   String?  @map("influencer_id") @db.Uuid
+  commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 2)
+  landingPath    String   @default("/") @map("landing_path")
+  status         String   @default("active") // active | inactive
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  agency     Agency?     @relation(fields: [agencyId], references: [id])
+  influencer Influencer? @relation(fields: [influencerId], references: [id])
+
+  // agency_id / influencer_id 両方NULLは不可(アプリ側バリデーションで担保。仕様書6.13参照)
+  @@map("referral_links")
+}
+
+model Commission {
+  id               String    @id @default(uuid()) @db.Uuid
+  orderId          String    @unique @map("order_id") @db.Uuid
+  agencyId         String?   @map("agency_id") @db.Uuid
+  influencerId     String?   @map("influencer_id") @db.Uuid
+  referralCode     String?   @map("referral_code")
+  baseAmount       Int       @map("base_amount")
+  commissionRate   Decimal   @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount Int       @map("commission_amount")
+  status           String    @default("pending") // pending | approved | paid | cancelled
+  approvedAt       DateTime? @map("approved_at")
+  paidAt           DateTime? @map("paid_at")
+  adminNote        String?   @map("admin_note")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  order      Order       @relation(fields: [orderId], references: [id])
+  agency     Agency?     @relation(fields: [agencyId], references: [id])
+  influencer Influencer? @relation(fields: [influencerId], references: [id])
+
+  @@index([status])
+  @@map("commissions")
+}
