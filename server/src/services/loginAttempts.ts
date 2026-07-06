@@ -1,40 +1,52 @@
+import { prisma } from '../lib/prisma';
+
 // アカウント+IP単位のログイン失敗回数制限(仕様書v1.5 4.8: 5回失敗で15分ロック)。
-// MVPではインスタンス内メモリで管理する(複数インスタンス運用時はStore差し替えが必要)。
+// サーバーレス環境ではインスタンスが使い捨てのためインメモリ管理は機能しない。
+// DB(login_attemptsテーブル)で永続化する。
 
 const MAX_ATTEMPTS = 5;
 const LOCK_MS = 15 * 60 * 1000;
 
-interface AttemptRecord {
-  count: number;
-  lockedUntil: number | null;
+function normalize(email: string): string {
+  return email.toLowerCase();
 }
 
-const attempts = new Map<string, AttemptRecord>();
+export async function isLocked(email: string, ip: string): Promise<boolean> {
+  const record = await prisma.loginAttempt.findUnique({
+    where: { email_ip: { email: normalize(email), ip } },
+  });
 
-function key(email: string, ip: string): string {
-  return `${email.toLowerCase()}::${ip}`;
-}
-
-export function isLocked(email: string, ip: string): boolean {
-  const record = attempts.get(key(email, ip));
   if (!record?.lockedUntil) return false;
-  if (Date.now() > record.lockedUntil) {
-    attempts.delete(key(email, ip));
+
+  if (record.lockedUntil <= new Date()) {
+    // ロック期限切れ。次回の失敗から数え直せるようリセットする。
+    await prisma.loginAttempt.update({
+      where: { id: record.id },
+      data: { failedCount: 0, lockedUntil: null },
+    });
     return false;
   }
+
   return true;
 }
 
-export function recordLoginFailure(email: string, ip: string): void {
-  const k = key(email, ip);
-  const record = attempts.get(k) ?? { count: 0, lockedUntil: null };
-  record.count += 1;
-  if (record.count >= MAX_ATTEMPTS) {
-    record.lockedUntil = Date.now() + LOCK_MS;
+export async function recordLoginFailure(email: string, ip: string): Promise<void> {
+  const key = normalize(email);
+
+  const record = await prisma.loginAttempt.upsert({
+    where: { email_ip: { email: key, ip } },
+    update: { failedCount: { increment: 1 } },
+    create: { email: key, ip, failedCount: 1 },
+  });
+
+  if (record.failedCount >= MAX_ATTEMPTS && !record.lockedUntil) {
+    await prisma.loginAttempt.update({
+      where: { id: record.id },
+      data: { lockedUntil: new Date(Date.now() + LOCK_MS) },
+    });
   }
-  attempts.set(k, record);
 }
 
-export function recordLoginSuccess(email: string, ip: string): void {
-  attempts.delete(key(email, ip));
+export async function recordLoginSuccess(email: string, ip: string): Promise<void> {
+  await prisma.loginAttempt.deleteMany({ where: { email: normalize(email), ip } });
 }

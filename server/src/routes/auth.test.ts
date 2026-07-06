@@ -9,6 +9,7 @@ const ORIGIN = 'http://localhost:5173';
 describe('認証API', () => {
   afterAll(async () => {
     await prisma.passwordResetToken.deleteMany({ where: { user: { email: { contains: 'auth-test' } } } });
+    await prisma.loginAttempt.deleteMany({ where: { email: { contains: 'auth-test' } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'auth-test' } } });
     await prisma.$disconnect();
   });

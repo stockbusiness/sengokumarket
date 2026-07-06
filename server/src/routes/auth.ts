@@ -58,7 +58,7 @@ router.post('/auth/login', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', 'メールアドレスとパスワードを入力してください');
   }
 
-  if (isLocked(email, ip)) {
+  if (await isLocked(email, ip)) {
     return sendError(res, 423, 'ACCOUNT_LOCKED', 'ログイン試行回数の上限に達しました。しばらくしてから再度お試しください');
   }
 
@@ -66,11 +66,11 @@ router.post('/auth/login', async (req, res) => {
   const passwordOk = user ? await bcrypt.compare(password, user.passwordHash) : false;
 
   if (!user || !passwordOk) {
-    recordLoginFailure(email, ip);
+    await recordLoginFailure(email, ip);
     return sendError(res, 401, 'INVALID_CREDENTIALS', 'メールアドレスまたはパスワードが正しくありません');
   }
 
-  recordLoginSuccess(email, ip);
+  await recordLoginSuccess(email, ip);
   const token = signAuthToken({ sub: user.id, role: user.role });
   setAuthCookie(res, token);
   res.json({ user: publicUser(user) });

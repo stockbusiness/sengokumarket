@@ -22,6 +22,22 @@ model Setting {
   @@map("settings")
 }
 
+// 仕様書外の拡張: ログイン失敗回数制限(アカウント+IP単位、5回失敗で15分ロック)をDBで管理する。
+// サーバーレス環境ではインスタンスが使い捨てのためインメモリ管理は機能しない。
+// 存在しないメールアドレスへの試行も追跡する必要があるためusersとは別テーブルとする。
+model LoginAttempt {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String
+  ip          String
+  failedCount Int       @default(0) @map("failed_count")
+  lockedUntil DateTime? @map("locked_until")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([email, ip], name: "email_ip")
+  @@map("login_attempts")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   name         String
