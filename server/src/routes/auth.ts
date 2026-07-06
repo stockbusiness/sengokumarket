@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
@@ -12,6 +13,15 @@ import { sendPasswordResetEmail } from '../services/mailTemplates';
 
 const router = Router();
 
+// 大量アカウント作成・パスワード再設定メール送信の踏み台化を防ぐ(仕様書外の拡張)。
+const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+const passwordResetRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
@@ -20,7 +30,7 @@ function publicUser(user: { id: string; name: string; email: string; role: strin
   return { id: user.id, name: user.name, email: user.email, role: user.role, agencyId: user.agencyId ?? null };
 }
 
-router.post('/auth/register', async (req, res) => {
+router.post('/auth/register', registerLimiter, async (req, res) => {
   const { name, email, password, phone } = req.body ?? {};
 
   if (!isNonEmptyString(name)) return sendError(res, 400, 'VALIDATION_ERROR', '氏名を入力してください');
@@ -89,7 +99,7 @@ router.get('/auth/me', requireAuth, async (req, res) => {
 });
 
 // メールアドレスの存在有無を返さない(仕様書v1.5 4.8 / 16章)。常に同一レスポンスを返す。
-router.post('/auth/password-reset/request', async (req, res) => {
+router.post('/auth/password-reset/request', passwordResetRequestLimiter, async (req, res) => {
   const { email } = req.body ?? {};
   if (isNonEmptyString(email) && isValidEmail(email)) {
     const user = await prisma.user.findUnique({ where: { email } });

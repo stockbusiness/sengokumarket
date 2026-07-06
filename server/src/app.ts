@@ -4,6 +4,7 @@ import express, { Express, NextFunction, Request, Response } from 'express';
 // これを防ぐため、ルート定義より前に読み込む(パッチ適用はimportの副作用による)。
 import 'express-async-errors';
 import cors from 'cors';
+import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import productsRouter from './routes/products';
 import legalRouter from './routes/legal';
@@ -23,6 +24,9 @@ import { sendError } from './lib/apiError';
 export function createApp(): Express {
   const app = express();
 
+  // セキュリティヘッダー(X-Content-Type-Options/X-Frame-Options等)。
+  // このAppはJSON APIのみを返すためcontentSecurityPolicy/hstsは無効化し、静的サイト側はvercel.jsonで別途設定する。
+  app.use(helmet({ contentSecurityPolicy: false, hsts: false }));
   app.use(cors({ origin: process.env.APP_URL, credentials: true }));
 
   // Stripe Webhookは署名検証に生ボディが必要なため、express.json()より前に

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import rateLimit from 'express-rate-limit';
 import { sendError } from '../lib/apiError';
 import { HttpError } from '../lib/httpError';
 import { cancelOrderReservation, createPendingOrder, validateCreatePendingOrderInput } from '../services/checkout';
@@ -8,7 +9,10 @@ import { requireReferralOrAuth } from '../middleware/referralAccess';
 
 const router = Router();
 
-router.post('/checkout/create-session', requireReferralOrAuth, async (req, res) => {
+// 在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ(仕様書外の拡張)。
+const createSessionLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
+
+router.post('/checkout/create-session', createSessionLimiter, requireReferralOrAuth, async (req, res) => {
   let orderId: string | null = null;
   try {
     const input = validateCreatePendingOrderInput(req.body);
