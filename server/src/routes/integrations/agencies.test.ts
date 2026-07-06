@@ -118,4 +118,68 @@ describe('外部代理店システム連携API', () => {
     expect(second.body.agency.login_provisioned).toBe(false);
     expect(sendAgencyAccountSetupEmail).not.toHaveBeenCalled();
   });
+
+  it('contact_name未指定時はnameが使われる', async () => {
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: `integration-test-contactname-${Date.now()}`, name: 'integration-test-名前会社' });
+    expect(res.status).toBe(201);
+    expect(res.body.agency.contact_name).toBe('integration-test-名前会社');
+  });
+
+  it('parent_external_idが空文字の場合は本部直下扱いになる', async () => {
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: `integration-test-rootempty-${Date.now()}`, name: 'root', parent_external_id: '' });
+    expect(res.status).toBe(201);
+    expect(res.body.agency.parent_external_id).toBeNull();
+  });
+
+  it('自分自身を親に指定すると400', async () => {
+    const externalId = `integration-test-selfparent-${Date.now()}`;
+    await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: externalId, name: 'self' });
+
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: externalId, name: 'self', parent_external_id: externalId });
+    expect(res.status).toBe(400);
+  });
+
+  it('自分の配下代理店を親に指定すると400(循環防止)', async () => {
+    const grandparent = `integration-test-cycle-gp-${Date.now()}`;
+    const parent = `integration-test-cycle-p-${Date.now()}`;
+    const child = `integration-test-cycle-c-${Date.now()}`;
+
+    await request(app).post('/api/integrations/agencies').set('x-api-key', API_KEY).send({ external_id: grandparent, name: 'gp' });
+    await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: parent, name: 'p', parent_external_id: grandparent });
+    await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: child, name: 'c', parent_external_id: parent });
+
+    // grandparentの親をchildにしようとする = 循環
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: grandparent, name: 'gp', parent_external_id: child });
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /?external_id=でもクエリ形式で詳細取得できる', async () => {
+    const externalId = `integration-test-queryform-${Date.now()}`;
+    await request(app).post('/api/integrations/agencies').set('x-api-key', API_KEY).send({ external_id: externalId, name: 'q' });
+
+    const res = await request(app).get(`/api/integrations/agencies?external_id=${externalId}`).set('x-api-key', API_KEY);
+    expect(res.status).toBe(200);
+    expect(res.body.agency.external_id).toBe(externalId);
+  });
 });

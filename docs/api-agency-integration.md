@@ -54,9 +54,9 @@ https://<本システムの本番ドメイン>/api/integrations/agencies
 |---|---|---|---|
 | `external_id` | string | ○ | 代理店システム側の代理店ID。本システム側の一意キーとして使用 |
 | `name` | string | ○ | 代理店名 |
-| `parent_external_id` | string \| null | - | 親代理店の`external_id`。多階層ツリーを組む場合に指定。**親は先に登録しておく必要があります**。ツリーから外す場合は`null`を指定 |
+| `parent_external_id` | string \| null | - | 親代理店の`external_id`。多階層ツリーを組む場合に指定。**親は先に登録しておく必要があります**。未指定なら現状の親構成を維持(新規作成時は本部直下)。`null`または空文字`""`を指定すると本部直下に解除 |
 | `default_commission_rate` | number(0〜100) | - | 既定報酬率(%)。紹介URL個別・インフルエンサー個別に報酬率が設定されていない場合のフォールバック値 |
-| `contact_name` | string | - | 担当者名 |
+| `contact_name` | string | - | 担当者名。未指定の場合、新規作成時は`name`と同じ値が使われる |
 | `contact_email` | string | - | 連絡先メールアドレス |
 | `status` | `"active"` \| `"inactive"` | - | 代理店ステータス。省略時、新規作成なら`active` |
 | `login_email` | string | - | 指定すると代理店ポータルのログインアカウントを発行(下記6章参照) |
@@ -122,9 +122,10 @@ Content-Type: application/json
 
 | ステータス | code | 原因 |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | `external_id`/`name`未指定、`default_commission_rate`が0〜100の範囲外、`status`不正、`login_email`の形式不正など |
+| 400 | `VALIDATION_ERROR` | `external_id`/`name`未指定、`default_commission_rate`が0〜100の範囲外、`status`不正、`login_email`の形式不正、自分自身または自分の配下代理店を親に指定(循環)など |
 | 404 | `PARENT_AGENCY_NOT_FOUND` | `parent_external_id`に該当する代理店が存在しない(親を先に登録してください) |
 | 409 | `LOGIN_EMAIL_ALREADY_EXISTS` | `login_email`が既に他のアカウントで使用されている |
+| 500 | `SERVER_ERROR` | 本システム側の予期しないエラー |
 
 ### 5.2 GET `/` — 代理店一覧取得
 
@@ -179,6 +180,8 @@ x-api-key: <APIキー>
 
 一覧との違いは `child_external_ids`(直下の子代理店の`external_id`一覧)が含まれる点です。存在しない場合は`404 AGENCY_NOT_FOUND`。
 
+サーバー設定等でパス形式(`/:external_id`)が使えない場合は、`GET /?external_id=<external_id>` のクエリ形式でも同じ詳細レスポンスを取得できます。
+
 ## 6. ログインアカウント発行(`login_email`)について
 
 - `login_email`を指定してPOSTすると、その代理店に紐づく代理店ポータル用ログインアカウントを作成します。
@@ -186,9 +189,16 @@ x-api-key: <APIキー>
 - 1代理店につきログインアカウントは1つまでです。既にある状態で`login_email`を送っても新規作成はされません(`login_provisioned: false`)。
 - ログイン後、代理店担当者は本システムの通常ログイン画面(`/login`)から同じメールアドレス・設定したパスワードでログインし、代理店ポータル(`/agency`)で自代理店の紹介URLを発行・一覧できます。他代理店の情報は参照できません。
 
-## 7. 運用上の注意
+## 7. 階層(ツリー)に関する制約
 
 - **親を先に登録してください。** 子代理店の`parent_external_id`が未登録の`external_id`を指すと`404 PARENT_AGENCY_NOT_FOUND`になります。
+- 自分自身を親に指定することはできません(`400 VALIDATION_ERROR`)。
+- 自分の配下(子・孫…)の代理店を親に指定することもできません。循環構造になるため`400 VALIDATION_ERROR`を返します。
+- 推奨する同期順序: 親代理店→子代理店→孫代理店…の順に登録してください。
+
+## 8. 運用上の注意
+
 - 代理店の削除APIはありません。使わなくする場合は`status: "inactive"`を送ってください。
 - `code`(AG連番)・紹介URLのコード(SGI連番)は本システム側の自動採番のみで、外部から指定・変更することはできません。
 - 冪等性のキーは`external_id`です。代理店システム側でこの値を変えると別の代理店として新規作成されるため、変更しないでください。
+- `contact_email`と`login_email`はそれぞれ独立した項目として保存されます。`login_email`を送っても`contact_email`が上書きされることはありません。

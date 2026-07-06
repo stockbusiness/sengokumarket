@@ -1,4 +1,4 @@
-import express, { Express } from 'express';
+import express, { Express, NextFunction, Request, Response } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import productsRouter from './routes/products';
@@ -14,6 +14,7 @@ import integrationAgenciesRouter from './routes/integrations/agencies';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
+import { sendError } from './lib/apiError';
 
 export function createApp(): Express {
   const app = express();
@@ -47,6 +48,13 @@ export function createApp(): Express {
   app.use('/api/mypage', mypageRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/agency', agencyRouter);
+
+  // 未捕捉の例外もAPIエラーレスポンス形式に統一する(仕様書v1.5コーディング規約)。
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+    console.error(err);
+    sendError(res, 500, 'SERVER_ERROR', 'サーバーエラーが発生しました');
+  });
 
   return app;
 }

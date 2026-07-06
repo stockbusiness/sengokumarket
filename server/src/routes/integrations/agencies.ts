@@ -39,7 +39,42 @@ function serializeAgency(agency: {
   };
 }
 
-router.get('/', async (_req, res) => {
+// proposedParentIdを親にすると、targetAgencyId自身がその祖先に含まれてしまう(循環)かどうかを判定する。
+async function wouldCreateCycle(targetAgencyId: string, proposedParentId: string): Promise<boolean> {
+  let currentId: string | null = proposedParentId;
+  while (currentId) {
+    if (currentId === targetAgencyId) return true;
+    const current: { parentAgencyId: string | null } | null = await prisma.agency.findUnique({
+      where: { id: currentId },
+      select: { parentAgencyId: true },
+    });
+    currentId = current?.parentAgencyId ?? null;
+  }
+  return false;
+}
+
+async function findAgencyDetail(externalId: string) {
+  const agency = await prisma.agency.findUnique({
+    where: { externalId },
+    include: { parentAgency: { select: { externalId: true } }, childAgencies: { select: { externalId: true } } },
+  });
+  if (!agency) return null;
+
+  return {
+    ...serializeAgency(agency),
+    child_external_ids: agency.childAgencies.map((c) => c.externalId).filter((id): id is string => id !== null),
+  };
+}
+
+router.get('/', async (req, res) => {
+  // サーバー設定によりパス形式(/:externalId)が使えない呼び出し元向けに、クエリ形式でも詳細取得できるようにする。
+  const queryExternalId = req.query.external_id;
+  if (typeof queryExternalId === 'string' && queryExternalId.length > 0) {
+    const detail = await findAgencyDetail(queryExternalId);
+    if (!detail) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
+    return res.json({ agency: detail });
+  }
+
   const agencies = await prisma.agency.findMany({
     include: { parentAgency: { select: { externalId: true } } },
     orderBy: { createdAt: 'asc' },
@@ -48,18 +83,9 @@ router.get('/', async (_req, res) => {
 });
 
 router.get('/:externalId', async (req, res) => {
-  const agency = await prisma.agency.findUnique({
-    where: { externalId: req.params.externalId },
-    include: { parentAgency: { select: { externalId: true } }, childAgencies: { select: { externalId: true, name: true } } },
-  });
-  if (!agency) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
-
-  res.json({
-    agency: {
-      ...serializeAgency(agency),
-      child_external_ids: agency.childAgencies.map((c) => c.externalId).filter((id): id is string => id !== null),
-    },
-  });
+  const detail = await findAgencyDetail(req.params.externalId);
+  if (!detail) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
+  res.json({ agency: detail });
 });
 
 router.post('/', async (req, res) => {
@@ -95,19 +121,30 @@ router.post('/', async (req, res) => {
   }
 
   try {
+    const existing = await prisma.agency.findUnique({ where: { externalId } });
+
+    // parent_external_id: 未指定なら現状維持(新規なら本部直下)、null/空文字は本部直下への解除。
     let parentAgencyId: string | null | undefined;
-    if (parentExternalId !== undefined && parentExternalId !== null) {
+    if (parentExternalId === null || parentExternalId === '') {
+      parentAgencyId = null;
+    } else if (parentExternalId !== undefined) {
       if (!isNonEmptyString(parentExternalId)) {
         return sendError(res, 400, 'VALIDATION_ERROR', 'parent_external_idの形式が正しくありません');
       }
+      if (parentExternalId === externalId) {
+        return sendError(res, 400, 'VALIDATION_ERROR', '自分自身を親代理店に指定することはできません');
+      }
       const parent = await prisma.agency.findUnique({ where: { externalId: parentExternalId } });
       if (!parent) return sendError(res, 404, 'PARENT_AGENCY_NOT_FOUND', '親代理店が見つかりません(先に親を登録してください)');
-      parentAgencyId = parent.id;
-    } else if (parentExternalId === null) {
-      parentAgencyId = null;
-    }
 
-    const existing = await prisma.agency.findUnique({ where: { externalId } });
+      if (existing) {
+        const cyclic = await wouldCreateCycle(existing.id, parent.id);
+        if (cyclic) {
+          return sendError(res, 400, 'VALIDATION_ERROR', '自分の配下代理店を親代理店に指定することはできません');
+        }
+      }
+      parentAgencyId = parent.id;
+    }
 
     const agency = existing
       ? await prisma.agency.update({
@@ -131,7 +168,8 @@ router.post('/', async (req, res) => {
               code,
               parentAgencyId: parentAgencyId ?? null,
               defaultCommissionRate: defaultCommissionRate ?? 0,
-              contactName: contactName ?? null,
+              // contact_name未指定時はnameを使う(相手仕様書5章のフィールド説明に合わせる)。
+              contactName: contactName ?? name,
               contactEmail: contactEmail ?? null,
               status: status ?? 'active',
             },
