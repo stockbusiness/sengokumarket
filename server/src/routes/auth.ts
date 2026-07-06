@@ -8,6 +8,7 @@ import { setAuthCookie, clearAuthCookie } from '../lib/authCookie';
 import { isLocked, recordLoginFailure, recordLoginSuccess } from '../services/loginAttempts';
 import { requireAuth } from '../middleware/auth';
 import { createPasswordResetToken, consumePasswordResetToken } from '../services/passwordReset';
+import { sendPasswordResetEmail } from '../services/mailTemplates';
 
 const router = Router();
 
@@ -93,8 +94,8 @@ router.post('/auth/password-reset/request', async (req, res) => {
   if (isNonEmptyString(email) && isValidEmail(email)) {
     const user = await prisma.user.findUnique({ where: { email } });
     if (user) {
-      await createPasswordResetToken(user.id);
-      // メール送信はStep 11で実装する(仕様書v1.5 7.6)。
+      const token = await createPasswordResetToken(user.id);
+      await sendPasswordResetEmail(user.email, user.name, token);
     }
   }
   res.json({ message: 'パスワード再設定用のメールを送信しました(該当するアカウントが存在する場合)' });

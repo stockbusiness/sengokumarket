@@ -2,6 +2,8 @@ import type Stripe from 'stripe';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { findOrderForEvent } from './orderLookup';
+import { createPasswordResetToken } from './passwordReset';
+import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
 
 type Tx = Prisma.TransactionClient;
 
@@ -60,7 +62,7 @@ async function createCommissionForOrder(tx: Tx, order: NonNullable<Awaited<Retur
 export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   const session = event.data.object as Stripe.Checkout.Session;
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const order = await findOrderForEvent(tx, {
       orderId: session.metadata?.order_id,
       paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id,
@@ -69,11 +71,11 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
     if (!order) {
       console.error('checkout.session.completed: order not found', { sessionId: session.id });
-      return;
+      return null;
     }
 
     // 冪等性: stripe_eventsの重複INSERT防止に加え、既にpaid済みなら二重処理しない
-    if (order.paymentStatus === 'paid') return;
+    if (order.paymentStatus === 'paid') return null;
 
     const updatedOrder = await tx.order.update({
       where: { id: order.id },
@@ -98,9 +100,25 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
     await createNftIssuesForOrder(tx, order.id, order.userId);
     await createCommissionForOrder(tx, updatedOrder);
+
+    return { order: updatedOrder, items: orderItems };
   });
 
-  // 購入完了メール・ゲストのパスワード設定メール送信はStep 11で実装する(仕様書v1.5 7.2 手順8 / 7.6)。
+  if (!result) return;
+
+  // メール送信(トークン発行含む)はトランザクション外で行い、失敗しても決済処理自体は
+  // 失敗させない(仕様書v1.5 7.2 手順8 / 7.6)。stripe_events登録済みのため、ここで
+  // 例外を投げるとWebhookが二重処理されずリトライされなくなってしまう。
+  try {
+    await sendPurchaseCompleteEmail(result.order, result.items);
+
+    if (result.order.guestAccountCreated && result.order.userId) {
+      const token = await createPasswordResetToken(result.order.userId);
+      await sendGuestPasswordSetupEmail(result.order.customerEmail, result.order.customerName, token);
+    }
+  } catch (e) {
+    console.error('post-payment email dispatch failed', { orderId: result.order.id, error: e });
+  }
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {

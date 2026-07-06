@@ -128,6 +128,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
     const referral = await resolveReferral(tx, input.referralCode);
 
     let user = await tx.user.findUnique({ where: { email: input.customerEmail } });
+    let guestAccountCreated = false;
     if (!user) {
       const randomPassword = crypto.randomBytes(32).toString('hex');
       user = await tx.user.create({
@@ -139,6 +140,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
           role: 'user',
         },
       });
+      guestAccountCreated = true;
     }
 
     const orderNumber = await generateOrderNumber(tx);
@@ -170,6 +172,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         customerAddress: input.customerAddress,
         termsAgreedAt: now,
         termsVersion,
+        guestAccountCreated,
       },
     });
 

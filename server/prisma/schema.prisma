@@ -137,6 +137,9 @@ model Order {
   termsAgreedAt         DateTime  @map("terms_agreed_at")
   termsVersion          String    @map("terms_version")
   adminNote             String?   @map("admin_note")
+  // 仕様書外の拡張: この注文でゲスト用アカウントを新規作成したかどうか。
+  // 決済完了時にパスワード設定メールを送るべきか判定するために使う(仕様書v1.5 4.9)。
+  guestAccountCreated   Boolean   @default(false) @map("guest_account_created")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 

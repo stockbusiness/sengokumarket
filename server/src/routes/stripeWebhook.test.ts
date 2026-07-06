@@ -81,6 +81,7 @@ describe('POST /api/stripe/webhook', () => {
     await prisma.agency.delete({ where: { id: agencyId } });
     await prisma.productVariant.deleteMany({ where: { productId: { in: [nftProductId, physicalProductId] } } });
     await prisma.product.deleteMany({ where: { id: { in: [nftProductId, physicalProductId] } } });
+    await prisma.passwordResetToken.deleteMany({ where: { user: { email: { contains: 'webhook-test' } } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'webhook-test' } } });
     await prisma.setting.deleteMany({ where: { key: 'stripe_webhook_secret' } });
     await prisma.$disconnect();
