@@ -3,6 +3,7 @@ import { Link, Outlet } from 'react-router-dom';
 const NAV_ITEMS = [
   { to: '/admin', label: 'ダッシュボード' },
   { to: '/admin/products', label: '商品管理' },
+  { to: '/admin/import-products', label: 'CSV商品インポート' },
   { to: '/admin/orders', label: '注文管理' },
   { to: '/admin/nft-issues', label: 'NFT発行管理' },
   { to: '/admin/wallet-missing', label: 'ウォレット未登録' },

@@ -10,6 +10,7 @@ import agenciesRouter from './agencies';
 import referralLinksRouter from './referralLinks';
 import referralsRouter from './referrals';
 import settingsRouter from './settings';
+import importProductsRouter from './importProducts';
 
 const router = Router();
 
@@ -26,5 +27,6 @@ router.use(agenciesRouter);
 router.use(referralLinksRouter);
 router.use(referralsRouter);
 router.use(settingsRouter);
+router.use(importProductsRouter);
 
 export default router;

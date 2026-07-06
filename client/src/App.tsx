@@ -19,6 +19,7 @@ import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './components/AdminLayout';
 import AdminDashboardPage from './pages/admin/AdminDashboardPage';
 import AdminProductsPage from './pages/admin/AdminProductsPage';
+import AdminImportProductsPage from './pages/admin/AdminImportProductsPage';
 import AdminOrdersPage from './pages/admin/AdminOrdersPage';
 import AdminNftIssuesPage from './pages/admin/AdminNftIssuesPage';
 import AdminWalletMissingPage from './pages/admin/AdminWalletMissingPage';
@@ -109,6 +110,7 @@ function App() {
         >
           <Route index element={<AdminDashboardPage />} />
           <Route path="products" element={<AdminProductsPage />} />
+          <Route path="import-products" element={<AdminImportProductsPage />} />
           <Route path="orders" element={<AdminOrdersPage />} />
           <Route path="nft-issues" element={<AdminNftIssuesPage />} />
           <Route path="wallet-missing" element={<AdminWalletMissingPage />} />
