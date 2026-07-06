@@ -1,4 +1,8 @@
 import express, { Express, NextFunction, Request, Response } from 'express';
+// Express 4はasyncハンドラ内の例外(Promise reject)を自動でエラーミドルウェアに回さず、
+// 何も応答しないままリクエストが無限にハングする(例: マイグレーション未適用によるDBエラー時)。
+// これを防ぐため、ルート定義より前に読み込む(パッチ適用はimportの副作用による)。
+import 'express-async-errors';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import productsRouter from './routes/products';
