@@ -129,13 +129,13 @@
 }
 
 .btn-secondary {
-  background: transparent;
-  border-color: var(--border);
+  background: rgba(184, 137, 43, 0.08);
+  border-color: var(--accent);
   color: var(--text-h);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: var(--bg);
+  background: rgba(184, 137, 43, 0.16);
 }
 
 .btn-small {
@@ -387,7 +387,7 @@
   flex-shrink: 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 16px 12px;
 }
 
@@ -409,7 +409,7 @@
 .admin-nav__link {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 8px 10px;
   border-radius: 6px;
   text-decoration: none;
@@ -419,16 +419,36 @@
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
+.admin-nav__icon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+}
+
 .admin-nav__link:hover {
-  background: var(--bg);
+  background: rgba(184, 137, 43, 0.1);
   color: var(--primary);
 }
 
+.admin-nav__link:hover .admin-nav__icon {
+  color: var(--primary);
+}
+
+.admin-nav__link--muted {
+  color: var(--text-muted);
+}
+
 .admin-nav__link--active {
-  background: var(--bg);
+  background: rgba(184, 137, 43, 0.14);
   color: var(--primary);
   font-weight: 700;
   border-left-color: var(--accent);
+}
+
+.admin-nav__link--active .admin-nav__icon {
+  color: var(--primary);
 }
 
 .admin-nav__dot {
@@ -454,7 +474,7 @@
   gap: 16px;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   padding: 10px 16px;
 }
 
@@ -478,6 +498,11 @@
 .admin-topbar__search input:focus {
   outline: none;
   box-shadow: none;
+}
+
+.admin-topbar__search input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .admin-topbar__right {
@@ -510,12 +535,6 @@
   padding: 0 3px;
 }
 
-.admin-topbar__user {
-  font-size: 0.9rem;
-  color: var(--text-h);
-  white-space: nowrap;
-}
-
 .admin-content {
   min-width: 0;
   overflow-x: auto;
@@ -525,6 +544,34 @@
   width: 100%;
   border-collapse: collapse;
   background: var(--bg-elevated);
+}
+
+/* テーブル/一覧をカードとして囲み、データが少なくても余白だけが伸びないようにする */
+.admin-table-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow);
+  margin: 16px 0;
+}
+
+.admin-table-card table {
+  margin: 0;
+}
+
+.admin-table-card:last-child {
+  margin-bottom: 0;
+}
+
+.admin-empty-state {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.admin-empty-state p {
+  margin-bottom: 12px;
 }
 
 .admin-content th,
@@ -537,12 +584,27 @@
 
 .admin-content th {
   color: var(--text-h);
+  background: var(--bg);
   border-bottom: 2px solid var(--accent);
   white-space: nowrap;
 }
 
 .admin-content tbody tr:hover {
   background: var(--bg);
+}
+
+/* テーブルセル内の狭い数値入力欄(在庫数など)。デフォルト見た目のまま出さない */
+.admin-inline-input {
+  width: 4.5em;
+  padding: 4px 8px;
+  min-height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.admin-inline-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .admin-kpi-grid {
@@ -597,7 +659,7 @@
   font-size: 1.4em;
   font-weight: bold;
   color: var(--text-h);
-  font-family: var(--font-heading);
+  font-variant-numeric: tabular-nums;
 }
 
 .admin-mini-stat-band {
@@ -625,6 +687,7 @@
 .admin-mini-stat-value {
   font-weight: 700;
   color: var(--text-h);
+  font-variant-numeric: tabular-nums;
 }
 
 .admin-alert {
@@ -639,18 +702,19 @@
   color: var(--danger);
 }
 
-/* ステータス表示(丸角ピル)。色は既存のsuccess/danger/mutedトークンのみ流用する */
+/* ステータス表示。ボタン・入力欄と同じradius-sm(6px)に揃え、ピルと角丸の混在を避ける。
+   色は既存のsuccess/danger/mutedトークンのみ流用する */
 .status-badge {
   display: inline-block;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: 6px;
   font-size: 0.82em;
   font-weight: 600;
   white-space: nowrap;
 }
 
 .status-select {
-  border-radius: 999px;
+  border-radius: 6px;
   padding: 3px 22px 3px 10px;
   font-size: 0.82em;
   font-weight: 600;

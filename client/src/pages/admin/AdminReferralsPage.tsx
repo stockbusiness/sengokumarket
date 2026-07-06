@@ -8,6 +8,7 @@ import {
   type AdminReferralSummary,
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
+import EmptyState from '../../components/EmptyState';
 
 const COMMISSION_STATUSES = ['pending', 'approved', 'paid', 'cancelled'];
 
@@ -46,54 +47,70 @@ export default function AdminReferralsPage() {
       {summary && (
         <>
           <h2>代理店別売上</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>代理店</th>
-                <th>注文件数</th>
-                <th>決済完了件数</th>
-                <th>売上</th>
-                <th>報酬額</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.byAgency.map((a) => (
-                <tr key={a.agencyId}>
-                  <td>{a.agencyName}</td>
-                  <td>{a.orderCount}</td>
-                  <td>{a.paidCount}</td>
-                  <td>{a.salesAmount.toLocaleString()}円</td>
-                  <td>{a.commissionAmount.toLocaleString()}円</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {summary.byAgency.length === 0 ? (
+            <div className="admin-table-card">
+              <EmptyState message="まだ代理店経由の実績がありません" />
+            </div>
+          ) : (
+            <div className="admin-table-card">
+              <table>
+                <thead>
+                  <tr>
+                    <th>代理店</th>
+                    <th>注文件数</th>
+                    <th>決済完了件数</th>
+                    <th>売上</th>
+                    <th>報酬額</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.byAgency.map((a) => (
+                    <tr key={a.agencyId}>
+                      <td>{a.agencyName}</td>
+                      <td>{a.orderCount}</td>
+                      <td>{a.paidCount}</td>
+                      <td>{a.salesAmount.toLocaleString()}円</td>
+                      <td>{a.commissionAmount.toLocaleString()}円</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <h2>インフルエンサー別売上</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>インフルエンサー</th>
-                <th>所属代理店</th>
-                <th>注文件数</th>
-                <th>決済完了件数</th>
-                <th>売上</th>
-                <th>報酬額</th>
-              </tr>
-            </thead>
-            <tbody>
-              {summary.byInfluencer.map((i) => (
-                <tr key={i.influencerId}>
-                  <td>{i.influencerName}</td>
-                  <td>{i.agencyName ?? '-'}</td>
-                  <td>{i.orderCount}</td>
-                  <td>{i.paidCount}</td>
-                  <td>{i.salesAmount.toLocaleString()}円</td>
-                  <td>{i.commissionAmount.toLocaleString()}円</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {summary.byInfluencer.length === 0 ? (
+            <div className="admin-table-card">
+              <EmptyState message="まだインフルエンサー経由の実績がありません" />
+            </div>
+          ) : (
+            <div className="admin-table-card">
+              <table>
+                <thead>
+                  <tr>
+                    <th>インフルエンサー</th>
+                    <th>所属代理店</th>
+                    <th>注文件数</th>
+                    <th>決済完了件数</th>
+                    <th>売上</th>
+                    <th>報酬額</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {summary.byInfluencer.map((i) => (
+                    <tr key={i.influencerId}>
+                      <td>{i.influencerName}</td>
+                      <td>{i.agencyName ?? '-'}</td>
+                      <td>{i.orderCount}</td>
+                      <td>{i.paidCount}</td>
+                      <td>{i.salesAmount.toLocaleString()}円</td>
+                      <td>{i.commissionAmount.toLocaleString()}円</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 
@@ -128,34 +145,42 @@ export default function AdminReferralsPage() {
           ))}
         </select>
       </label>
-      <table>
-        <thead>
-          <tr>
-            <th>注文番号</th>
-            <th>購入者</th>
-            <th>代理店/インフルエンサー</th>
-            <th>報酬率</th>
-            <th>報酬額</th>
-            <th>ステータス</th>
-          </tr>
-        </thead>
-        <tbody>
-          {commissions.map((c) => (
-            <tr key={c.id}>
-              <td>{c.orderNumber}</td>
-              <td>{c.customerName}</td>
-              <td>
-                {c.agencyName ?? '-'} / {c.influencerName ?? '-'}
-              </td>
-              <td>{c.commissionRate}%</td>
-              <td>{c.commissionAmount.toLocaleString()}円</td>
-              <td>
-                <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {commissions.length === 0 ? (
+        <div className="admin-table-card">
+          <EmptyState message="該当する報酬データがありません" />
+        </div>
+      ) : (
+        <div className="admin-table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>注文番号</th>
+                <th>購入者</th>
+                <th>代理店/インフルエンサー</th>
+                <th>報酬率</th>
+                <th>報酬額</th>
+                <th>ステータス</th>
+              </tr>
+            </thead>
+            <tbody>
+              {commissions.map((c) => (
+                <tr key={c.id}>
+                  <td>{c.orderNumber}</td>
+                  <td>{c.customerName}</td>
+                  <td>
+                    {c.agencyName ?? '-'} / {c.influencerName ?? '-'}
+                  </td>
+                  <td>{c.commissionRate}%</td>
+                  <td>{c.commissionAmount.toLocaleString()}円</td>
+                  <td>
+                    <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

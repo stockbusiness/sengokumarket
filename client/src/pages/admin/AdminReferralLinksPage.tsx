@@ -9,6 +9,7 @@ import {
   type AdminReferralLink,
 } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
+import EmptyState from '../../components/EmptyState';
 
 const NEW_AGENCY = '__new__';
 const NEW_INFLUENCER = '__new__';
@@ -179,6 +180,7 @@ export default function AdminReferralLinksPage() {
       )}
 
       <h2>発行済みリンク一覧</h2>
+      {links.length === 0 && <EmptyState message="まだ発行済みのリンクがありません" />}
       <ul className="referral-links-list">
         {links.map((link) => (
           <li key={link.id}>

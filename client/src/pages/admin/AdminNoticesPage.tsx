@@ -7,6 +7,7 @@ import {
   type AdminNotice,
 } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
+import EmptyState from '../../components/EmptyState';
 
 export default function AdminNoticesPage() {
   const [notices, setNotices] = useState<AdminNotice[]>([]);
@@ -54,35 +55,43 @@ export default function AdminNoticesPage() {
         </button>
       </form>
 
-      <table>
-        <thead>
-          <tr>
-            <th>タイトル</th>
-            <th>ステータス</th>
-            <th>公開日時</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {notices.map((n) => (
-            <tr key={n.id}>
-              <td>{n.title}</td>
-              <td>
-                <StatusBadge status={n.status} />
-              </td>
-              <td>{n.publishedAt ? new Date(n.publishedAt).toLocaleString('ja-JP') : '-'}</td>
-              <td>
-                <button type="button" className="btn-secondary btn-small" onClick={() => togglePublish(n)}>
-                  {n.status === 'published' ? '非公開にする' : '公開する'}
-                </button>{' '}
-                <button type="button" className="btn-secondary btn-small" onClick={() => remove(n)}>
-                  削除
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {notices.length === 0 ? (
+        <div className="admin-table-card">
+          <EmptyState message="まだお知らせがありません" />
+        </div>
+      ) : (
+        <div className="admin-table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>タイトル</th>
+                <th>ステータス</th>
+                <th>公開日時</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {notices.map((n) => (
+                <tr key={n.id}>
+                  <td>{n.title}</td>
+                  <td>
+                    <StatusBadge status={n.status} />
+                  </td>
+                  <td>{n.publishedAt ? new Date(n.publishedAt).toLocaleString('ja-JP') : '-'}</td>
+                  <td>
+                    <button type="button" className="btn-secondary btn-small" onClick={() => togglePublish(n)}>
+                      {n.status === 'published' ? '非公開にする' : '公開する'}
+                    </button>{' '}
+                    <button type="button" className="btn-secondary btn-small" onClick={() => remove(n)}>
+                      削除
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

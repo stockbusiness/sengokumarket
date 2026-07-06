@@ -6,6 +6,7 @@ import {
   type AdminProduct,
 } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
+import EmptyState from '../../components/EmptyState';
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 
@@ -100,47 +101,55 @@ export default function AdminProductsPage() {
         </form>
       )}
 
-      <table>
-        <thead>
-          <tr>
-            <th>商品名</th>
-            <th>slug</th>
-            <th>タイプ</th>
-            <th>価格</th>
-            <th>ステータス</th>
-            <th>バリエーション/在庫</th>
-          </tr>
-        </thead>
-        <tbody>
-          {products.map((p) => (
-            <tr key={p.id}>
-              <td>{p.name}</td>
-              <td>{p.slug}</td>
-              <td>{p.itemType}</td>
-              <td>{p.basePrice.toLocaleString()}円</td>
-              <td>
-                <StatusBadge status={p.status} />{' '}
-                <button type="button" className="btn-secondary btn-small" onClick={() => toggleStatus(p)}>
-                  切替
-                </button>
-              </td>
-              <td>
-                {p.variants.map((v) => (
-                  <div key={v.id}>
-                    {v.name}:
-                    <input
-                      type="number"
-                      defaultValue={v.stock}
-                      style={{ width: '4em' }}
-                      onBlur={(e) => updateStock(p, v.id, Number(e.target.value))}
-                    />
-                  </div>
-                ))}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {products.length === 0 ? (
+        <div className="admin-table-card">
+          <EmptyState message="まだ商品がありません" actionLabel="新規作成" onAction={() => setShowForm(true)} />
+        </div>
+      ) : (
+        <div className="admin-table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>商品名</th>
+                <th>slug</th>
+                <th>タイプ</th>
+                <th>価格</th>
+                <th>ステータス</th>
+                <th>バリエーション/在庫</th>
+              </tr>
+            </thead>
+            <tbody>
+              {products.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.name}</td>
+                  <td>{p.slug}</td>
+                  <td>{p.itemType}</td>
+                  <td>{p.basePrice.toLocaleString()}円</td>
+                  <td>
+                    <StatusBadge status={p.status} />{' '}
+                    <button type="button" className="btn-secondary btn-small" onClick={() => toggleStatus(p)}>
+                      切替
+                    </button>
+                  </td>
+                  <td>
+                    {p.variants.map((v) => (
+                      <div key={v.id}>
+                        {v.name}:
+                        <input
+                          type="number"
+                          className="admin-inline-input"
+                          defaultValue={v.stock}
+                          onBlur={(e) => updateStock(p, v.id, Number(e.target.value))}
+                        />
+                      </div>
+                    ))}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

@@ -85,32 +85,34 @@ export default function AdminImportProductsPage() {
           <p>
             成功: {result.successCount}件 / エラー: {result.errorCount}件
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>行番号</th>
-                <th>slug</th>
-                <th>SKU</th>
-                <th>結果</th>
-                <th>エラー内容</th>
-              </tr>
-            </thead>
-            <tbody>
-              {result.results.map((r) => (
-                <tr key={r.line}>
-                  <td>{r.line}</td>
-                  <td>{r.slug ?? '-'}</td>
-                  <td>{r.sku ?? '-'}</td>
-                  <td>
-                    <span className={`status-badge status-badge--${r.action === 'error' ? 'warning' : 'success'}`}>
-                      {ACTION_LABEL[r.action]}
-                    </span>
-                  </td>
-                  <td>{r.errors.join(' / ')}</td>
+          <div className="admin-table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>行番号</th>
+                  <th>slug</th>
+                  <th>SKU</th>
+                  <th>結果</th>
+                  <th>エラー内容</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {result.results.map((r) => (
+                  <tr key={r.line}>
+                    <td>{r.line}</td>
+                    <td>{r.slug ?? '-'}</td>
+                    <td>{r.sku ?? '-'}</td>
+                    <td>
+                      <span className={`status-badge status-badge--${r.action === 'error' ? 'warning' : 'success'}`}>
+                        {ACTION_LABEL[r.action]}
+                      </span>
+                    </td>
+                    <td>{r.errors.join(' / ')}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </div>

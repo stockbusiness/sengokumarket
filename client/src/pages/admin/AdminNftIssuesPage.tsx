@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchAdminNftIssues, updateAdminNftIssue, type AdminNftIssue } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
+import EmptyState from '../../components/EmptyState';
 
 const STATUSES = ['wallet_required', 'ready_to_issue', 'issued', 'failed', 'cancelled'];
 
@@ -53,55 +54,65 @@ export default function AdminNftIssuesPage() {
 
       {error && <p className="checkout-error">{error}</p>}
 
-      <table>
-        <thead>
-          <tr>
-            <th>購入者</th>
-            <th>商品</th>
-            <th>ウォレット</th>
-            <th>ステータス</th>
-            <th>token ID</th>
-            <th>transaction hash</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {nftIssues.map((issue) => (
-            <tr key={issue.id}>
-              <td>{issue.customerName}</td>
-              <td>
-                {issue.productName} {issue.variantName}
-              </td>
-              <td>{issue.walletAddress ?? '-'}</td>
-              <td>
-                <StatusSelect value={issue.status} options={STATUSES} onChange={(v) => changeStatus(issue, v)} />
-              </td>
-              <td>
-                <input
-                  type="text"
-                  value={draftFor(issue).tokenId}
-                  onChange={(e) => setDrafts((d) => ({ ...d, [issue.id]: { ...draftFor(issue), tokenId: e.target.value } }))}
-                />
-              </td>
-              <td>
-                <input
-                  type="text"
-                  size={20}
-                  value={draftFor(issue).transactionHash}
-                  onChange={(e) =>
-                    setDrafts((d) => ({ ...d, [issue.id]: { ...draftFor(issue), transactionHash: e.target.value } }))
-                  }
-                />
-              </td>
-              <td>
-                <button type="button" className="btn-primary btn-small" onClick={() => markIssued(issue)}>
-                  発行済みにする
-                </button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {nftIssues.length === 0 ? (
+        <div className="admin-table-card">
+          <EmptyState message="該当するNFT発行データがありません" />
+        </div>
+      ) : (
+        <div className="admin-table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>購入者</th>
+                <th>商品</th>
+                <th>ウォレット</th>
+                <th>ステータス</th>
+                <th>token ID</th>
+                <th>transaction hash</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {nftIssues.map((issue) => (
+                <tr key={issue.id}>
+                  <td>{issue.customerName}</td>
+                  <td>
+                    {issue.productName} {issue.variantName}
+                  </td>
+                  <td>{issue.walletAddress ?? '-'}</td>
+                  <td>
+                    <StatusSelect value={issue.status} options={STATUSES} onChange={(v) => changeStatus(issue, v)} />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      className="admin-inline-input"
+                      value={draftFor(issue).tokenId}
+                      onChange={(e) => setDrafts((d) => ({ ...d, [issue.id]: { ...draftFor(issue), tokenId: e.target.value } }))}
+                    />
+                  </td>
+                  <td>
+                    <input
+                      type="text"
+                      className="admin-inline-input"
+                      style={{ width: '14em' }}
+                      value={draftFor(issue).transactionHash}
+                      onChange={(e) =>
+                        setDrafts((d) => ({ ...d, [issue.id]: { ...draftFor(issue), transactionHash: e.target.value } }))
+                      }
+                    />
+                  </td>
+                  <td>
+                    <button type="button" className="btn-primary btn-small" onClick={() => markIssued(issue)}>
+                      発行済みにする
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
