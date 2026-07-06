@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/admin/notices', label: 'お知らせ管理' },
   { to: '/admin/referral-links', label: '紹介リンク発行' },
   { to: '/admin/referrals', label: '代理店・紹介成果' },
+  { to: '/admin/agencies', label: '代理店一覧' },
   { to: '/admin/legal', label: '法務ページ編集' },
   { to: '/admin/settings', label: '決済・メール設定' },
 ];

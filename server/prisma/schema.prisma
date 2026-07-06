@@ -44,7 +44,8 @@ model User {
   email        String   @unique
   phone        String?
   passwordHash String   @map("password_hash")
-  role         String   @default("user") // user | admin
+  role         String   @default("user") // user | admin | agency
+  agencyId     String?  @map("agency_id") @db.Uuid // role=agencyの場合のみ設定(仕様書外の拡張: 代理店ポータルログイン)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -52,6 +53,7 @@ model User {
   orders              Order[]
   nftIssues           NftIssue[]
   passwordResetTokens PasswordResetToken[]
+  agency              Agency?               @relation(fields: [agencyId], references: [id])
 
   @@map("users")
 }
@@ -251,6 +253,8 @@ model Agency {
   id                    String   @id @default(uuid()) @db.Uuid
   name                  String
   code                  String   @unique
+  externalId            String?  @unique @map("external_id") // 外部の代理店システム側のID(仕様書外の拡張: API連携用)
+  parentAgencyId        String?  @map("parent_agency_id") @db.Uuid // 親代理店(多階層ツリー構造。仕様書外の拡張)
   contactName           String?  @map("contact_name")
   contactEmail          String?  @map("contact_email")
   status                String   @default("active") // active | inactive
@@ -258,6 +262,9 @@ model Agency {
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
 
+  parentAgency  Agency?        @relation("AgencyHierarchy", fields: [parentAgencyId], references: [id])
+  childAgencies Agency[]       @relation("AgencyHierarchy")
+  loginUsers    User[]
   influencers   Influencer[]
   referralLinks ReferralLink[]
   commissions   Commission[]

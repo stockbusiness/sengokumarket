@@ -9,8 +9,11 @@ import referralsRouter from './routes/referrals';
 import authRouter from './routes/auth';
 import mypageRouter from './routes/mypage';
 import adminRouter from './routes/admin';
+import agencyRouter from './routes/agency';
+import integrationAgenciesRouter from './routes/integrations/agencies';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
+import { requireAgencyApiKey } from './middleware/integrationAuth';
 
 export function createApp(): Express {
   const app = express();
@@ -28,6 +31,10 @@ export function createApp(): Express {
     res.json({ status: 'ok' });
   });
 
+  // 外部の代理店システムからのサーバー間API連携。Cookie/Originに依存しないAPIキー認証のため、
+  // ブラウザCookieセッション向けのOrigin検証(requireSameOrigin)より前に登録する(仕様書外の拡張)。
+  app.use('/api/integrations/agencies', requireAgencyApiKey, integrationAgenciesRouter);
+
   // Cookie認証はSameSite=Strict + Origin検証でCSRF対策する(仕様書v1.5 16章)。
   app.use('/api', requireSameOrigin);
 
@@ -39,6 +46,7 @@ export function createApp(): Express {
   app.use('/api', authRouter);
   app.use('/api/mypage', mypageRouter);
   app.use('/api/admin', adminRouter);
+  app.use('/api/agency', agencyRouter);
 
   return app;
 }

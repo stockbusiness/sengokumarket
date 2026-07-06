@@ -26,8 +26,12 @@ import AdminWalletMissingPage from './pages/admin/AdminWalletMissingPage';
 import AdminNoticesPage from './pages/admin/AdminNoticesPage';
 import AdminReferralLinksPage from './pages/admin/AdminReferralLinksPage';
 import AdminReferralsPage from './pages/admin/AdminReferralsPage';
+import AdminAgenciesPage from './pages/admin/AdminAgenciesPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminLegalPage from './pages/admin/AdminLegalPage';
+import RequireAgency from './components/RequireAgency';
+import AgencyLayout from './components/AgencyLayout';
+import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
 import Footer from './components/Footer';
 import TokushohoPage from './pages/legal/TokushohoPage';
 import TermsPage from './pages/legal/TermsPage';
@@ -54,6 +58,7 @@ function NavBar() {
             <>
               <Link to="/mypage">マイページ</Link>
               {user.role === 'admin' && <Link to="/admin">管理画面</Link>}
+              {user.role === 'agency' && <Link to="/agency">代理店ポータル</Link>}
               <span className="nav-bar__user">{user.name}さん</span>
               <button
                 type="button"
@@ -140,8 +145,19 @@ function App() {
           <Route path="notices" element={<AdminNoticesPage />} />
           <Route path="referral-links" element={<AdminReferralLinksPage />} />
           <Route path="referrals" element={<AdminReferralsPage />} />
+          <Route path="agencies" element={<AdminAgenciesPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
           <Route path="legal" element={<AdminLegalPage />} />
+        </Route>
+        <Route
+          path="/agency"
+          element={
+            <RequireAgency>
+              <AgencyLayout />
+            </RequireAgency>
+          }
+        >
+          <Route index element={<AgencyReferralLinksPage />} />
         </Route>
         </Routes>
       </main>

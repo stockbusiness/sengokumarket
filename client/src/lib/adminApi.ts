@@ -169,6 +169,21 @@ export function deleteAdminNotice(id: string) {
 export function fetchAdminAgencies() {
   return adminFetch<{ agencies: { id: string; name: string }[] }>('/agencies');
 }
+
+export interface AdminAgencyDetail {
+  id: string;
+  name: string;
+  code: string;
+  externalId: string | null;
+  parentAgencyName: string | null;
+  status: string;
+  defaultCommissionRate: number;
+  loginEmail: string | null;
+}
+
+export function fetchAdminAgenciesDetail() {
+  return adminFetch<{ agencies: AdminAgencyDetail[] }>('/agencies/detail');
+}
 export function fetchAdminInfluencers(agencyId?: string) {
   return adminFetch<{ influencers: { id: string; name: string }[] }>(
     `/influencers${agencyId ? `?agency_id=${agencyId}` : ''}`,
@@ -271,6 +286,7 @@ export interface AdminSettings {
   stripe_public_key: AdminSettingInfo;
   resend_api_key: AdminSettingInfo;
   mail_from: AdminSettingInfo;
+  agency_api_key: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {

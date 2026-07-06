@@ -1,0 +1,172 @@
+import { Router } from 'express';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../lib/prisma';
+import { sendError } from '../../lib/apiError';
+import { generateAgencyCode } from '../../services/referralCodeGenerator';
+import { createPasswordResetToken } from '../../services/passwordReset';
+import { sendAgencyAccountSetupEmail } from '../../services/mailTemplates';
+import { isValidEmail } from '../../lib/validation';
+
+const router = Router();
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
+
+function serializeAgency(agency: {
+  id: string;
+  externalId: string | null;
+  name: string;
+  code: string;
+  status: string;
+  defaultCommissionRate: { toNumber(): number };
+  contactName: string | null;
+  contactEmail: string | null;
+  parentAgency: { externalId: string | null } | null;
+}) {
+  return {
+    id: agency.id,
+    external_id: agency.externalId,
+    name: agency.name,
+    code: agency.code,
+    status: agency.status,
+    default_commission_rate: agency.defaultCommissionRate.toNumber(),
+    contact_name: agency.contactName,
+    contact_email: agency.contactEmail,
+    parent_external_id: agency.parentAgency?.externalId ?? null,
+  };
+}
+
+router.get('/', async (_req, res) => {
+  const agencies = await prisma.agency.findMany({
+    include: { parentAgency: { select: { externalId: true } } },
+    orderBy: { createdAt: 'asc' },
+  });
+  res.json({ agencies: agencies.map(serializeAgency) });
+});
+
+router.get('/:externalId', async (req, res) => {
+  const agency = await prisma.agency.findUnique({
+    where: { externalId: req.params.externalId },
+    include: { parentAgency: { select: { externalId: true } }, childAgencies: { select: { externalId: true, name: true } } },
+  });
+  if (!agency) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
+
+  res.json({
+    agency: {
+      ...serializeAgency(agency),
+      child_external_ids: agency.childAgencies.map((c) => c.externalId).filter((id): id is string => id !== null),
+    },
+  });
+});
+
+router.post('/', async (req, res) => {
+  const {
+    external_id: externalId,
+    name,
+    parent_external_id: parentExternalId,
+    default_commission_rate: defaultCommissionRate,
+    contact_name: contactName,
+    contact_email: contactEmail,
+    status,
+    login_email: loginEmail,
+  } = req.body ?? {};
+
+  if (!isNonEmptyString(externalId)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'external_idを指定してください');
+  }
+  if (!isNonEmptyString(name)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'nameを指定してください');
+  }
+  if (
+    defaultCommissionRate !== undefined &&
+    defaultCommissionRate !== null &&
+    (typeof defaultCommissionRate !== 'number' || defaultCommissionRate < 0 || defaultCommissionRate > 100)
+  ) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'default_commission_rateは0〜100の数値で指定してください');
+  }
+  if (status !== undefined && status !== 'active' && status !== 'inactive') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'statusはactiveまたはinactiveを指定してください');
+  }
+  if (loginEmail !== undefined && loginEmail !== null && !isValidEmail(loginEmail)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'login_emailの形式が正しくありません');
+  }
+
+  try {
+    let parentAgencyId: string | null | undefined;
+    if (parentExternalId !== undefined && parentExternalId !== null) {
+      if (!isNonEmptyString(parentExternalId)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', 'parent_external_idの形式が正しくありません');
+      }
+      const parent = await prisma.agency.findUnique({ where: { externalId: parentExternalId } });
+      if (!parent) return sendError(res, 404, 'PARENT_AGENCY_NOT_FOUND', '親代理店が見つかりません(先に親を登録してください)');
+      parentAgencyId = parent.id;
+    } else if (parentExternalId === null) {
+      parentAgencyId = null;
+    }
+
+    const existing = await prisma.agency.findUnique({ where: { externalId } });
+
+    const agency = existing
+      ? await prisma.agency.update({
+          where: { id: existing.id },
+          data: {
+            name,
+            parentAgencyId,
+            defaultCommissionRate: defaultCommissionRate ?? undefined,
+            contactName: contactName ?? undefined,
+            contactEmail: contactEmail ?? undefined,
+            status: status ?? undefined,
+          },
+          include: { parentAgency: { select: { externalId: true } } },
+        })
+      : await prisma.$transaction(async (tx) => {
+          const code = await generateAgencyCode(tx);
+          return tx.agency.create({
+            data: {
+              externalId,
+              name,
+              code,
+              parentAgencyId: parentAgencyId ?? null,
+              defaultCommissionRate: defaultCommissionRate ?? 0,
+              contactName: contactName ?? null,
+              contactEmail: contactEmail ?? null,
+              status: status ?? 'active',
+            },
+            include: { parentAgency: { select: { externalId: true } } },
+          });
+        });
+
+    let loginProvisioned = false;
+    if (isNonEmptyString(loginEmail)) {
+      const alreadyHasLogin = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
+      if (!alreadyHasLogin) {
+        const user = await prisma.user.create({
+          data: {
+            name: agency.contactName ?? agency.name,
+            email: loginEmail,
+            // 仮パスワードは平文で扱わずランダム値をハッシュ化するのみ(仕様書v1.5 16章の原則を踏襲)。
+            // 本人はパスワード再設定メールのリンクから初期設定する。
+            passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+            role: 'agency',
+            agencyId: agency.id,
+          },
+        });
+        const token = await createPasswordResetToken(user.id);
+        await sendAgencyAccountSetupEmail(user.email, user.name, token);
+        loginProvisioned = true;
+      }
+    }
+
+    res.status(existing ? 200 : 201).json({ agency: { ...serializeAgency(agency), login_provisioned: loginProvisioned } });
+  } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      return sendError(res, 409, 'LOGIN_EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に使用されています');
+    }
+    throw e;
+  }
+});
+
+export default router;

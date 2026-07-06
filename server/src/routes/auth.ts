@@ -16,8 +16,8 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-function publicUser(user: { id: string; name: string; email: string; role: string }) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role };
+function publicUser(user: { id: string; name: string; email: string; role: string; agencyId?: string | null }) {
+  return { id: user.id, name: user.name, email: user.email, role: user.role, agencyId: user.agencyId ?? null };
 }
 
 router.post('/auth/register', async (req, res) => {
@@ -72,7 +72,7 @@ router.post('/auth/login', async (req, res) => {
   }
 
   await recordLoginSuccess(email, ip);
-  const token = signAuthToken({ sub: user.id, role: user.role });
+  const token = signAuthToken({ sub: user.id, role: user.role, agencyId: user.agencyId ?? undefined });
   setAuthCookie(res, token);
   res.json({ user: publicUser(user) });
 });

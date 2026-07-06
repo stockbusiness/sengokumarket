@@ -9,6 +9,7 @@ export const SETTING_KEYS = [
   'stripe_public_key',
   'resend_api_key',
   'mail_from',
+  'agency_api_key',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

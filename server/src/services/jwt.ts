@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 export interface AuthTokenPayload {
   sub: string;
   role: string;
+  agencyId?: string;
 }
 
 function getSecret(): string {

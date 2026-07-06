@@ -5,6 +5,7 @@ export interface AuthUser {
   name: string;
   email: string;
   role: string;
+  agencyId: string | null;
 }
 
 interface AuthContextValue {

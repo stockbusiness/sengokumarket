@@ -1,28 +1,18 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
-import { generateAgencyCode, generateInfluencerCode, generateReferralLinkCode } from '../../services/referralCodeGenerator';
+import { generateAgencyCode } from '../../services/referralCodeGenerator';
+import {
+  buildReferralUrl,
+  createReferralLinkForAgency,
+  resolveCommissionRate as resolveRate,
+  type InfluencerInput,
+} from '../../services/referralLinkService';
 
 const router = Router();
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
-}
-
-function buildReferralUrl(landingPath: string, code: string): string {
-  const appUrl = process.env.APP_URL ?? '';
-  const separator = landingPath.includes('?') ? '&' : '?';
-  return `${appUrl}${landingPath}${separator}ref=${code}`;
-}
-
-function resolveRate(
-  linkRate: number | null,
-  influencerRate: number | null | undefined,
-  agencyRate: number,
-): number {
-  if (linkRate !== null && linkRate !== undefined) return linkRate;
-  if (influencerRate !== null && influencerRate !== undefined) return influencerRate;
-  return agencyRate;
 }
 
 router.get('/referral-links', async (_req, res) => {
@@ -65,10 +55,6 @@ interface AgencyInput {
   new_name?: string;
   default_commission_rate?: number;
 }
-interface InfluencerInput {
-  id?: string;
-  new_name?: string;
-}
 
 router.post('/referral-links', async (req, res) => {
   const { agency, influencer, commission_rate: commissionRate, landing_path: landingPathRaw } = req.body ?? {};
@@ -109,30 +95,13 @@ router.post('/referral-links', async (req, res) => {
         agencyId = agencyRecord.id;
       }
 
-      let influencerId: string | null = null;
-      let influencerRecord = null;
-      if (influencerInput?.id) {
-        influencerRecord = await tx.influencer.findUnique({ where: { id: influencerInput.id } });
-        if (!influencerRecord) throw new Error('INFLUENCER_NOT_FOUND');
-        influencerId = influencerRecord.id;
-      } else if (influencerInput?.new_name) {
-        const code = await generateInfluencerCode(tx);
-        influencerRecord = await tx.influencer.create({
-          data: { agencyId, name: influencerInput.new_name.trim(), code },
-        });
-        influencerId = influencerRecord.id;
-      }
-
-      const linkCode = await generateReferralLinkCode(tx);
-      const referralLink = await tx.referralLink.create({
-        data: {
-          code: linkCode,
-          agencyId,
-          influencerId,
-          commissionRate: commissionRate ?? null,
-          landingPath,
-        },
-      });
+      const { referralLink, influencerRecord } = await createReferralLinkForAgency(
+        tx,
+        agencyId,
+        influencerInput,
+        commissionRate ?? null,
+        landingPath,
+      );
 
       return { referralLink, agencyRecord, influencerRecord };
     });

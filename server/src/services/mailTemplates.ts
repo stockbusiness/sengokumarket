@@ -40,6 +40,19 @@ export async function sendGuestPasswordSetupEmail(email: string, name: string, t
   await sendMail({ to: email, subject: 'パスワード設定のご案内', html });
 }
 
+export async function sendAgencyAccountSetupEmail(email: string, name: string, token: string): Promise<void> {
+  const setupUrl = `${appUrl()}/password-reset/confirm?token=${token}`;
+
+  const html = `
+    <p>${name} 様</p>
+    <p>代理店ポータルのアカウントが作成されました。ご利用にはパスワードの設定が必要です。</p>
+    <p><a href="${setupUrl}">パスワードを設定する</a></p>
+    <p>このリンクの有効期限は72時間です。</p>
+  `;
+
+  await sendMail({ to: email, subject: '代理店ポータル アカウント設定のご案内', html });
+}
+
 export async function sendPasswordResetEmail(email: string, name: string, token: string): Promise<void> {
   const resetUrl = `${appUrl()}/password-reset/confirm?token=${token}`;
 

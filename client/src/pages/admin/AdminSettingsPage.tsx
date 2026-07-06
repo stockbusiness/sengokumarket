@@ -7,6 +7,7 @@ const FIELDS: { key: keyof AdminSettings; label: string }[] = [
   { key: 'stripe_public_key', label: 'Stripe公開可能キー' },
   { key: 'resend_api_key', label: 'Resend APIキー' },
   { key: 'mail_from', label: '送信元メールアドレス(MAIL_FROM)' },
+  { key: 'agency_api_key', label: '代理店連携APIキー(外部の代理店システム用)' },
 ];
 
 export default function AdminSettingsPage() {
