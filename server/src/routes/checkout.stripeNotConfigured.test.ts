@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { referralCookieHeader } from '../test/referralCookie';
 
 // Stripe未設定(settingsテーブルにstripe_secret_keyが無い)状態で
 // 実際にcreateStripeCheckoutSessionを呼び出し、失敗時に在庫の仮引当が
@@ -47,6 +48,7 @@ describe('POST /api/checkout/create-session (Stripe未設定)', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({
         customerName: 'テスト太郎',
         customerEmail: email,

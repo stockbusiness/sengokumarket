@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { referralCookieHeader } from '../test/referralCookie';
 
 // このテストファイルでは注文作成の業務ロジックのみを検証する。
 // 実際のStripe API呼び出しはネットワーク/実キーが必要なため、成功を返すダミー実装に差し替える。
@@ -79,6 +80,7 @@ describe('POST /api/checkout/create-session', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     expect(res.status).toBe(201);
@@ -101,6 +103,7 @@ describe('POST /api/checkout/create-session', () => {
     await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const userCountAfterFirst = await prisma.user.count({ where: { email } });
@@ -111,6 +114,7 @@ describe('POST /api/checkout/create-session', () => {
     await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const userCountAfterSecond = await prisma.user.count({ where: { email } });
@@ -124,6 +128,7 @@ describe('POST /api/checkout/create-session', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 999 }] });
 
     expect(res.status).toBe(409);
@@ -137,6 +142,7 @@ describe('POST /api/checkout/create-session', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({
         ...baseCustomer,
         customerEmail: `terms-checkout-test-${Date.now()}@example.com`,
@@ -153,6 +159,7 @@ describe('POST /api/checkout/create-session', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
 
     const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
@@ -167,6 +174,7 @@ describe('POST /api/checkout/create-session', () => {
     const res = await request(app)
       .post('/api/checkout/create-session')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({
         ...baseCustomer,
         customerEmail: email,

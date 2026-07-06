@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
+import { requireReferralOrAuth } from '../middleware/referralAccess';
 
 const router = Router();
 
@@ -15,7 +16,7 @@ function serializeVariant(variant: { id: string; name: string; price: number; st
   };
 }
 
-router.get('/products', async (_req, res) => {
+router.get('/products', requireReferralOrAuth, async (_req, res) => {
   const products = await prisma.product.findMany({
     where: { status: 'published' },
     include: { variants: true },
@@ -35,7 +36,7 @@ router.get('/products', async (_req, res) => {
   });
 });
 
-router.get('/products/:idOrSlug', async (req, res) => {
+router.get('/products/:idOrSlug', requireReferralOrAuth, async (req, res) => {
   const { idOrSlug } = req.params;
   const product = await prisma.product.findFirst({
     where: UUID_RE.test(idOrSlug) ? { id: idOrSlug, status: 'published' } : { slug: idOrSlug, status: 'published' },

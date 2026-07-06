@@ -32,6 +32,8 @@ import AdminLegalPage from './pages/admin/AdminLegalPage';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
 import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
+import RequireReferralAccess from './components/RequireReferralAccess';
+import InviteOnlyPage from './pages/InviteOnlyPage';
 import Footer from './components/Footer';
 import TokushohoPage from './pages/legal/TokushohoPage';
 import TermsPage from './pages/legal/TermsPage';
@@ -98,14 +100,50 @@ function App() {
       <main className="app-main">
         <Routes>
         <Route path="/" element={<Navigate to="/products" replace />} />
-        <Route path="/products" element={<ProductListPage />} />
-        <Route path="/products/:idOrSlug" element={<ProductDetailPage />} />
-        <Route path="/cart" element={<CartPage />} />
-        <Route path="/checkout" element={<CheckoutPage />} />
+        <Route path="/invite-only" element={<InviteOnlyPage />} />
+        <Route
+          path="/products"
+          element={
+            <RequireReferralAccess>
+              <ProductListPage />
+            </RequireReferralAccess>
+          }
+        />
+        <Route
+          path="/products/:idOrSlug"
+          element={
+            <RequireReferralAccess>
+              <ProductDetailPage />
+            </RequireReferralAccess>
+          }
+        />
+        <Route
+          path="/cart"
+          element={
+            <RequireReferralAccess>
+              <CartPage />
+            </RequireReferralAccess>
+          }
+        />
+        <Route
+          path="/checkout"
+          element={
+            <RequireReferralAccess>
+              <CheckoutPage />
+            </RequireReferralAccess>
+          }
+        />
         <Route path="/checkout/success" element={<CheckoutSuccessPage />} />
         <Route path="/checkout/cancel" element={<CheckoutCancelPage />} />
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route
+          path="/register"
+          element={
+            <RequireReferralAccess>
+              <RegisterPage />
+            </RequireReferralAccess>
+          }
+        />
         <Route path="/password-reset" element={<PasswordResetRequestPage />} />
         <Route path="/password-reset/confirm" element={<PasswordResetConfirmPage />} />
         <Route path="/legal/tokushoho" element={<TokushohoPage />} />

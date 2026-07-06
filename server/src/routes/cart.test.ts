@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { referralCookieHeader } from '../test/referralCookie';
 
 const app = createApp();
 
@@ -44,6 +45,7 @@ describe('POST /api/cart/validate', () => {
     const res = await request(app)
       .post('/api/cart/validate')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ items: [{ variantId, quantity: 2 }] });
 
     expect(res.status).toBe(200);
@@ -56,6 +58,7 @@ describe('POST /api/cart/validate', () => {
     const res = await request(app)
       .post('/api/cart/validate')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ items: [{ variantId, quantity: 3 }] });
 
     expect(res.status).toBe(200);
@@ -67,6 +70,7 @@ describe('POST /api/cart/validate', () => {
     const res = await request(app)
       .post('/api/cart/validate')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ items: [{ variantId: '00000000-0000-0000-0000-000000000000', quantity: 1 }] });
 
     expect(res.status).toBe(200);
@@ -78,6 +82,7 @@ describe('POST /api/cart/validate', () => {
     const res = await request(app)
       .post('/api/cart/validate')
       .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
       .send({ items: [{ variantId, quantity: 0 }] });
 
     expect(res.status).toBe(400);

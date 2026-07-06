@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
+import { requireReferralOrAuth } from '../middleware/referralAccess';
 
 const router = Router();
 
@@ -9,7 +10,7 @@ interface ValidateRequestItem {
   quantity: number;
 }
 
-router.post('/cart/validate', async (req, res) => {
+router.post('/cart/validate', requireReferralOrAuth, async (req, res) => {
   const items: ValidateRequestItem[] = Array.isArray(req.body?.items) ? req.body.items : [];
 
   if (

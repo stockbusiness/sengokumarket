@@ -4,10 +4,11 @@ import { HttpError } from '../lib/httpError';
 import { cancelOrderReservation, createPendingOrder, validateCreatePendingOrderInput } from '../services/checkout';
 import { createStripeCheckoutSession } from '../services/stripeCheckout';
 import { prisma } from '../lib/prisma';
+import { requireReferralOrAuth } from '../middleware/referralAccess';
 
 const router = Router();
 
-router.post('/checkout/create-session', async (req, res) => {
+router.post('/checkout/create-session', requireReferralOrAuth, async (req, res) => {
   let orderId: string | null = null;
   try {
     const input = validateCreatePendingOrderInput(req.body);
