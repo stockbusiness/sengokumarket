@@ -42,7 +42,10 @@ export async function getAllSettingsMasked(): Promise<Record<SettingKey, { confi
     }
     const value = decryptSetting(raw);
     const visible = value.slice(-4);
-    result[key] = { configured: true, masked: `${'*'.repeat(Math.max(value.length - 4, 0))}${visible}` };
+    // 実際の値の長さをそのまま伏せ字数に反映すると、長いシークレットキーで
+    // 伏せ字が非常に長くなり画面レイアウトが崩れるため、表示上は固定長にする。
+    const maskLength = Math.min(Math.max(value.length - 4, 0), 8);
+    result[key] = { configured: true, masked: `${'*'.repeat(maskLength)}${visible}` };
   }
   return result;
 }

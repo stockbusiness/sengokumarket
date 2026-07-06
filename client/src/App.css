@@ -810,6 +810,7 @@
   flex-direction: column;
   gap: 4px;
   margin-bottom: 8px;
+  overflow-wrap: anywhere;
 }
 
 .referral-links-form select,
