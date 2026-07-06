@@ -34,7 +34,7 @@ export default function AdminSettingsPage() {
       <p>Stripe/Resendの連携情報です。空欄のまま保存すると既存の値は変更されません。</p>
 
       {settings && (
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} className="admin-form-card">
           {FIELDS.map((field) => (
             <label key={field.key}>
               {field.label}
@@ -48,7 +48,9 @@ export default function AdminSettingsPage() {
             </label>
           ))}
           {message && <p>{message}</p>}
-          <button type="submit">保存する</button>
+          <button type="submit" className="btn-primary">
+            保存する
+          </button>
         </form>
       )}
     </div>

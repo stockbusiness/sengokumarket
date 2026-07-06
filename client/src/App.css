@@ -722,7 +722,8 @@
   max-width: 480px;
 }
 
-.referral-links-form {
+.referral-links-form,
+.admin-form-card {
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -730,10 +731,17 @@
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 20px;
+  margin: 16px 0;
+  max-width: 520px;
+}
+
+.admin-form-card--wide {
+  max-width: none;
 }
 
 .referral-links-form label,
-.admin-content form label {
+.admin-content form label,
+.admin-form-card label {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -744,7 +752,10 @@
 .referral-links-form input,
 .admin-content form select,
 .admin-content form input,
-.admin-content form textarea {
+.admin-content form textarea,
+.admin-form-card select,
+.admin-form-card input,
+.admin-form-card textarea {
   min-height: 44px;
   font-size: 16px;
 }

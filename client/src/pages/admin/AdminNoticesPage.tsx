@@ -40,7 +40,7 @@ export default function AdminNoticesPage() {
     <div>
       <h1>お知らせ管理</h1>
 
-      <form onSubmit={handleCreate}>
+      <form onSubmit={handleCreate} className="admin-form-card">
         <label>
           タイトル
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} required />
@@ -49,7 +49,9 @@ export default function AdminNoticesPage() {
           本文
           <textarea value={body} onChange={(e) => setBody(e.target.value)} required />
         </label>
-        <button type="submit">新規作成</button>
+        <button type="submit" className="btn-primary">
+          新規作成
+        </button>
       </form>
 
       <table>
@@ -70,10 +72,10 @@ export default function AdminNoticesPage() {
               </td>
               <td>{n.publishedAt ? new Date(n.publishedAt).toLocaleString('ja-JP') : '-'}</td>
               <td>
-                <button type="button" onClick={() => togglePublish(n)}>
+                <button type="button" className="btn-secondary btn-small" onClick={() => togglePublish(n)}>
                   {n.status === 'published' ? '非公開にする' : '公開する'}
-                </button>
-                <button type="button" onClick={() => remove(n)}>
+                </button>{' '}
+                <button type="button" className="btn-secondary btn-small" onClick={() => remove(n)}>
                   削除
                 </button>
               </td>

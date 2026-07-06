@@ -5,9 +5,9 @@ import {
   updateAdminProduct,
   type AdminProduct,
 } from '../../lib/adminApi';
+import StatusBadge from '../../components/StatusBadge';
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
-const STATUSES = ['draft', 'published', 'archived'];
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -57,12 +57,16 @@ export default function AdminProductsPage() {
   return (
     <div>
       <h1>商品管理</h1>
-      <button type="button" onClick={() => setShowForm((v) => !v)}>
+      <button
+        type="button"
+        className={showForm ? 'btn-secondary btn-small' : 'btn-primary btn-small'}
+        onClick={() => setShowForm((v) => !v)}
+      >
         {showForm ? 'キャンセル' : '新規作成'}
       </button>
 
       {showForm && (
-        <form onSubmit={handleCreate}>
+        <form onSubmit={handleCreate} className="admin-form-card">
           <label>
             商品名
             <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -90,7 +94,9 @@ export default function AdminProductsPage() {
             <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
           </label>
           {error && <p className="checkout-error">{error}</p>}
-          <button type="submit">作成する</button>
+          <button type="submit" className="btn-primary">
+            作成する
+          </button>
         </form>
       )}
 
@@ -113,8 +119,9 @@ export default function AdminProductsPage() {
               <td>{p.itemType}</td>
               <td>{p.basePrice.toLocaleString()}円</td>
               <td>
-                <button type="button" onClick={() => toggleStatus(p)}>
-                  {STATUSES.includes(p.status) ? p.status : p.status}(切替)
+                <StatusBadge status={p.status} />{' '}
+                <button type="button" className="btn-secondary btn-small" onClick={() => toggleStatus(p)}>
+                  切替
                 </button>
               </td>
               <td>

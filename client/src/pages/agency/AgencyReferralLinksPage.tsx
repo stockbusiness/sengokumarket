@@ -116,7 +116,7 @@ export default function AgencyReferralLinksPage() {
         <div className="referral-links-result">
           <p>発行しました(コード: {created.code} / 適用報酬率: {created.resolvedCommissionRate}%)</p>
           <p className="referral-links-url">{created.url}</p>
-          <button type="button" onClick={() => copyUrl(created.url)}>
+          <button type="button" className="btn-small" onClick={() => copyUrl(created.url)}>
             {copied ? 'コピーしました' : 'URLをコピー'}
           </button>
         </div>
@@ -130,7 +130,7 @@ export default function AgencyReferralLinksPage() {
               <strong>{link.code}</strong> <StatusBadge status={link.status} />
             </div>
             <div className="referral-links-url">{link.url}</div>
-            <button type="button" onClick={() => copyUrl(link.url)}>
+            <button type="button" className="btn-secondary btn-small" onClick={() => copyUrl(link.url)}>
               URLをコピー
             </button>
             <div>

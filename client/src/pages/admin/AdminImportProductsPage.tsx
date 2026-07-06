@@ -64,18 +64,20 @@ export default function AdminImportProductsPage() {
         バリエーション名, SKU, 価格, 在庫数。任意列: 商品説明, 公開ステータス。
       </p>
 
-      <input type="file" accept=".csv,text/csv" onChange={handleFileChange} />
-      {fileName && <p>選択中: {fileName}</p>}
+      <div className="admin-form-card">
+        <input type="file" accept=".csv,text/csv" onChange={handleFileChange} />
+        {fileName && <p>選択中: {fileName}</p>}
 
-      {error && <p className="checkout-error">{error}</p>}
+        {error && <p className="checkout-error">{error}</p>}
 
-      <div>
-        <button type="button" onClick={handlePreview} disabled={!csvContent || busy}>
-          プレビュー
-        </button>
-        <button type="button" onClick={handleImport} disabled={!csvContent || !previewed || busy}>
-          インポート実行
-        </button>
+        <div>
+          <button type="button" className="btn-secondary btn-small" onClick={handlePreview} disabled={!csvContent || busy}>
+            プレビュー
+          </button>{' '}
+          <button type="button" className="btn-primary btn-small" onClick={handleImport} disabled={!csvContent || !previewed || busy}>
+            インポート実行
+          </button>
+        </div>
       </div>
 
       {result && (
@@ -99,7 +101,11 @@ export default function AdminImportProductsPage() {
                   <td>{r.line}</td>
                   <td>{r.slug ?? '-'}</td>
                   <td>{r.sku ?? '-'}</td>
-                  <td>{ACTION_LABEL[r.action]}</td>
+                  <td>
+                    <span className={`status-badge status-badge--${r.action === 'error' ? 'warning' : 'success'}`}>
+                      {ACTION_LABEL[r.action]}
+                    </span>
+                  </td>
                   <td>{r.errors.join(' / ')}</td>
                 </tr>
               ))}

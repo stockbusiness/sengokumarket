@@ -94,7 +94,7 @@ export default function AdminNftIssuesPage() {
                 />
               </td>
               <td>
-                <button type="button" onClick={() => markIssued(issue)}>
+                <button type="button" className="btn-primary btn-small" onClick={() => markIssued(issue)}>
                   発行済みにする
                 </button>
               </td>

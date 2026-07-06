@@ -111,7 +111,7 @@ export default function AdminReferralsPage() {
           <input type="checkbox" checked={markApproved} onChange={(e) => setMarkApproved(e.target.checked)} />
           出力対象のpendingをapprovedに一括変更する
         </label>
-        <button type="button" onClick={handleExport} disabled={!from || !to}>
+        <button type="button" className="btn-primary btn-small" onClick={handleExport} disabled={!from || !to}>
           CSV出力
         </button>
       </div>

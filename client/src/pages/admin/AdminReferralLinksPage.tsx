@@ -172,7 +172,7 @@ export default function AdminReferralLinksPage() {
         <div className="referral-links-result">
           <p>発行しました(コード: {created.code} / 適用報酬率: {created.resolvedCommissionRate}%)</p>
           <p className="referral-links-url">{created.url}</p>
-          <button type="button" onClick={() => copyUrl(created.url)}>
+          <button type="button" className="btn-small" onClick={() => copyUrl(created.url)}>
             {copied ? 'コピーしました' : 'URLをコピー'}
           </button>
         </div>
@@ -186,14 +186,14 @@ export default function AdminReferralLinksPage() {
               <strong>{link.code}</strong> <StatusBadge status={link.status} />
             </div>
             <div className="referral-links-url">{link.url}</div>
-            <button type="button" onClick={() => copyUrl(link.url)}>
+            <button type="button" className="btn-secondary btn-small" onClick={() => copyUrl(link.url)}>
               URLをコピー
             </button>
             <div>
               代理店: {link.agencyName ?? '-'} / インフルエンサー: {link.influencerName ?? '-'} / 報酬率:{' '}
               {link.resolvedCommissionRate}%
             </div>
-            <button type="button" onClick={() => toggleStatus(link)}>
+            <button type="button" className="btn-secondary btn-small" onClick={() => toggleStatus(link)}>
               {link.status === 'active' ? '無効にする' : '有効にする'}
             </button>
           </li>
