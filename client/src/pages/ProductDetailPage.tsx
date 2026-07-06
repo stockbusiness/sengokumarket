@@ -70,6 +70,7 @@ export default function ProductDetailPage() {
 
       <button
         type="button"
+        className="btn-primary"
         disabled={!selectedVariant || selectedVariant.availableStock === 0}
         onClick={() => {
           if (!selectedVariant) return;

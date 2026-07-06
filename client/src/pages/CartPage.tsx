@@ -116,7 +116,7 @@ export default function CartPage() {
 
       <p>合計: {totalAmount.toLocaleString()}円(税込)</p>
 
-      <button type="button" onClick={handleProceedToCheckout} disabled={validating}>
+      <button type="button" className="btn-primary" onClick={handleProceedToCheckout} disabled={validating}>
         {validating ? '確認中...' : '購入手続きへ進む'}
       </button>
     </div>

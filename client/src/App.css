@@ -1,43 +1,198 @@
+/* ==================== レイアウト共通 ==================== */
+
+.app-main {
+  flex: 1;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 32px 24px 64px;
+}
+
+@media (max-width: 640px) {
+  .app-main {
+    padding: 20px 16px 48px;
+  }
+}
+
+/* ==================== ヘッダー・ナビゲーション ==================== */
+
+.site-header {
+  background: var(--primary);
+  color: var(--primary-contrast);
+  border-bottom: 3px solid var(--accent);
+}
+
+.nav-bar {
+  max-width: 1080px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+}
+
+.nav-bar a {
+  color: var(--primary-contrast);
+  text-decoration: none;
+}
+
+.nav-bar__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  font-size: 0.95rem;
+}
+
+.nav-bar__links a:hover {
+  color: var(--accent-light);
+}
+
+.nav-bar__user {
+  opacity: 0.85;
+  font-size: 0.9rem;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.brand__mark {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--primary-contrast) inset;
+}
+
+.brand__name {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  font-size: 1.3rem;
+  letter-spacing: 0.05em;
+}
+
+.brand__sub {
+  font-size: 0.75rem;
+  opacity: 0.8;
+  display: none;
+}
+
+@media (min-width: 640px) {
+  .brand__sub {
+    display: inline;
+  }
+}
+
+/* ==================== ボタン ==================== */
+
+.btn-primary {
+  background: var(--primary);
+  border-color: var(--primary-dark);
+  color: var(--primary-contrast);
+  font-weight: 700;
+  padding: 12px 28px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-dark);
+  border-color: var(--accent);
+}
+
+.btn-secondary {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-h);
+}
+
+.btn-small {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+}
+
+/* ==================== 商品一覧・詳細 ==================== */
+
 .product-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 24px;
 }
 
 .product-card {
   display: block;
+  background: var(--bg-elevated);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 10px;
+  padding: 20px;
   text-decoration: none;
   color: inherit;
+  box-shadow: var(--shadow);
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.product-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--accent);
 }
 
 .product-card img {
   width: 100%;
   height: auto;
-  border-radius: 4px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.product-card h2 {
+  border: none;
+  padding: 0;
+}
+
+.product-detail {
+  max-width: 640px;
 }
 
 .product-detail img {
   max-width: 320px;
   width: 100%;
   height: auto;
-  border-radius: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
 }
 
 .product-detail fieldset {
   margin: 16px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
 }
+
+.product-detail legend {
+  padding: 0 8px;
+  color: var(--text-h);
+  font-weight: 500;
+}
+
+.product-detail label {
+  display: block;
+  margin: 8px 0;
+}
+
+/* ==================== カート ==================== */
 
 .cart-page table {
   width: 100%;
   border-collapse: collapse;
   margin: 16px 0;
+  background: var(--bg-elevated);
 }
 
 .cart-page td {
-  padding: 8px;
+  padding: 12px 10px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -46,59 +201,175 @@
 }
 
 .cart-notices {
-  color: #b33;
+  color: var(--danger);
+  background: var(--bg-elevated);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  padding: 12px 16px;
+  list-style: none;
 }
+
+/* ==================== フォーム系ページ(checkout/login/register等) ==================== */
 
 .checkout-page {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   max-width: 480px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 28px;
+  box-shadow: var(--shadow);
+}
+
+.checkout-page label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .checkout-error {
-  color: #b33;
+  color: var(--danger);
+  font-weight: 500;
 }
 
-.nav-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
-}
+/* ==================== マイページ ==================== */
 
 .mypage section {
-  margin: 24px 0;
+  margin: 28px 0;
 }
 
 .mypage-banner {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 16px 20px;
   margin: 16px 0;
 }
 
 .wallet-confirm-modal {
-  border: 1px solid var(--border);
+  border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 16px;
   margin-top: 16px;
+  background: var(--bg-elevated);
 }
+
+.nft-status-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+/* デジタル会員証らしい「カード」の見た目にする */
+.nft-status-card {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  color: var(--primary-contrast);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow);
+}
+
+.nft-status-card__name {
+  font-family: var(--font-heading);
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.nft-status-card__status {
+  display: inline-block;
+  font-size: 0.85rem;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid var(--accent-light);
+}
+
+.nft-status-card__meta {
+  margin-top: 8px;
+  font-size: 0.85rem;
+  opacity: 0.9;
+}
+
+.nft-status-card__meta a {
+  color: var(--accent-light);
+}
+
+.nft-status-card--issued {
+  background: linear-gradient(135deg, #2f4a35 0%, #1c2e20 100%);
+}
+
+.nft-status-card--failed,
+.nft-status-card--cancelled {
+  background: linear-gradient(135deg, #4a3a2f 0%, #2e241c 100%);
+  opacity: 0.85;
+}
+
+.order-history-list,
+.notice-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.order-history-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.notice-list li {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  padding: 12px 16px;
+}
+
+/* ==================== 管理画面 ==================== */
 
 .admin-layout {
   display: flex;
-  gap: 24px;
+  gap: 32px;
   align-items: flex-start;
 }
 
 .admin-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  min-width: 160px;
+  gap: 4px;
+  min-width: 180px;
   flex-shrink: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.admin-nav a {
+  padding: 8px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 0.92rem;
+}
+
+.admin-nav a:hover {
+  background: var(--bg);
+  color: var(--primary);
 }
 
 .admin-content {
@@ -110,44 +381,59 @@
 .admin-content table {
   width: 100%;
   border-collapse: collapse;
+  background: var(--bg-elevated);
 }
 
 .admin-content th,
 .admin-content td {
-  padding: 6px 8px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   font-size: 0.9em;
 }
 
+.admin-content th {
+  color: var(--text-h);
+  border-bottom: 2px solid var(--accent);
+}
+
 .admin-stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 14px;
   margin: 16px 0;
 }
 
 .admin-stat {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border-top: 3px solid var(--accent);
 }
 
 .admin-stat-label {
   font-size: 0.85em;
-  opacity: 0.8;
+  color: var(--text-muted);
 }
 
 .admin-stat-value {
-  font-size: 1.4em;
+  font-size: 1.5em;
   font-weight: bold;
+  color: var(--text-h);
+  font-family: var(--font-heading);
 }
 
 .admin-alert {
-  border: 1px solid #b33;
-  border-radius: 8px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
   padding: 12px 16px;
   margin: 16px 0;
+  background: var(--bg-elevated);
+}
+
+.admin-alert h2 {
+  color: var(--danger);
 }
 
 /* 紹介リンク発行画面はスマホ操作前提のレイアウトにする(仕様書v1.5 5.9 / 11章) */
@@ -159,6 +445,10 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
 }
 
 .referral-links-form label,
@@ -179,10 +469,17 @@
 }
 
 .referral-links-result {
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
   padding: 16px;
   margin: 16px 0;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  color: var(--primary-contrast);
+}
+
+.referral-links-result a,
+.referral-links-result .referral-links-url {
+  color: var(--accent-light);
 }
 
 .referral-links-url {
@@ -201,8 +498,9 @@
 
 .referral-links-list li {
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--bg-elevated);
 }
 
 .referral-links-list button {
@@ -215,24 +513,66 @@
   gap: 12px;
   align-items: center;
   margin-bottom: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
 }
 
+/* ==================== フッター ==================== */
+
 .site-footer {
+  border-top: 3px solid var(--accent);
+  background: var(--primary);
+  color: var(--primary-contrast);
+  margin-top: 48px;
+}
+
+.site-footer__inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.site-footer__links {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  padding: 16px;
-  margin-top: 32px;
-  border-top: 1px solid var(--border);
-  font-size: 0.9em;
+  font-size: 0.85em;
 }
+
+.site-footer a {
+  color: var(--primary-contrast);
+  text-decoration: none;
+  opacity: 0.85;
+}
+
+.site-footer a:hover {
+  opacity: 1;
+  color: var(--accent-light);
+}
+
+.site-footer__copyright {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+
+/* ==================== 法務ページ ==================== */
 
 .legal-page {
   max-width: 640px;
 }
 
 .legal-placeholder-notice {
-  border: 1px dashed var(--border);
+  border: 1px dashed var(--danger);
+  color: var(--danger);
   padding: 8px 12px;
   border-radius: 6px;
   font-size: 0.9em;
@@ -241,6 +581,7 @@
 .legal-table {
   border-collapse: collapse;
   width: 100%;
+  background: var(--bg-elevated);
 }
 
 .legal-table th,
@@ -254,4 +595,5 @@
 .legal-table th {
   white-space: nowrap;
   width: 12em;
+  background: var(--bg);
 }

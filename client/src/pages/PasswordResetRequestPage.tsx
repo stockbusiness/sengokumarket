@@ -36,7 +36,7 @@ export default function PasswordResetRequestPage() {
         メールアドレス
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
       </label>
-      <button type="submit" disabled={submitting}>
+      <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? '送信中...' : '再設定メールを送信'}
       </button>
     </form>

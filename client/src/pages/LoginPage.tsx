@@ -40,7 +40,7 @@ export default function LoginPage() {
 
       {error && <p className="checkout-error">{error}</p>}
 
-      <button type="submit" disabled={submitting}>
+      <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? 'ログイン中...' : 'ログイン'}
       </button>
 

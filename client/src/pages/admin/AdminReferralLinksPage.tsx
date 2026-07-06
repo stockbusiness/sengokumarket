@@ -162,7 +162,9 @@ export default function AdminReferralLinksPage() {
 
         {error && <p className="checkout-error">{error}</p>}
 
-        <button type="submit">発行する</button>
+        <button type="submit" className="btn-primary">
+          発行する
+        </button>
       </form>
 
       {created && (

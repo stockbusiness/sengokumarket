@@ -79,7 +79,7 @@ export default function WalletPage() {
         {error && <p className="checkout-error">{error}</p>}
         {message && <p>{message}</p>}
 
-        <button type="submit" disabled={submitting}>
+        <button type="submit" className="btn-primary" disabled={submitting}>
           {submitting ? '登録中...' : currentAddress ? '更新する' : '登録する'}
         </button>
       </form>

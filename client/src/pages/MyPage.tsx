@@ -52,17 +52,21 @@ export default function MyPage() {
       <section>
         <h2>デジタル会員証の発行状況</h2>
         {nftIssues.length === 0 && <p>対象のデジタル会員証はありません。</p>}
-        <ul>
+        <ul className="nft-status-list">
           {nftIssues.map((issue) => (
-            <li key={issue.id}>
-              {issue.productName} {issue.variantName} - {NFT_STATUS_LABEL[issue.status] ?? issue.status}
-              {issue.status === 'issued' && issue.tokenId && <> (token ID: {issue.tokenId})</>}
-              {issue.status === 'failed' && <> サポートまでお問い合わせください</>}
+            <li key={issue.id} className={`nft-status-card nft-status-card--${issue.status}`}>
+              <div className="nft-status-card__name">
+                {issue.productName} {issue.variantName}
+              </div>
+              <div className="nft-status-card__status">{NFT_STATUS_LABEL[issue.status] ?? issue.status}</div>
+              {issue.status === 'issued' && issue.tokenId && (
+                <div className="nft-status-card__meta">token ID: {issue.tokenId}</div>
+              )}
+              {issue.status === 'failed' && <div className="nft-status-card__meta">サポートまでお問い合わせください</div>}
               {issue.status === 'wallet_required' && (
-                <>
-                  {' '}
+                <div className="nft-status-card__meta">
                   <Link to="/mypage/wallet">ウォレットを登録する</Link>
-                </>
+                </div>
               )}
             </li>
           ))}
@@ -72,10 +76,12 @@ export default function MyPage() {
       <section>
         <h2>購入履歴</h2>
         {orders.length === 0 && <p>購入履歴はありません。</p>}
-        <ul>
+        <ul className="order-history-list">
           {orders.map((order) => (
             <li key={order.id}>
-              {order.orderNumber} - {order.totalAmount.toLocaleString()}円(税込) - {order.paymentStatus}
+              <span>{order.orderNumber}</span>
+              <span>{order.totalAmount.toLocaleString()}円(税込)</span>
+              <span>{order.paymentStatus}</span>
             </li>
           ))}
         </ul>
@@ -84,7 +90,7 @@ export default function MyPage() {
       <section>
         <h2>お知らせ</h2>
         {notices.length === 0 && <p>お知らせはありません。</p>}
-        <ul>
+        <ul className="notice-list">
           {notices.map((notice) => (
             <li key={notice.id}>
               <strong>{notice.title}</strong>

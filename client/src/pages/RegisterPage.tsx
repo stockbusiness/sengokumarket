@@ -52,7 +52,7 @@ export default function RegisterPage() {
 
       {error && <p className="checkout-error">{error}</p>}
 
-      <button type="submit" disabled={submitting}>
+      <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? '登録中...' : '登録する'}
       </button>
     </form>

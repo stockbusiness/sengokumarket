@@ -39,31 +39,43 @@ function NavBar() {
   const navigate = useNavigate();
 
   return (
-    <nav className="nav-bar">
-      <Link to="/products">商品一覧</Link>
-      <Link to="/cart">カート</Link>
-      {user ? (
-        <>
-          <Link to="/mypage">マイページ</Link>
-          {user.role === 'admin' && <Link to="/admin">管理画面</Link>}
-          <span>{user.name}さん</span>
-          <button
-            type="button"
-            onClick={async () => {
-              await logout();
-              navigate('/products');
-            }}
-          >
-            ログアウト
-          </button>
-        </>
-      ) : (
-        <>
-          <Link to="/login">ログイン</Link>
-          <Link to="/register">会員登録</Link>
-        </>
-      )}
-    </nav>
+    <header className="site-header">
+      <nav className="nav-bar">
+        <Link to="/products" className="brand">
+          <span className="brand__mark" aria-hidden="true" />
+          <span className="brand__name">戦国経済圏</span>
+          <span className="brand__sub">評議員デジタル会員証</span>
+        </Link>
+        <div className="nav-bar__links">
+          <Link to="/products">商品一覧</Link>
+          <Link to="/cart">カート</Link>
+          {user ? (
+            <>
+              <Link to="/mypage">マイページ</Link>
+              {user.role === 'admin' && <Link to="/admin">管理画面</Link>}
+              <span className="nav-bar__user">{user.name}さん</span>
+              <button
+                type="button"
+                className="btn-secondary btn-small"
+                onClick={async () => {
+                  await logout();
+                  navigate('/products');
+                }}
+              >
+                ログアウト
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login">ログイン</Link>
+              <Link to="/register" className="btn-primary btn-small">
+                会員登録
+              </Link>
+            </>
+          )}
+        </div>
+      </nav>
+    </header>
   );
 }
 
@@ -77,7 +89,8 @@ function App() {
   return (
     <>
       <NavBar />
-      <Routes>
+      <main className="app-main">
+        <Routes>
         <Route path="/" element={<Navigate to="/products" replace />} />
         <Route path="/products" element={<ProductListPage />} />
         <Route path="/products/:idOrSlug" element={<ProductDetailPage />} />
@@ -128,7 +141,8 @@ function App() {
           <Route path="referrals" element={<AdminReferralsPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
         </Route>
-      </Routes>
+        </Routes>
+      </main>
       <Footer />
     </>
   );

@@ -42,7 +42,7 @@ export default function PasswordResetConfirmPage() {
         />
       </label>
       {error && <p className="checkout-error">{error}</p>}
-      <button type="submit" disabled={submitting}>
+      <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? '設定中...' : 'パスワードを設定する'}
       </button>
     </form>

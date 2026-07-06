@@ -142,10 +142,10 @@ export default function CheckoutPage() {
 
       <p>合計金額: {totalAmount.toLocaleString()}円(税込)</p>
 
-      <button type="submit" disabled={submitting}>
+      <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? '送信中...' : '購入を確定する'}
       </button>
-      <button type="button" onClick={() => navigate('/cart')}>
+      <button type="button" className="btn-secondary" onClick={() => navigate('/cart')}>
         カートに戻る
       </button>
     </form>
