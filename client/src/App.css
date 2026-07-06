@@ -17,9 +17,10 @@
 /* ==================== ヘッダー・ナビゲーション ==================== */
 
 .site-header {
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
   color: var(--primary-contrast);
   border-bottom: 3px solid var(--accent);
+  box-shadow: 0 4px 16px -8px rgba(0, 0, 0, 0.4);
 }
 
 .nav-bar {
@@ -46,8 +47,28 @@
   font-size: 0.95rem;
 }
 
+.nav-bar__links a {
+  position: relative;
+  padding-bottom: 2px;
+}
+
+.nav-bar__links a::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 100%;
+  bottom: -2px;
+  height: 2px;
+  background: var(--accent-light);
+  transition: right 0.2s ease;
+}
+
 .nav-bar__links a:hover {
   color: var(--accent-light);
+}
+
+.nav-bar__links a:hover::after {
+  right: 0;
 }
 
 .nav-bar__user {
@@ -67,7 +88,7 @@
   height: 14px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 2px var(--primary-contrast) inset;
+  box-shadow: 0 0 0 2px var(--primary-contrast) inset, 0 0 8px rgba(232, 200, 116, 0.6);
 }
 
 .brand__name {
@@ -92,22 +113,29 @@
 /* ==================== ボタン ==================== */
 
 .btn-primary {
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
   border-color: var(--primary-dark);
   color: var(--primary-contrast);
   font-weight: 700;
   padding: 12px 28px;
+  box-shadow: 0 2px 10px -4px rgba(122, 31, 43, 0.5);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--primary-dark);
+  background: linear-gradient(135deg, var(--primary-dark) 0%, var(--primary-dark) 100%);
   border-color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px -4px rgba(122, 31, 43, 0.6);
 }
 
 .btn-secondary {
   background: transparent;
   border-color: var(--border);
   color: var(--text-h);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--bg);
 }
 
 .btn-small {
@@ -127,21 +155,25 @@
   display: block;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
+  border-top: 3px solid var(--accent);
   border-radius: 10px;
   padding: 20px;
   text-decoration: none;
   color: inherit;
   box-shadow: var(--shadow);
-  transition: transform 0.15s ease, border-color 0.15s ease;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .product-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-4px);
   border-color: var(--accent);
+  box-shadow: 0 14px 28px -10px rgba(43, 33, 26, 0.28);
 }
 
 .product-card img {
   width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
   height: auto;
   border-radius: 6px;
   margin-bottom: 12px;
@@ -359,17 +391,26 @@
   padding: 12px;
 }
 
-.admin-nav a {
+.admin-nav__link {
   padding: 8px 10px;
   border-radius: 6px;
   text-decoration: none;
   color: var(--text);
   font-size: 0.92rem;
+  border-left: 3px solid transparent;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.admin-nav a:hover {
+.admin-nav__link:hover {
   background: var(--bg);
   color: var(--primary);
+}
+
+.admin-nav__link--active {
+  background: var(--bg);
+  color: var(--primary);
+  font-weight: 700;
+  border-left-color: var(--accent);
 }
 
 .admin-content {
@@ -395,6 +436,10 @@
 .admin-content th {
   color: var(--text-h);
   border-bottom: 2px solid var(--accent);
+}
+
+.admin-content tbody tr:hover {
+  background: var(--bg);
 }
 
 .admin-stat-grid {
@@ -523,7 +568,7 @@
 
 .site-footer {
   border-top: 3px solid var(--accent);
-  background: var(--primary);
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
   color: var(--primary-contrast);
   margin-top: 48px;
 }
@@ -571,10 +616,11 @@
 }
 
 .legal-placeholder-notice {
-  border: 1px dashed var(--danger);
+  border: 1px solid var(--danger);
+  background: rgba(168, 54, 43, 0.08);
   color: var(--danger);
-  padding: 8px 12px;
-  border-radius: 6px;
+  padding: 10px 14px;
+  border-radius: 8px;
   font-size: 0.9em;
 }
 
@@ -596,4 +642,85 @@
   white-space: nowrap;
   width: 12em;
   background: var(--bg);
+}
+
+/* ==================== 管理画面: 法務ページ編集 ==================== */
+
+.admin-legal-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.admin-legal-tab {
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 0.88rem;
+  background: var(--bg-elevated);
+}
+
+.admin-legal-tab--active {
+  background: var(--primary);
+  border-color: var(--primary-dark);
+  color: var(--primary-contrast);
+}
+
+.admin-legal-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .admin-legal-editor {
+    grid-template-columns: 1fr;
+  }
+}
+
+.admin-legal-editor form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+}
+
+.admin-legal-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.admin-legal-editor textarea {
+  font-family: 'Menlo', 'Consolas', monospace;
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+
+.admin-legal-saved {
+  font-size: 0.85em;
+  color: var(--success);
+}
+
+.admin-legal-preview {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 20px;
+  background: var(--bg);
+}
+
+.admin-legal-preview__label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.admin-legal-preview .legal-page {
+  max-width: none;
 }

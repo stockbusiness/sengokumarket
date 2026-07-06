@@ -1,28 +1,5 @@
-import LegalPlaceholderNotice from './LegalPlaceholderNotice';
+import LegalDocumentPage from './LegalDocumentPage';
 
 export default function TermsPage() {
-  return (
-    <div className="legal-page">
-      <h1>利用規約</h1>
-      <LegalPlaceholderNotice />
-
-      <h2>第1条(適用)</h2>
-      <p>本規約は、当サービスの利用に関する条件を定めるものです。(準備中)</p>
-
-      <h2>第2条(会員登録)</h2>
-      <p>利用者は本規約に同意の上、会員登録を行うものとします。(準備中)</p>
-
-      <h2>第3条(禁止事項)</h2>
-      <p>利用者は、法令または公序良俗に反する行為等を行ってはならないものとします。(準備中)</p>
-
-      <h2>第4条(デジタル会員証について)</h2>
-      <p>デジタル会員証の性質・特典内容については商品ページの説明によるものとします。(準備中)</p>
-
-      <h2>第5条(免責事項)</h2>
-      <p>当サービスに起因して利用者に生じたトラブルについて、運営者は一切の責任を負わないものとします。(準備中)</p>
-
-      <h2>第6条(規約の変更)</h2>
-      <p>運営者は必要と判断した場合、利用者への事前の通知なく本規約を変更することがあります。(準備中)</p>
-    </div>
-  );
+  return <LegalDocumentPage slug="terms" />;
 }

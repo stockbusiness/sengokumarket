@@ -2,6 +2,7 @@ import express, { Express } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import productsRouter from './routes/products';
+import legalRouter from './routes/legal';
 import cartRouter from './routes/cart';
 import checkoutRouter from './routes/checkout';
 import referralsRouter from './routes/referrals';
@@ -31,6 +32,7 @@ export function createApp(): Express {
   app.use('/api', requireSameOrigin);
 
   app.use('/api', productsRouter);
+  app.use('/api', legalRouter);
   app.use('/api', cartRouter);
   app.use('/api', checkoutRouter);
   app.use('/api', referralsRouter);

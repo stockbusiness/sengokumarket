@@ -213,6 +213,17 @@ model Notice {
   @@map("notices")
 }
 
+// 仕様書外の拡張: 特商法・利用規約等の法務ページを管理画面から編集できるようにする。
+// bodyは簡易記法のプレーンテキスト(## 見出し / ! 注意書き / key|value でテーブル行)。
+model LegalDocument {
+  slug      String   @id // tokushoho | terms | refund | privacy
+  title     String
+  body      String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("legal_documents")
+}
+
 model StripeEvent {
   id            String   @id @default(uuid()) @db.Uuid
   stripeEventId String   @unique @map("stripe_event_id")

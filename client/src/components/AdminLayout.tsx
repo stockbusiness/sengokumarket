@@ -1,7 +1,7 @@
-import { Link, Outlet } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 
 const NAV_ITEMS = [
-  { to: '/admin', label: 'ダッシュボード' },
+  { to: '/admin', label: 'ダッシュボード', end: true },
   { to: '/admin/products', label: '商品管理' },
   { to: '/admin/import-products', label: 'CSV商品インポート' },
   { to: '/admin/orders', label: '注文管理' },
@@ -10,6 +10,7 @@ const NAV_ITEMS = [
   { to: '/admin/notices', label: 'お知らせ管理' },
   { to: '/admin/referral-links', label: '紹介リンク発行' },
   { to: '/admin/referrals', label: '代理店・紹介成果' },
+  { to: '/admin/legal', label: '法務ページ編集' },
   { to: '/admin/settings', label: '決済・メール設定' },
 ];
 
@@ -18,9 +19,14 @@ export default function AdminLayout() {
     <div className="admin-layout">
       <nav className="admin-nav">
         {NAV_ITEMS.map((item) => (
-          <Link key={item.to} to={item.to}>
+          <NavLink
+            key={item.to}
+            to={item.to}
+            end={item.end}
+            className={({ isActive }) => (isActive ? 'admin-nav__link admin-nav__link--active' : 'admin-nav__link')}
+          >
             {item.label}
-          </Link>
+          </NavLink>
         ))}
       </nav>
       <div className="admin-content">

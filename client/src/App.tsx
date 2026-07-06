@@ -27,6 +27,7 @@ import AdminNoticesPage from './pages/admin/AdminNoticesPage';
 import AdminReferralLinksPage from './pages/admin/AdminReferralLinksPage';
 import AdminReferralsPage from './pages/admin/AdminReferralsPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
+import AdminLegalPage from './pages/admin/AdminLegalPage';
 import Footer from './components/Footer';
 import TokushohoPage from './pages/legal/TokushohoPage';
 import TermsPage from './pages/legal/TermsPage';
@@ -140,6 +141,7 @@ function App() {
           <Route path="referral-links" element={<AdminReferralLinksPage />} />
           <Route path="referrals" element={<AdminReferralsPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
+          <Route path="legal" element={<AdminLegalPage />} />
         </Route>
         </Routes>
       </main>

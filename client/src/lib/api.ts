@@ -149,3 +149,13 @@ export function fetchMyWallet() {
 export function updateMyWallet(walletAddress: string) {
   return apiPost<{ wallet: MyWallet }>('/mypage/wallet', { walletAddress, chain: 'polygon' });
 }
+
+export interface LegalDocument {
+  slug: string;
+  title: string;
+  body: string;
+}
+
+export function fetchLegalDocument(slug: string) {
+  return apiFetch<{ document: LegalDocument }>(`/legal/${encodeURIComponent(slug)}`);
+}
