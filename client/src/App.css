@@ -216,3 +216,42 @@
   align-items: center;
   margin-bottom: 16px;
 }
+
+.site-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 16px;
+  margin-top: 32px;
+  border-top: 1px solid var(--border);
+  font-size: 0.9em;
+}
+
+.legal-page {
+  max-width: 640px;
+}
+
+.legal-placeholder-notice {
+  border: 1px dashed var(--border);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.9em;
+}
+
+.legal-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.legal-table th,
+.legal-table td {
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.legal-table th {
+  white-space: nowrap;
+  width: 12em;
+}

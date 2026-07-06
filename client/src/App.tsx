@@ -27,6 +27,11 @@ import AdminNoticesPage from './pages/admin/AdminNoticesPage';
 import AdminReferralLinksPage from './pages/admin/AdminReferralLinksPage';
 import AdminReferralsPage from './pages/admin/AdminReferralsPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
+import Footer from './components/Footer';
+import TokushohoPage from './pages/legal/TokushohoPage';
+import TermsPage from './pages/legal/TermsPage';
+import RefundPolicyPage from './pages/legal/RefundPolicyPage';
+import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage';
 import './App.css';
 
 function NavBar() {
@@ -84,6 +89,10 @@ function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/password-reset" element={<PasswordResetRequestPage />} />
         <Route path="/password-reset/confirm" element={<PasswordResetConfirmPage />} />
+        <Route path="/legal/tokushoho" element={<TokushohoPage />} />
+        <Route path="/legal/terms" element={<TermsPage />} />
+        <Route path="/legal/refund" element={<RefundPolicyPage />} />
+        <Route path="/legal/privacy" element={<PrivacyPolicyPage />} />
         <Route
           path="/mypage"
           element={
@@ -120,6 +129,7 @@ function App() {
           <Route path="settings" element={<AdminSettingsPage />} />
         </Route>
       </Routes>
+      <Footer />
     </>
   );
 }
