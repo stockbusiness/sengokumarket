@@ -35,7 +35,7 @@ export function createApp(): Express {
   app.use('/api', checkoutRouter);
   app.use('/api', referralsRouter);
   app.use('/api', authRouter);
-  app.use('/api', mypageRouter);
+  app.use('/api/mypage', mypageRouter);
   app.use('/api/admin', adminRouter);
 
   return app;

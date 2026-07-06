@@ -9,7 +9,7 @@ const WALLET_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 router.use(requireAuth);
 
-router.get('/mypage/orders', async (req, res) => {
+router.get('/orders', async (req, res) => {
   const orders = await prisma.order.findMany({
     where: { userId: req.authUser!.id },
     include: { orderItems: true },
@@ -36,7 +36,7 @@ router.get('/mypage/orders', async (req, res) => {
   });
 });
 
-router.get('/mypage/nfts', async (req, res) => {
+router.get('/nfts', async (req, res) => {
   const nftIssues = await prisma.nftIssue.findMany({
     where: { userId: req.authUser!.id },
     include: { product: true, variant: true, order: true },
@@ -57,14 +57,14 @@ router.get('/mypage/nfts', async (req, res) => {
   });
 });
 
-router.get('/mypage/wallet', async (req, res) => {
+router.get('/wallet', async (req, res) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.authUser!.id } });
   res.json({ wallet: wallet ? { walletAddress: wallet.walletAddress, chain: wallet.chain } : null });
 });
 
 // ウォレット登録・更新時にstatus=wallet_requiredのnft_issuesをready_to_issueへ一括更新し、
 // walletAddressをスナップショット保存する(仕様書v1.5 4.11)。issued/failedは変更しない。
-router.post('/mypage/wallet', async (req, res) => {
+router.post('/wallet', async (req, res) => {
   const { walletAddress, chain } = req.body ?? {};
 
   if (typeof walletAddress !== 'string' || !WALLET_ADDRESS_RE.test(walletAddress)) {
@@ -94,7 +94,7 @@ router.post('/mypage/wallet', async (req, res) => {
   res.json({ wallet: { walletAddress: wallet.walletAddress, chain: wallet.chain } });
 });
 
-router.get('/mypage/notices', async (_req, res) => {
+router.get('/notices', async (_req, res) => {
   const notices = await prisma.notice.findMany({
     where: { status: 'published' },
     orderBy: { publishedAt: 'desc' },
