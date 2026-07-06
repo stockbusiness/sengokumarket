@@ -8,6 +8,7 @@ import {
   updateAdminReferralLinkStatus,
   type AdminReferralLink,
 } from '../../lib/adminApi';
+import StatusBadge from '../../components/StatusBadge';
 
 const NEW_AGENCY = '__new__';
 const NEW_INFLUENCER = '__new__';
@@ -182,7 +183,7 @@ export default function AdminReferralLinksPage() {
         {links.map((link) => (
           <li key={link.id}>
             <div>
-              <strong>{link.code}</strong>({link.status})
+              <strong>{link.code}</strong> <StatusBadge status={link.status} />
             </div>
             <div className="referral-links-url">{link.url}</div>
             <button type="button" onClick={() => copyUrl(link.url)}>

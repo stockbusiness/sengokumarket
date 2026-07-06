@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchAdminOrders, updateAdminOrder, type AdminOrder } from '../../lib/adminApi';
+import StatusBadge from '../../components/StatusBadge';
+import StatusSelect from '../../components/StatusSelect';
 
 const ORDER_STATUSES = ['pending', 'paid', 'cancelled', 'refunded'];
 
@@ -43,22 +45,20 @@ export default function AdminOrdersPage() {
                 {o.customerEmail}
               </td>
               <td>{o.totalAmount.toLocaleString()}円</td>
-              <td>{o.paymentStatus}</td>
               <td>
-                <select value={o.orderStatus} onChange={(e) => changeStatus(o, e.target.value)}>
-                  {ORDER_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                <StatusBadge status={o.paymentStatus} />
+              </td>
+              <td>
+                <StatusSelect value={o.orderStatus} options={ORDER_STATUSES} onChange={(v) => changeStatus(o, v)} />
               </td>
               <td>{o.referralCode ?? '-'}</td>
               <td>
                 {o.agencyName ?? '-'} / {o.referrerName ?? '-'}
               </td>
               <td>{o.commissionAmount.toLocaleString()}円</td>
-              <td>{o.commissionStatus}</td>
+              <td>
+                <StatusBadge status={o.commissionStatus} />
+              </td>
             </tr>
           ))}
         </tbody>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchAdminNftIssues, updateAdminNftIssue, type AdminNftIssue } from '../../lib/adminApi';
+import StatusSelect from '../../components/StatusSelect';
 
 const STATUSES = ['wallet_required', 'ready_to_issue', 'issued', 'failed', 'cancelled'];
 
@@ -73,13 +74,7 @@ export default function AdminNftIssuesPage() {
               </td>
               <td>{issue.walletAddress ?? '-'}</td>
               <td>
-                <select value={issue.status} onChange={(e) => changeStatus(issue, e.target.value)}>
-                  {STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                <StatusSelect value={issue.status} options={STATUSES} onChange={(v) => changeStatus(issue, v)} />
               </td>
               <td>
                 <input

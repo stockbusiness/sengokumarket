@@ -6,6 +6,7 @@ import {
   fetchAgencyReferralLinks,
   type AgencyReferralLink,
 } from '../../lib/agencyApi';
+import StatusBadge from '../../components/StatusBadge';
 
 const NEW_INFLUENCER = '__new__';
 const NONE_INFLUENCER = '__none__';
@@ -126,7 +127,7 @@ export default function AgencyReferralLinksPage() {
         {links.map((link) => (
           <li key={link.id}>
             <div>
-              <strong>{link.code}</strong>({link.status})
+              <strong>{link.code}</strong> <StatusBadge status={link.status} />
             </div>
             <div className="referral-links-url">{link.url}</div>
             <button type="button" onClick={() => copyUrl(link.url)}>

@@ -6,6 +6,7 @@ import {
   updateAdminNotice,
   type AdminNotice,
 } from '../../lib/adminApi';
+import StatusBadge from '../../components/StatusBadge';
 
 export default function AdminNoticesPage() {
   const [notices, setNotices] = useState<AdminNotice[]>([]);
@@ -64,7 +65,9 @@ export default function AdminNoticesPage() {
           {notices.map((n) => (
             <tr key={n.id}>
               <td>{n.title}</td>
-              <td>{n.status}</td>
+              <td>
+                <StatusBadge status={n.status} />
+              </td>
               <td>{n.publishedAt ? new Date(n.publishedAt).toLocaleString('ja-JP') : '-'}</td>
               <td>
                 <button type="button" onClick={() => togglePublish(n)}>

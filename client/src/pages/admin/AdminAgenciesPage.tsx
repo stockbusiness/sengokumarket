@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchAdminAgenciesDetail, type AdminAgencyDetail } from '../../lib/adminApi';
+import StatusBadge from '../../components/StatusBadge';
 
 export default function AdminAgenciesPage() {
   const [agencies, setAgencies] = useState<AdminAgencyDetail[]>([]);
@@ -32,7 +33,9 @@ export default function AdminAgenciesPage() {
               <td>{a.externalId ?? '-'}</td>
               <td>{a.parentAgencyName ?? '-'}</td>
               <td>{a.defaultCommissionRate}%</td>
-              <td>{a.status}</td>
+              <td>
+                <StatusBadge status={a.status} />
+              </td>
               <td>{a.loginEmail ?? '-'}</td>
             </tr>
           ))}

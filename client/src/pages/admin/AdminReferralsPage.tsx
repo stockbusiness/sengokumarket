@@ -7,6 +7,7 @@ import {
   type AdminCommission,
   type AdminReferralSummary,
 } from '../../lib/adminApi';
+import StatusSelect from '../../components/StatusSelect';
 
 const COMMISSION_STATUSES = ['pending', 'approved', 'paid', 'cancelled'];
 
@@ -149,13 +150,7 @@ export default function AdminReferralsPage() {
               <td>{c.commissionRate}%</td>
               <td>{c.commissionAmount.toLocaleString()}円</td>
               <td>
-                <select value={c.status} onChange={(e) => changeStatus(c, e.target.value)}>
-                  {COMMISSION_STATUSES.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
+                <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
               </td>
             </tr>
           ))}

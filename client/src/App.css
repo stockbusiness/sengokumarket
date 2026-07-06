@@ -375,23 +375,41 @@
 
 .admin-layout {
   display: flex;
-  gap: 32px;
+  gap: 28px;
   align-items: flex-start;
 }
 
 .admin-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 180px;
+  gap: 18px;
+  width: 240px;
   flex-shrink: 0;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 12px;
+  padding: 16px 12px;
+}
+
+.admin-nav__group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.admin-nav__heading {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 10px;
+  margin-bottom: 4px;
 }
 
 .admin-nav__link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 10px;
   border-radius: 6px;
   text-decoration: none;
@@ -413,8 +431,92 @@
   border-left-color: var(--accent);
 }
 
-.admin-content {
+.admin-nav__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.admin-main {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.admin-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 16px;
+}
+
+.admin-topbar__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  flex: 1;
+  max-width: 320px;
+}
+
+.admin-topbar__search input {
+  border: none;
+  background: transparent;
+  padding: 4px 0;
+  width: 100%;
+  font-size: 0.9rem;
+}
+
+.admin-topbar__search input:focus {
+  outline: none;
+  box-shadow: none;
+}
+
+.admin-topbar__right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.admin-topbar__bell {
+  position: relative;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+
+.admin-topbar__bell-badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+}
+
+.admin-topbar__user {
+  font-size: 0.9rem;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.admin-content {
   min-width: 0;
   overflow-x: auto;
 }
@@ -427,7 +529,7 @@
 
 .admin-content th,
 .admin-content td {
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--border);
   text-align: left;
   font-size: 0.9em;
@@ -436,37 +538,93 @@
 .admin-content th {
   color: var(--text-h);
   border-bottom: 2px solid var(--accent);
+  white-space: nowrap;
 }
 
 .admin-content tbody tr:hover {
   background: var(--bg);
 }
 
-.admin-stat-grid {
+.admin-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
   margin: 16px 0;
 }
 
-.admin-stat {
+.admin-kpi {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: var(--bg-elevated);
-  border-top: 3px solid var(--accent);
 }
 
-.admin-stat-label {
-  font-size: 0.85em;
+.admin-kpi-icon {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--accent);
+  box-sizing: border-box;
+}
+
+.admin-kpi--filled {
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  border-color: var(--primary-dark);
+  color: var(--primary-contrast);
+}
+
+.admin-kpi--filled .admin-kpi-label {
+  color: var(--primary-contrast);
+  opacity: 0.85;
+}
+
+.admin-kpi--filled .admin-kpi-value {
+  color: var(--primary-contrast);
+}
+
+.admin-kpi-label {
+  font-size: 0.82em;
   color: var(--text-muted);
 }
 
-.admin-stat-value {
-  font-size: 1.5em;
+.admin-kpi-value {
+  font-size: 1.4em;
   font-weight: bold;
   color: var(--text-h);
   font-family: var(--font-heading);
+}
+
+.admin-mini-stat-band {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 18px;
+  background: var(--bg-elevated);
+  margin: 16px 0;
+}
+
+.admin-mini-stat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 0.85em;
+}
+
+.admin-mini-stat-label {
+  color: var(--text-muted);
+}
+
+.admin-mini-stat-value {
+  font-weight: 700;
+  color: var(--text-h);
 }
 
 .admin-alert {
@@ -479,6 +637,84 @@
 
 .admin-alert h2 {
   color: var(--danger);
+}
+
+/* ステータス表示(丸角ピル)。色は既存のsuccess/danger/mutedトークンのみ流用する */
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 0.82em;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-select {
+  border-radius: 999px;
+  padding: 3px 22px 3px 10px;
+  font-size: 0.82em;
+  font-weight: 600;
+  border: 1px solid transparent;
+  min-height: auto;
+}
+
+.status-badge--success,
+.status-select--success {
+  background: rgba(63, 107, 74, 0.15);
+  color: var(--success);
+}
+
+.status-badge--neutral,
+.status-select--neutral {
+  background: var(--bg);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+.status-badge--warning,
+.status-select--warning {
+  background: rgba(168, 54, 43, 0.12);
+  color: var(--danger);
+}
+
+.status-badge--muted,
+.status-select--muted {
+  background: var(--border);
+  color: var(--text-muted);
+}
+
+@media (max-width: 900px) {
+  .admin-layout {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .admin-nav {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    width: 100%;
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .admin-nav__group {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .admin-nav__heading {
+    display: none;
+  }
+
+  .admin-nav__link {
+    white-space: nowrap;
+  }
+
+  .admin-topbar__search {
+    display: none;
+  }
 }
 
 /* 紹介リンク発行画面はスマホ操作前提のレイアウトにする(仕様書v1.5 5.9 / 11章) */
