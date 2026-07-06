@@ -4,7 +4,7 @@ import type { Order, OrderItem } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
-import { resolveReferral } from './referral';
+import { resolveReferral, resolveReferralByAttribution } from './referral';
 import { isValidEmail } from '../lib/validation';
 
 export interface CheckoutItemInput {
@@ -125,8 +125,6 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       });
     }
 
-    const referral = await resolveReferral(tx, input.referralCode);
-
     let user = await tx.user.findUnique({ where: { email: input.customerEmail } });
     let guestAccountCreated = false;
     if (!user) {
@@ -141,6 +139,31 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         },
       });
       guestAccountCreated = true;
+    }
+
+    // 仕様書外の拡張: 代理店への帰属は初回購入時点で永久固定(以降どの紹介コードでアクセスしても変わらない)
+    let referral;
+    if (user.referredByAgencyId || user.referredByInfluencerId || user.referredByReferralLinkId) {
+      referral = await resolveReferralByAttribution(tx, {
+        agencyId: user.referredByAgencyId,
+        influencerId: user.referredByInfluencerId,
+        referralLinkId: user.referredByReferralLinkId,
+        code: user.referredByCode,
+      });
+    } else {
+      referral = await resolveReferral(tx, input.referralCode);
+      if (referral.agencyId || referral.influencerId || referral.referralLinkId) {
+        user = await tx.user.update({
+          where: { id: user.id },
+          data: {
+            referredByAgencyId: referral.agencyId,
+            referredByInfluencerId: referral.influencerId,
+            referredByReferralLinkId: referral.referralLinkId,
+            referredByCode: referral.referralCode,
+            referredAt: new Date(),
+          },
+        });
+      }
     }
 
     const orderNumber = await generateOrderNumber(tx);

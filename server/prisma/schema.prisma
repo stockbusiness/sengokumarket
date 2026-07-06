@@ -49,6 +49,15 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
+  // 仕様書外の拡張: 初回購入時に紐づいた代理店への永久帰属(first-touch)。
+  // 一度設定したら変更しない。以降の全ての注文はこの代理店/インフルエンサーに
+  // 帰属し続ける(仕様書6.5同様、物理FKは張らない)。
+  referredByAgencyId       String?   @map("referred_by_agency_id") @db.Uuid
+  referredByInfluencerId   String?   @map("referred_by_influencer_id") @db.Uuid
+  referredByReferralLinkId String?   @map("referred_by_referral_link_id") @db.Uuid
+  referredByCode           String?   @map("referred_by_code")
+  referredAt               DateTime? @map("referred_at")
+
   wallet              Wallet?
   orders              Order[]
   nftIssues           NftIssue[]

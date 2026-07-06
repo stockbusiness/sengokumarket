@@ -188,4 +188,132 @@ describe('POST /api/checkout/create-session', () => {
     expect(order.agencyId).toBe(agencyId);
     expect(order.influencerId).toBe(influencerId);
   });
+
+  describe('代理店への永久帰属(仕様書外の拡張)', () => {
+    beforeAll(async () => {
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+    });
+
+    it('初回購入で紹介コードを使うと、ユーザーに代理店が永久帰属される', async () => {
+      const referralLink = await prisma.referralLink.findFirstOrThrow({ where: { agencyId } });
+      const email = `perm-first-checkout-test-${Date.now()}@example.com`;
+
+      await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({
+          ...baseCustomer,
+          customerEmail: email,
+          referralCode: referralLink.code,
+          items: [{ variantId, quantity: 1 }],
+        });
+
+      const user = await prisma.user.findUniqueOrThrow({ where: { email } });
+      expect(user.referredByAgencyId).toBe(agencyId);
+      expect(user.referredByInfluencerId).toBe(influencerId);
+      expect(user.referredByReferralLinkId).toBe(referralLink.id);
+      expect(user.referredByCode).toBe(referralLink.code);
+      expect(user.referredAt).not.toBeNull();
+    });
+
+    it('永久帰属済みユーザーが紹介コードなしで再購入しても、元の代理店に報酬が発生する', async () => {
+      const referralLink = await prisma.referralLink.findFirstOrThrow({ where: { agencyId } });
+      const email = `perm-repeat-noref-checkout-test-${Date.now()}@example.com`;
+
+      await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({
+          ...baseCustomer,
+          customerEmail: email,
+          referralCode: referralLink.code,
+          items: [{ variantId, quantity: 1 }],
+        });
+
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.agencyId).toBe(agencyId);
+      expect(order.influencerId).toBe(influencerId);
+      expect(Number(order.commissionRate)).toBe(15);
+    });
+
+    it('永久帰属済みユーザーが別の代理店の紹介コードで再購入しても、元の代理店に報酬が発生する', async () => {
+      const originalLink = await prisma.referralLink.findFirstOrThrow({ where: { agencyId } });
+      const email = `perm-repeat-otherref-checkout-test-${Date.now()}@example.com`;
+
+      await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({
+          ...baseCustomer,
+          customerEmail: email,
+          referralCode: originalLink.code,
+          items: [{ variantId, quantity: 1 }],
+        });
+
+      const otherAgency = await prisma.agency.create({
+        data: { name: '別の代理店', code: `OTHERAG-${Date.now()}`, defaultCommissionRate: 30 },
+      });
+      const otherLink = await prisma.referralLink.create({
+        data: { code: `OTHERREF-${Date.now()}`.slice(0, 20), agencyId: otherAgency.id, landingPath: '/products/other' },
+      });
+
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, referralCode: otherLink.code, items: [{ variantId, quantity: 1 }] });
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.agencyId).toBe(agencyId);
+      expect(order.agencyId).not.toBe(otherAgency.id);
+      expect(Number(order.commissionRate)).toBe(15);
+
+      await prisma.referralLink.delete({ where: { id: otherLink.id } });
+      await prisma.agency.delete({ where: { id: otherAgency.id } });
+    });
+
+    it('帰属後に代理店のdefault_commission_rateが変わると、次回注文には新しい率が反映される(率は都度再解決、帰属先は固定)', async () => {
+      const referralLink = await prisma.referralLink.findFirstOrThrow({ where: { agencyId } });
+      const email = `perm-repeat-newrate-checkout-test-${Date.now()}@example.com`;
+
+      await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({
+          ...baseCustomer,
+          customerEmail: email,
+          referralCode: referralLink.code,
+          items: [{ variantId, quantity: 1 }],
+        });
+
+      await prisma.agency.update({ where: { id: agencyId }, data: { defaultCommissionRate: 20 } });
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.agencyId).toBe(agencyId);
+      expect(Number(order.commissionRate)).toBe(20);
+
+      await prisma.agency.update({ where: { id: agencyId }, data: { defaultCommissionRate: 15 } });
+    });
+  });
 });

@@ -45,3 +45,38 @@ export async function resolveReferral(tx: Tx, code: string | null | undefined): 
     commissionRate,
   };
 }
+
+export interface StoredAttribution {
+  agencyId: string | null;
+  influencerId: string | null;
+  referralLinkId: string | null;
+  code: string | null;
+}
+
+// 仕様書外の拡張: ユーザーに永久帰属済みの代理店/インフルエンサーから、現在の報酬率を再解決する。
+// 帰属先(agencyId/influencerId/referralLinkId)は初回購入時点で固定済みのため変更しない。
+// リンクがinactive化されていても帰属は維持するため status フィルタは付けない。
+export async function resolveReferralByAttribution(tx: Tx, attribution: StoredAttribution): Promise<ResolvedReferral> {
+  const link = attribution.referralLinkId
+    ? await tx.referralLink.findUnique({
+        where: { id: attribution.referralLinkId },
+        include: { agency: true, influencer: true },
+      })
+    : null;
+
+  const agency = link?.agency ?? (attribution.agencyId ? await tx.agency.findUnique({ where: { id: attribution.agencyId } }) : null);
+  const influencer =
+    link?.influencer ?? (attribution.influencerId ? await tx.influencer.findUnique({ where: { id: attribution.influencerId } }) : null);
+
+  const commissionRate = link?.commissionRate?.toNumber() ?? influencer?.defaultCommissionRate?.toNumber() ?? agency?.defaultCommissionRate?.toNumber() ?? 0;
+
+  return {
+    referralCode: attribution.code,
+    referrerName: influencer?.name ?? agency?.name ?? null,
+    agencyName: agency?.name ?? null,
+    agencyId: attribution.agencyId,
+    influencerId: attribution.influencerId,
+    referralLinkId: attribution.referralLinkId,
+    commissionRate,
+  };
+}
