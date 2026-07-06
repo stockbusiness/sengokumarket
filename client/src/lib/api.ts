@@ -95,3 +95,57 @@ export function requestPasswordReset(email: string) {
 export function confirmPasswordReset(token: string, newPassword: string) {
   return apiPost<{ ok: boolean }>('/auth/password-reset/confirm', { token, newPassword });
 }
+
+export interface MyOrder {
+  id: string;
+  orderNumber: string;
+  totalAmount: number;
+  paymentStatus: string;
+  orderStatus: string;
+  paidAt: string | null;
+  createdAt: string;
+  items: { productName: string; variantName: string | null; quantity: number; unitPrice: number; subtotal: number }[];
+}
+
+export interface MyNftIssue {
+  id: string;
+  orderNumber: string;
+  productName: string;
+  variantName: string | null;
+  status: string;
+  tokenId: string | null;
+  transactionHash: string | null;
+  issuedAt: string | null;
+}
+
+export interface MyNotice {
+  id: string;
+  title: string;
+  body: string;
+  publishedAt: string | null;
+}
+
+export interface MyWallet {
+  walletAddress: string;
+  chain: string;
+}
+
+export function fetchMyOrders() {
+  return apiFetch<{ orders: MyOrder[] }>('/mypage/orders');
+}
+
+export function fetchMyNftIssues() {
+  return apiFetch<{ nftIssues: MyNftIssue[] }>('/mypage/nfts');
+}
+
+export function fetchMyNotices() {
+  return apiFetch<{ notices: MyNotice[] }>('/mypage/notices');
+}
+
+export function fetchMyWallet() {
+  return apiFetch<{ wallet: MyWallet | null }>('/mypage/wallet');
+}
+
+export function updateMyWallet(walletAddress: string) {
+  return apiPost<{ wallet: MyWallet }>('/mypage/wallet', { walletAddress, chain: 'polygon' });
+}

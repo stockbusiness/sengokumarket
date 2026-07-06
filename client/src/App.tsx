@@ -12,6 +12,9 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import PasswordResetRequestPage from './pages/PasswordResetRequestPage';
 import PasswordResetConfirmPage from './pages/PasswordResetConfirmPage';
+import MyPage from './pages/MyPage';
+import WalletPage from './pages/WalletPage';
+import RequireAuth from './components/RequireAuth';
 import './App.css';
 
 function NavBar() {
@@ -24,6 +27,7 @@ function NavBar() {
       <Link to="/cart">カート</Link>
       {user ? (
         <>
+          <Link to="/mypage">マイページ</Link>
           <span>{user.name}さん</span>
           <button
             type="button"
@@ -67,6 +71,22 @@ function App() {
         <Route path="/register" element={<RegisterPage />} />
         <Route path="/password-reset" element={<PasswordResetRequestPage />} />
         <Route path="/password-reset/confirm" element={<PasswordResetConfirmPage />} />
+        <Route
+          path="/mypage"
+          element={
+            <RequireAuth>
+              <MyPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/mypage/wallet"
+          element={
+            <RequireAuth>
+              <WalletPage />
+            </RequireAuth>
+          }
+        />
       </Routes>
     </>
   );

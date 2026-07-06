@@ -68,3 +68,21 @@
   border-bottom: 1px solid var(--border);
   margin-bottom: 16px;
 }
+
+.mypage section {
+  margin: 24px 0;
+}
+
+.mypage-banner {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+
+.wallet-confirm-modal {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 16px;
+}
