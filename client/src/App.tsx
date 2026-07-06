@@ -15,6 +15,17 @@ import PasswordResetConfirmPage from './pages/PasswordResetConfirmPage';
 import MyPage from './pages/MyPage';
 import WalletPage from './pages/WalletPage';
 import RequireAuth from './components/RequireAuth';
+import RequireAdmin from './components/RequireAdmin';
+import AdminLayout from './components/AdminLayout';
+import AdminDashboardPage from './pages/admin/AdminDashboardPage';
+import AdminProductsPage from './pages/admin/AdminProductsPage';
+import AdminOrdersPage from './pages/admin/AdminOrdersPage';
+import AdminNftIssuesPage from './pages/admin/AdminNftIssuesPage';
+import AdminWalletMissingPage from './pages/admin/AdminWalletMissingPage';
+import AdminNoticesPage from './pages/admin/AdminNoticesPage';
+import AdminReferralLinksPage from './pages/admin/AdminReferralLinksPage';
+import AdminReferralsPage from './pages/admin/AdminReferralsPage';
+import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import './App.css';
 
 function NavBar() {
@@ -28,6 +39,7 @@ function NavBar() {
       {user ? (
         <>
           <Link to="/mypage">マイページ</Link>
+          {user.role === 'admin' && <Link to="/admin">管理画面</Link>}
           <span>{user.name}さん</span>
           <button
             type="button"
@@ -87,6 +99,24 @@ function App() {
             </RequireAuth>
           }
         />
+        <Route
+          path="/admin"
+          element={
+            <RequireAdmin>
+              <AdminLayout />
+            </RequireAdmin>
+          }
+        >
+          <Route index element={<AdminDashboardPage />} />
+          <Route path="products" element={<AdminProductsPage />} />
+          <Route path="orders" element={<AdminOrdersPage />} />
+          <Route path="nft-issues" element={<AdminNftIssuesPage />} />
+          <Route path="wallet-missing" element={<AdminWalletMissingPage />} />
+          <Route path="notices" element={<AdminNoticesPage />} />
+          <Route path="referral-links" element={<AdminReferralLinksPage />} />
+          <Route path="referrals" element={<AdminReferralsPage />} />
+          <Route path="settings" element={<AdminSettingsPage />} />
+        </Route>
       </Routes>
     </>
   );
