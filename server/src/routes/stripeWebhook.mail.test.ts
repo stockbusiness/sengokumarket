@@ -8,10 +8,12 @@ import { setSetting } from '../services/settings';
 
 const sendPurchaseCompleteEmail = vi.fn(async (..._args: unknown[]) => {});
 const sendGuestPasswordSetupEmail = vi.fn(async (..._args: unknown[]) => {});
+const sendCartAbandonedEmail = vi.fn(async (..._args: unknown[]) => {});
 
 vi.mock('../services/mailTemplates', () => ({
   sendPurchaseCompleteEmail: (...args: unknown[]) => sendPurchaseCompleteEmail(...args),
   sendGuestPasswordSetupEmail: (...args: unknown[]) => sendGuestPasswordSetupEmail(...args),
+  sendCartAbandonedEmail: (...args: unknown[]) => sendCartAbandonedEmail(...args),
   sendPasswordResetEmail: vi.fn(async () => {}),
 }));
 
@@ -126,5 +128,72 @@ describe('checkout.session.completed のメール送信連携', () => {
 
     expect(sendPurchaseCompleteEmail).toHaveBeenCalledTimes(1);
     expect(sendGuestPasswordSetupEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('checkout.session.expired のカート放棄リマインドメール送信(仕様書外の拡張)', () => {
+  let productId: string;
+  let productSlug: string;
+  let variantId: string;
+
+  beforeAll(async () => {
+    await setSetting('stripe_webhook_secret', WEBHOOK_SECRET);
+
+    productSlug = `mail-webhook-expired-test-${Date.now()}`;
+    const product = await prisma.product.create({
+      data: {
+        name: 'カート放棄テスト商品',
+        slug: productSlug,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    productId = product.id;
+    const variant = await prisma.productVariant.create({
+      data: { productId, name: 'A', price: 10000, stock: 10 },
+    });
+    variantId = variant.id;
+  });
+
+  afterAll(async () => {
+    await prisma.orderItem.deleteMany({ where: { productId } });
+    await prisma.order.deleteMany({ where: { customerEmail: { contains: 'mail-webhook-expired-test' } } });
+    await prisma.productVariant.deleteMany({ where: { productId } });
+    await prisma.product.delete({ where: { id: productId } });
+    await prisma.setting.deleteMany({ where: { key: 'stripe_webhook_secret' } });
+    await prisma.$disconnect();
+  });
+
+  it('決済セッションが期限切れになるとカート放棄リマインドメールが送信される', async () => {
+    const email = `mail-webhook-expired-test-${Date.now()}@example.com`;
+    const { order } = await createPendingOrder({
+      customerName: 'テスト',
+      customerEmail: email,
+      customerPhone: '090-0000-0000',
+      customerPostalCode: '100-0001',
+      customerAddress: '東京都千代田区1-1-1',
+      agreedToTerms: true,
+      items: [{ variantId, quantity: 1 }],
+    });
+    const sessionId = `cs_test_expired_mail_${Math.random().toString(36).slice(2)}`;
+    await prisma.order.update({ where: { id: order.id }, data: { stripeSessionId: sessionId } });
+
+    sendCartAbandonedEmail.mockClear();
+
+    await postWebhook({
+      id: `evt_test_expired_mail_${Date.now()}`,
+      type: 'checkout.session.expired',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: sessionId, metadata: { order_id: order.id } } },
+    });
+
+    expect(sendCartAbandonedEmail).toHaveBeenCalledTimes(1);
+    expect(sendCartAbandonedEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ id: order.id }),
+      expect.any(Array),
+      productSlug,
+    );
   });
 });

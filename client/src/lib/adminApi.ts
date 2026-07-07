@@ -69,7 +69,7 @@ export interface AdminProduct {
   itemType: string;
   basePrice: number;
   status: string;
-  imageUrl: string | null;
+  images: string[];
   variants: AdminProductVariant[];
 }
 
@@ -112,6 +112,10 @@ export function fetchAdminOrders() {
 
 export function updateAdminOrder(id: string, payload: { orderStatus?: string; adminNote?: string }) {
   return adminSend<{ order: AdminOrder }>('PUT', `/orders/${id}`, payload);
+}
+
+export function buildOrdersExportCsvUrl() {
+  return '/api/admin/orders/export.csv';
 }
 
 // --- NFT issues ---

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
+import { buildCsv } from '../../lib/csv';
 
 const router = Router();
 
@@ -45,6 +46,55 @@ function serializeOrder(order: {
 router.get('/orders', async (_req, res) => {
   const orders = await prisma.order.findMany({ orderBy: { createdAt: 'desc' } });
   res.json({ orders: orders.map(serializeOrder) });
+});
+
+// 仕様書外の拡張: 注文一覧のCSVエクスポート。
+router.get('/orders/export.csv', async (_req, res) => {
+  const orders = await prisma.order.findMany({
+    include: { orderItems: true },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const rows = orders.map((o) => [
+    o.orderNumber,
+    o.createdAt.toISOString(),
+    o.paidAt?.toISOString() ?? '',
+    o.customerName,
+    o.customerEmail,
+    o.orderItems.map((i) => `${i.productName}${i.variantName ? ` ${i.variantName}` : ''} × ${i.quantity}`).join(' / '),
+    o.totalAmount,
+    o.paymentStatus,
+    o.orderStatus,
+    o.referralCode ?? '',
+    o.agencyName ?? o.referrerName ?? '',
+    o.commissionAmount,
+    o.commissionStatus,
+    o.adminNote ?? '',
+  ]);
+
+  const csv = buildCsv(
+    [
+      '注文番号',
+      '注文日',
+      '決済日',
+      '購入者名',
+      '購入者メール',
+      '商品明細',
+      '合計金額(税込)',
+      '決済ステータス',
+      '注文ステータス',
+      '紹介コード',
+      '代理店/紹介元',
+      '報酬予定額',
+      '報酬ステータス',
+      '管理メモ',
+    ],
+    rows,
+  );
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="orders_${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
 });
 
 router.get('/orders/:id', async (req, res) => {

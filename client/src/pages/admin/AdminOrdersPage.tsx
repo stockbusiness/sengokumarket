@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { fetchAdminOrders, updateAdminOrder, type AdminOrder } from '../../lib/adminApi';
+import { buildOrdersExportCsvUrl, fetchAdminOrders, updateAdminOrder, type AdminOrder } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
@@ -22,6 +22,15 @@ export default function AdminOrdersPage() {
   return (
     <div>
       <h1>注文管理</h1>
+      <button
+        type="button"
+        className="btn-secondary btn-small"
+        onClick={() => {
+          window.location.href = buildOrdersExportCsvUrl();
+        }}
+      >
+        CSV出力
+      </button>
       {orders.length === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="まだ注文がありません" />

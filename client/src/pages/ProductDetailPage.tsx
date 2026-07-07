@@ -12,6 +12,7 @@ export default function ProductDetailPage() {
   const [variantId, setVariantId] = useState<string>('');
   const [quantity, setQuantity] = useState(1);
   const [added, setAdded] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   useEffect(() => {
     if (!idOrSlug) return;
@@ -20,6 +21,7 @@ export default function ProductDetailPage() {
       .then((data) => {
         setProduct(data.product);
         setVariantId(data.product.variants[0]?.id ?? '');
+        setActiveImageIndex(0);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -33,7 +35,25 @@ export default function ProductDetailPage() {
 
   return (
     <div className="product-detail">
-      {product.imageUrl && <img src={product.imageUrl} alt={product.name} />}
+      {product.images.length > 0 && (
+        <div className="product-detail__gallery">
+          <img src={product.images[activeImageIndex] ?? product.images[0]} alt={product.name} />
+          {product.images.length > 1 && (
+            <div className="product-detail__thumbnails">
+              {product.images.map((src, index) => (
+                <button
+                  key={src}
+                  type="button"
+                  className={index === activeImageIndex ? 'product-detail__thumbnail is-active' : 'product-detail__thumbnail'}
+                  onClick={() => setActiveImageIndex(index)}
+                >
+                  <img src={src} alt={`${product.name} 画像${index + 1}`} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <h1>{product.name}</h1>
       <p>{product.description}</p>
       <p>{product.basePrice.toLocaleString()}円(税込)</p>

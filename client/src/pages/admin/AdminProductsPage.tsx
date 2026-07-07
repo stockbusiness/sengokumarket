@@ -18,7 +18,15 @@ export default function AdminProductsPage() {
   const [category, setCategory] = useState('');
   const [itemType, setItemType] = useState('nft');
   const [basePrice, setBasePrice] = useState(0);
+  const [imagesText, setImagesText] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  function parseImagesText(text: string): string[] {
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  }
 
   function load() {
     fetchAdminProducts().then((d) => setProducts(d.products));
@@ -30,11 +38,12 @@ export default function AdminProductsPage() {
     e.preventDefault();
     setError(null);
     try {
-      await createAdminProduct({ name, slug, category, itemType, basePrice, status: 'draft' });
+      await createAdminProduct({ name, slug, category, itemType, basePrice, status: 'draft', images: parseImagesText(imagesText) });
       setName('');
       setSlug('');
       setCategory('');
       setBasePrice(0);
+      setImagesText('');
       setShowForm(false);
       load();
     } catch (e) {
@@ -52,6 +61,11 @@ export default function AdminProductsPage() {
     await updateAdminProduct(product.id, {
       variants: [{ id: variantId, stock }],
     });
+    load();
+  }
+
+  async function updateImages(product: AdminProduct, text: string) {
+    await updateAdminProduct(product.id, { images: parseImagesText(text) });
     load();
   }
 
@@ -94,6 +108,15 @@ export default function AdminProductsPage() {
             価格
             <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
           </label>
+          <label>
+            商品画像(画像URLを1行に1つずつ入力。先頭が一覧・共有時のサムネイルになります)
+            <textarea
+              value={imagesText}
+              onChange={(e) => setImagesText(e.target.value)}
+              rows={3}
+              placeholder={'https://example.com/image1.jpg\nhttps://example.com/image2.jpg'}
+            />
+          </label>
           {error && <p className="checkout-error">{error}</p>}
           <button type="submit" className="btn-primary">
             作成する
@@ -116,6 +139,7 @@ export default function AdminProductsPage() {
                 <th>価格</th>
                 <th>ステータス</th>
                 <th>バリエーション/在庫</th>
+                <th>商品画像</th>
               </tr>
             </thead>
             <tbody>
@@ -143,6 +167,15 @@ export default function AdminProductsPage() {
                         />
                       </div>
                     ))}
+                  </td>
+                  <td>
+                    <textarea
+                      className="admin-inline-textarea"
+                      defaultValue={p.images.join('\n')}
+                      rows={2}
+                      onBlur={(e) => updateImages(p, e.target.value)}
+                      placeholder="画像URL(1行に1つ)"
+                    />
                   </td>
                 </tr>
               ))}

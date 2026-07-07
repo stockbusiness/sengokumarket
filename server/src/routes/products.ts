@@ -30,7 +30,7 @@ router.get('/products', requireReferralOrAuth, async (_req, res) => {
       name: product.name,
       category: product.category,
       basePrice: product.basePrice,
-      imageUrl: product.imageUrl,
+      images: product.images,
       variants: product.variants.map(serializeVariant),
     })),
   });
@@ -55,7 +55,7 @@ router.get('/products/:idOrSlug', requireReferralOrAuth, async (req, res) => {
       description: product.description,
       category: product.category,
       basePrice: product.basePrice,
-      imageUrl: product.imageUrl,
+      images: product.images,
       variants: product.variants.map(serializeVariant),
     },
   });

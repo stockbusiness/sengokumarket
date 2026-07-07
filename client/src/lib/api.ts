@@ -11,7 +11,7 @@ export interface ProductSummary {
   name: string;
   category: string;
   basePrice: number;
-  imageUrl: string | null;
+  images: string[];
   variants: ProductVariant[];
 }
 

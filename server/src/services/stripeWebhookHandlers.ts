@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { findOrderForEvent } from './orderLookup';
 import { createPasswordResetToken } from './passwordReset';
-import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
+import { sendCartAbandonedEmail, sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
 
 type Tx = Prisma.TransactionClient;
 
@@ -124,7 +124,7 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {
   const session = event.data.object as Stripe.Checkout.Session;
 
-  await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const order = await findOrderForEvent(tx, {
       orderId: session.metadata?.order_id,
       paymentIntentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id,
@@ -133,17 +133,17 @@ export async function handleCheckoutSessionExpired(event: Stripe.Event) {
 
     if (!order) {
       console.error('checkout.session.expired: order not found', { sessionId: session.id });
-      return;
+      return null;
     }
 
-    if (order.paymentStatus !== 'pending') return;
+    if (order.paymentStatus !== 'pending') return null;
 
-    await tx.order.update({
+    const updatedOrder = await tx.order.update({
       where: { id: order.id },
       data: { paymentStatus: 'expired', expiredAt: eventTime(event) },
     });
 
-    const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
+    const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id }, include: { product: true } });
     for (const item of orderItems) {
       if (!item.variantId) continue;
       await tx.productVariant.update({
@@ -151,7 +151,18 @@ export async function handleCheckoutSessionExpired(event: Stripe.Event) {
         data: { reservedStock: { decrement: item.quantity } },
       });
     }
+
+    return { order: updatedOrder, items: orderItems };
   });
+
+  if (!result) return;
+
+  // カート放棄リマインドメール。決済処理自体には影響させないためトランザクション外・例外握りつぶし(仕様書v1.5 7.6と同様の方針)。
+  try {
+    await sendCartAbandonedEmail(result.order, result.items, result.items[0]?.product.slug ?? null);
+  } catch (e) {
+    console.error('cart-abandoned email dispatch failed', { orderId: result.order.id, error: e });
+  }
 }
 
 export async function handlePaymentIntentFailed(event: Stripe.Event) {

@@ -11,6 +11,12 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
+function normalizeImages(images: unknown): string[] | undefined {
+  if (images === undefined) return undefined;
+  if (!Array.isArray(images)) return [];
+  return images.filter((v): v is string => isNonEmptyString(v));
+}
+
 router.get('/products', async (_req, res) => {
   const products = await prisma.product.findMany({
     include: { variants: true },
@@ -20,7 +26,7 @@ router.get('/products', async (_req, res) => {
 });
 
 router.post('/products', async (req, res) => {
-  const { name, slug, description, category, itemType, basePrice, status, imageUrl, variants } = req.body ?? {};
+  const { name, slug, description, category, itemType, basePrice, status, images, variants } = req.body ?? {};
 
   if (!isNonEmptyString(name)) return sendError(res, 400, 'VALIDATION_ERROR', '商品名を入力してください');
   if (!isNonEmptyString(slug) || !/^[a-z0-9-]+$/.test(slug)) {
@@ -45,7 +51,7 @@ router.post('/products', async (req, res) => {
       itemType,
       basePrice,
       status: resolvedStatus,
-      imageUrl: isNonEmptyString(imageUrl) ? imageUrl : null,
+      images: normalizeImages(images) ?? [],
       variants: Array.isArray(variants)
         ? {
             create: variants.map((v: { name: string; sku?: string; price: number; stock?: number }) => ({
@@ -65,7 +71,7 @@ router.post('/products', async (req, res) => {
 
 router.put('/products/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, description, category, itemType, basePrice, status, imageUrl, variants } = req.body ?? {};
+  const { name, description, category, itemType, basePrice, status, images, variants } = req.body ?? {};
 
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
@@ -90,7 +96,7 @@ router.put('/products/:id', async (req, res) => {
         itemType: itemType ?? undefined,
         basePrice: basePrice ?? undefined,
         status: status ?? undefined,
-        imageUrl: imageUrl === undefined ? undefined : imageUrl,
+        images: normalizeImages(images),
       },
     });
 
