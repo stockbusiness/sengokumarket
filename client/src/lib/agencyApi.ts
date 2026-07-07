@@ -53,3 +53,17 @@ export interface CreateAgencyReferralLinkPayload {
 export function createAgencyReferralLink(payload: CreateAgencyReferralLinkPayload) {
   return agencySend<{ referralLink: AgencyReferralLink }>('POST', '/referral-links', payload);
 }
+
+export interface AgencyOrder {
+  id: string;
+  orderNumber: string;
+  customerName: string;
+  totalAmount: number;
+  paymentStatus: string;
+  createdAt: string;
+  items: { productName: string; variantName: string | null; quantity: number }[];
+}
+
+export function fetchAgencyOrders() {
+  return agencyFetch<{ orders: AgencyOrder[] }>('/orders');
+}

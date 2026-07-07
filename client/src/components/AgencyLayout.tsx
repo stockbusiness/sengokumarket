@@ -1,6 +1,9 @@
 import { NavLink, Outlet } from 'react-router-dom';
 
-const NAV_ITEMS = [{ to: '/agency', label: '紹介URL発行', end: true }];
+const NAV_ITEMS = [
+  { to: '/agency', label: '紹介URL発行', end: true },
+  { to: '/agency/orders', label: '購入者一覧', end: false },
+];
 
 export default function AgencyLayout() {
   return (

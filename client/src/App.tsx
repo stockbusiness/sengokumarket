@@ -33,6 +33,7 @@ import AdminAuditLogsPage from './pages/admin/AdminAuditLogsPage';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
 import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
+import AgencyOrdersPage from './pages/agency/AgencyOrdersPage';
 import RequireReferralAccess from './components/RequireReferralAccess';
 import InviteOnlyPage from './pages/InviteOnlyPage';
 import LandingPage from './pages/LandingPage';
@@ -199,6 +200,7 @@ function App() {
           }
         >
           <Route index element={<AgencyReferralLinksPage />} />
+          <Route path="orders" element={<AgencyOrdersPage />} />
         </Route>
         </Routes>
       </main>
