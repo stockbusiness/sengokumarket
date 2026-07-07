@@ -734,6 +734,55 @@
   font-variant-numeric: tabular-nums;
 }
 
+.admin-sales-trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  height: 200px;
+  padding: 16px 20px 0;
+  margin: 16px 0 32px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.admin-sales-trend__col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+}
+
+.admin-sales-trend__bar-track {
+  flex: 1;
+  width: 100%;
+  max-width: 48px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.admin-sales-trend__bar {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: linear-gradient(180deg, var(--accent) 0%, var(--primary) 100%);
+}
+
+.admin-sales-trend__value {
+  margin-top: 6px;
+  font-size: 0.78em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.admin-sales-trend__label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
 .admin-alert {
   border: 1px solid var(--danger);
   border-radius: 10px;

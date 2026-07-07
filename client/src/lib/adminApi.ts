@@ -41,6 +41,16 @@ export function fetchAdminDashboard() {
   return adminFetch<AdminDashboard>('/dashboard');
 }
 
+export interface SalesTrendMonth {
+  month: string;
+  totalSales: number;
+  orderCount: number;
+}
+
+export function fetchAdminSalesTrend(months = 6) {
+  return adminFetch<{ trend: SalesTrendMonth[] }>(`/dashboard/sales-trend?months=${months}`);
+}
+
 // --- Products ---
 export interface AdminProductVariant {
   id: string;

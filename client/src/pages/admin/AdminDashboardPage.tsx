@@ -1,12 +1,37 @@
 import { useEffect, useState } from 'react';
-import { fetchAdminDashboard, type AdminDashboard } from '../../lib/adminApi';
+import { fetchAdminDashboard, fetchAdminSalesTrend, type AdminDashboard, type SalesTrendMonth } from '../../lib/adminApi';
 import { IconBadge, IconReceipt, IconWallet, IconYen } from '../../components/icons';
+
+function formatMonthLabel(month: string): string {
+  const [year, m] = month.split('-');
+  return `${year}/${Number(m)}`;
+}
+
+function SalesTrendChart({ trend }: { trend: SalesTrendMonth[] }) {
+  const maxSales = Math.max(...trend.map((t) => t.totalSales), 1);
+
+  return (
+    <div className="admin-sales-trend">
+      {trend.map((t) => (
+        <div className="admin-sales-trend__col" key={t.month}>
+          <div className="admin-sales-trend__bar-track">
+            <div className="admin-sales-trend__bar" style={{ height: `${(t.totalSales / maxSales) * 100}%` }} />
+          </div>
+          <div className="admin-sales-trend__value">{t.totalSales.toLocaleString()}円</div>
+          <div className="admin-sales-trend__label">{formatMonthLabel(t.month)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function AdminDashboardPage() {
   const [data, setData] = useState<AdminDashboard | null>(null);
+  const [trend, setTrend] = useState<SalesTrendMonth[] | null>(null);
 
   useEffect(() => {
     fetchAdminDashboard().then(setData);
+    fetchAdminSalesTrend(6).then((d) => setTrend(d.trend));
   }, []);
 
   if (!data) return <p>読み込み中です...</p>;
@@ -78,6 +103,9 @@ export default function AdminDashboardPage() {
           </div>
         ))}
       </div>
+
+      <h2>月別売上推移(直近6ヶ月)</h2>
+      {trend && <SalesTrendChart trend={trend} />}
 
       <h2>在庫残数(バリエーション別)</h2>
       <table>
