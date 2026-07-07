@@ -57,7 +57,6 @@ function NavBar() {
         <Link to="/" className="brand">
           <span className="brand__mark" aria-hidden="true" />
           <span className="brand__name">戦国楽市楽座</span>
-          <span className="brand__sub">評議員デジタル会員証</span>
         </Link>
         <div className="nav-bar__links">
           <Link to="/products">商品一覧</Link>

@@ -98,18 +98,6 @@
   letter-spacing: 0.05em;
 }
 
-.brand__sub {
-  font-size: 0.75rem;
-  opacity: 0.8;
-  display: none;
-}
-
-@media (min-width: 640px) {
-  .brand__sub {
-    display: inline;
-  }
-}
-
 /* ==================== ボタン ==================== */
 
 .btn-primary {
