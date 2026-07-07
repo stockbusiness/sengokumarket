@@ -122,6 +122,19 @@ describe('マイページAPI', () => {
     expect(res.body.orders[0].items[0].productName).toBe('マイページテスト商品');
   });
 
+  it('自分の注文は1件詳細取得でき、他人の注文はNOT_FOUNDになる(領収書表示用)', async () => {
+    const { order: myOrder } = await createOrderWithNft(userId, 'wallet_required');
+    const { order: otherOrder } = await createOrderWithNft(otherUserId, 'wallet_required');
+
+    const okRes = await agent.get(`/api/mypage/orders/${myOrder.id}`);
+    expect(okRes.status).toBe(200);
+    expect(okRes.body.order.customerName).toBe('テスト');
+    expect(okRes.body.order.items[0].productName).toBe('マイページテスト商品');
+
+    const forbiddenRes = await agent.get(`/api/mypage/orders/${otherOrder.id}`);
+    expect(forbiddenRes.status).toBe(404);
+  });
+
   it('自分のNFT発行状況のみ取得できる', async () => {
     const res = await agent.get('/api/mypage/nfts');
     expect(res.status).toBe(200);

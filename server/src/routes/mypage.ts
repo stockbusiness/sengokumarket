@@ -36,6 +36,38 @@ router.get('/orders', async (req, res) => {
   });
 });
 
+// 仕様書外の拡張: 領収書表示用に自分の注文を1件だけ取得する。
+router.get('/orders/:id', async (req, res) => {
+  const order = await prisma.order.findUnique({
+    where: { id: req.params.id },
+    include: { orderItems: true },
+  });
+
+  if (!order || order.userId !== req.authUser!.id) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
+  }
+
+  res.json({
+    order: {
+      id: order.id,
+      orderNumber: order.orderNumber,
+      totalAmount: order.totalAmount,
+      paymentStatus: order.paymentStatus,
+      orderStatus: order.orderStatus,
+      customerName: order.customerName,
+      paidAt: order.paidAt,
+      createdAt: order.createdAt,
+      items: order.orderItems.map((item) => ({
+        productName: item.productName,
+        variantName: item.variantName,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        subtotal: item.subtotal,
+      })),
+    },
+  });
+});
+
 router.get('/nfts', async (req, res) => {
   const nftIssues = await prisma.nftIssue.findMany({
     where: { userId: req.authUser!.id },

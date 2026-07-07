@@ -15,6 +15,7 @@ import PasswordResetConfirmPage from './pages/PasswordResetConfirmPage';
 import MyPage from './pages/MyPage';
 import WalletPage from './pages/WalletPage';
 import MyProfilePage from './pages/MyProfilePage';
+import ReceiptPage from './pages/ReceiptPage';
 import RequireAuth from './components/RequireAuth';
 import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './components/AdminLayout';
@@ -175,6 +176,14 @@ function App() {
           element={
             <RequireAuth>
               <MyProfilePage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/mypage/orders/:id/receipt"
+          element={
+            <RequireAuth>
+              <ReceiptPage />
             </RequireAuth>
           }
         />

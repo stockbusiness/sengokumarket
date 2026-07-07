@@ -148,6 +148,14 @@ export function fetchMyOrders() {
   return apiFetch<{ orders: MyOrder[] }>('/mypage/orders');
 }
 
+export interface MyOrderDetail extends MyOrder {
+  customerName: string;
+}
+
+export function fetchMyOrder(id: string) {
+  return apiFetch<{ order: MyOrderDetail }>(`/mypage/orders/${encodeURIComponent(id)}`);
+}
+
 export function fetchMyNftIssues() {
   return apiFetch<{ nftIssues: MyNftIssue[] }>('/mypage/nfts');
 }

@@ -1232,3 +1232,77 @@
   margin: 0;
   color: var(--text-muted);
 }
+
+/* ==================== 領収書 ==================== */
+
+.receipt-page {
+  max-width: 560px;
+}
+
+.receipt-page__no-print {
+  margin-bottom: 16px;
+}
+
+.receipt-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-top: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 32px;
+  box-shadow: var(--shadow);
+}
+
+.receipt-card__issued-date {
+  text-align: right;
+  color: var(--text-muted);
+}
+
+.receipt-card__recipient {
+  font-size: 1.2rem;
+  font-family: var(--font-heading);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 16px;
+}
+
+.receipt-card__amount {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 1.1rem;
+  border-top: 2px solid var(--accent);
+  border-bottom: 2px solid var(--accent);
+  padding: 12px 0;
+  margin: 16px 0;
+}
+
+.receipt-card__amount-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-h);
+}
+
+.receipt-card__issuer {
+  text-align: right;
+  margin-top: 24px;
+  font-family: var(--font-heading);
+}
+
+@media print {
+  .site-header,
+  .site-footer,
+  .receipt-page__no-print {
+    display: none !important;
+  }
+
+  .app-main {
+    max-width: none;
+    padding: 0;
+  }
+
+  .receipt-card {
+    box-shadow: none;
+    border: 1px solid #000;
+  }
+}

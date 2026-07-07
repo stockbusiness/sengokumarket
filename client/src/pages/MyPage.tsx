@@ -87,6 +87,7 @@ export default function MyPage() {
               <span>{order.orderNumber}</span>
               <span>{order.totalAmount.toLocaleString()}円(税込)</span>
               <span>{order.paymentStatus}</span>
+              {order.paymentStatus === 'paid' && <Link to={`/mypage/orders/${order.id}/receipt`}>領収書を表示</Link>}
             </li>
           ))}
         </ul>
