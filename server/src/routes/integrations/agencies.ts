@@ -6,7 +6,7 @@ import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { generateAgencyCode } from '../../services/referralCodeGenerator';
 import { createPasswordResetToken } from '../../services/passwordReset';
-import { sendAgencyAccountSetupEmail } from '../../services/mailTemplates';
+import { sendAgencyAccountSetupEmail, sendAgencyAccessGrantedEmail } from '../../services/mailTemplates';
 import { isValidEmail } from '../../lib/validation';
 
 const router = Router();
@@ -144,6 +144,15 @@ router.post('/', async (req, res) => {
         }
       }
       parentAgencyId = parent.id;
+    } else if (!existing && isNonEmptyString(loginEmail)) {
+      // 仕様書外の拡張: 新規代理店作成時にparent_external_idの指定がなく、login_emailが
+      // 「このサイトで購入経験があり、既に代理店へ永久帰属しているユーザー」のメールアドレスと
+      // 一致する場合、その元の代理店(紹介者)を上位代理店として自動継承する。
+      // (例: 評議員NFTを購入した会員がインフルエンサー申請を経て代理店に昇格するケース)
+      const referredUser = await prisma.user.findUnique({ where: { email: loginEmail } });
+      if (referredUser?.referredByAgencyId) {
+        parentAgencyId = referredUser.referredByAgencyId;
+      }
     }
 
     const agency = existing
@@ -181,19 +190,36 @@ router.post('/', async (req, res) => {
     if (isNonEmptyString(loginEmail)) {
       const alreadyHasLogin = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
       if (!alreadyHasLogin) {
-        const user = await prisma.user.create({
-          data: {
-            name: agency.contactName ?? agency.name,
-            email: loginEmail,
-            // 仮パスワードは平文で扱わずランダム値をハッシュ化するのみ(仕様書v1.5 16章の原則を踏襲)。
-            // 本人はパスワード再設定メールのリンクから初期設定する。
-            passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
-            role: 'agency',
-            agencyId: agency.id,
-          },
-        });
-        const token = await createPasswordResetToken(user.id);
-        await sendAgencyAccountSetupEmail(user.email, user.name, token);
+        const existingUserByEmail = await prisma.user.findUnique({ where: { email: loginEmail } });
+
+        if (existingUserByEmail) {
+          // 既に代理店ポータル・管理者として使われているアカウントは横取りしない。
+          if (['agency', 'admin', 'admin_viewer'].includes(existingUserByEmail.role)) {
+            return sendError(res, 409, 'LOGIN_EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に別の管理者・代理店アカウントとして使用されています');
+          }
+
+          // 仕様書外の拡張: 既存の一般会員アカウント(評議員NFT購入者等)を代理店ポータルログインに
+          // 昇格させる。既にパスワードを持っているため、仮パスワードの再発行・設定メールは不要。
+          await prisma.user.update({
+            where: { id: existingUserByEmail.id },
+            data: { role: 'agency', agencyId: agency.id },
+          });
+          await sendAgencyAccessGrantedEmail(existingUserByEmail.email, existingUserByEmail.name);
+        } else {
+          const user = await prisma.user.create({
+            data: {
+              name: agency.contactName ?? agency.name,
+              email: loginEmail,
+              // 仮パスワードは平文で扱わずランダム値をハッシュ化するのみ(仕様書v1.5 16章の原則を踏襲)。
+              // 本人はパスワード再設定メールのリンクから初期設定する。
+              passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+              role: 'agency',
+              agencyId: agency.id,
+            },
+          });
+          const token = await createPasswordResetToken(user.id);
+          await sendAgencyAccountSetupEmail(user.email, user.name, token);
+        }
         loginProvisioned = true;
       }
     }

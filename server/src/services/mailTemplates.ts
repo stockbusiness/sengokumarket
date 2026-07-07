@@ -53,6 +53,20 @@ export async function sendAgencyAccountSetupEmail(email: string, name: string, t
   await sendMail({ to: email, subject: '代理店ポータル アカウント設定のご案内', html });
 }
 
+// 既存の会員アカウントが代理店ポータルの権限を付与された場合の通知(仕様書外の拡張)。
+// 既にログイン用パスワードを持っているため、新しい仮パスワードの発行・設定リンクは不要。
+export async function sendAgencyAccessGrantedEmail(email: string, name: string): Promise<void> {
+  const loginUrl = `${appUrl()}/login`;
+
+  const html = `
+    <p>${name} 様</p>
+    <p>会員アカウントに代理店ポータルのご利用権限が付与されました。いつものパスワードでログインいただけます。</p>
+    <p><a href="${loginUrl}">代理店ポータルにログインする</a></p>
+  `;
+
+  await sendMail({ to: email, subject: '代理店ポータル ご利用開始のお知らせ', html });
+}
+
 export async function sendAdminAccountSetupEmail(email: string, name: string, token: string, roleLabel: string): Promise<void> {
   const setupUrl = `${appUrl()}/password-reset/confirm?token=${token}`;
 
