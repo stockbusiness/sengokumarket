@@ -82,6 +82,7 @@ model User {
   orders              Order[]
   nftIssues           NftIssue[]
   passwordResetTokens PasswordResetToken[]
+  noticeReads         NoticeRead[]
   agency              Agency?               @relation(fields: [agencyId], references: [id])
 
   @@map("users")
@@ -241,7 +242,23 @@ model Notice {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
+  noticeReads NoticeRead[]
+
   @@map("notices")
+}
+
+// 仕様書外の拡張: お知らせの既読管理(会員単位)。お知らせが削除された場合は既読情報も不要になるため連動削除する。
+model NoticeRead {
+  id       String   @id @default(uuid()) @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  noticeId String   @map("notice_id") @db.Uuid
+  readAt   DateTime @default(now()) @map("read_at")
+
+  user   User   @relation(fields: [userId], references: [id])
+  notice Notice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, noticeId])
+  @@map("notice_reads")
 }
 
 // 仕様書外の拡張: 特商法・利用規約等の法務ページを管理画面から編集できるようにする。

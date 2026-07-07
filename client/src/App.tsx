@@ -14,6 +14,7 @@ import PasswordResetRequestPage from './pages/PasswordResetRequestPage';
 import PasswordResetConfirmPage from './pages/PasswordResetConfirmPage';
 import MyPage from './pages/MyPage';
 import WalletPage from './pages/WalletPage';
+import MyProfilePage from './pages/MyProfilePage';
 import RequireAuth from './components/RequireAuth';
 import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './components/AdminLayout';
@@ -166,6 +167,14 @@ function App() {
           element={
             <RequireAuth>
               <WalletPage />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/mypage/profile"
+          element={
+            <RequireAuth>
+              <MyProfilePage />
             </RequireAuth>
           }
         />

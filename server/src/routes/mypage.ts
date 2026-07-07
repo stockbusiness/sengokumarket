@@ -57,6 +57,29 @@ router.get('/nfts', async (req, res) => {
   });
 });
 
+// 仕様書外の拡張: 会員が自分の氏名・電話番号を編集できるようにする。
+// メールアドレスはログインIDを兼ねる(再認証フローが必要になるため対象外)。
+router.put('/profile', async (req, res) => {
+  const { name, phone } = req.body ?? {};
+
+  if (typeof name !== 'string' || name.trim().length === 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', '氏名を入力してください');
+  }
+  if (phone !== undefined && phone !== null && typeof phone !== 'string') {
+    return sendError(res, 400, 'VALIDATION_ERROR', '電話番号の形式が正しくありません');
+  }
+
+  const user = await prisma.user.update({
+    where: { id: req.authUser!.id },
+    data: {
+      name: name.trim(),
+      phone: typeof phone === 'string' && phone.trim().length > 0 ? phone.trim() : null,
+    },
+  });
+
+  res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, agencyId: user.agencyId } });
+});
+
 router.get('/wallet', async (req, res) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.authUser!.id } });
   res.json({ wallet: wallet ? { walletAddress: wallet.walletAddress, chain: wallet.chain } : null });
@@ -94,11 +117,16 @@ router.post('/wallet', async (req, res) => {
   res.json({ wallet: { walletAddress: wallet.walletAddress, chain: wallet.chain } });
 });
 
-router.get('/notices', async (_req, res) => {
-  const notices = await prisma.notice.findMany({
-    where: { status: 'published' },
-    orderBy: { publishedAt: 'desc' },
-  });
+router.get('/notices', async (req, res) => {
+  const userId = req.authUser!.id;
+  const [notices, reads] = await Promise.all([
+    prisma.notice.findMany({
+      where: { status: 'published' },
+      orderBy: { publishedAt: 'desc' },
+    }),
+    prisma.noticeRead.findMany({ where: { userId }, select: { noticeId: true } }),
+  ]);
+  const readNoticeIds = new Set(reads.map((r) => r.noticeId));
 
   res.json({
     notices: notices.map((notice) => ({
@@ -106,8 +134,26 @@ router.get('/notices', async (_req, res) => {
       title: notice.title,
       body: notice.body,
       publishedAt: notice.publishedAt,
+      read: readNoticeIds.has(notice.id),
     })),
   });
+});
+
+// 仕様書外の拡張: お知らせの既読管理(会員単位)。
+router.post('/notices/:id/read', async (req, res) => {
+  const userId = req.authUser!.id;
+  const notice = await prisma.notice.findUnique({ where: { id: req.params.id } });
+  if (!notice || notice.status !== 'published') {
+    return sendError(res, 404, 'NOTICE_NOT_FOUND', 'お知らせが見つかりません');
+  }
+
+  await prisma.noticeRead.upsert({
+    where: { userId_noticeId: { userId, noticeId: notice.id } },
+    update: {},
+    create: { userId, noticeId: notice.id },
+  });
+
+  res.json({ ok: true });
 });
 
 export default router;

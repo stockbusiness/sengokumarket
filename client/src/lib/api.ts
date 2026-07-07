@@ -52,6 +52,19 @@ async function apiPost<T>(path: string, payload: unknown): Promise<T> {
   return body;
 }
 
+async function apiPut<T>(path: string, payload: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiError(res.status, body?.error?.code, body?.error?.message ?? `リクエストに失敗しました(${res.status})`);
+  }
+  return body;
+}
+
 export function fetchProducts() {
   return apiFetch<{ products: ProductSummary[] }>('/products');
 }
@@ -123,6 +136,7 @@ export interface MyNotice {
   title: string;
   body: string;
   publishedAt: string | null;
+  read: boolean;
 }
 
 export interface MyWallet {
@@ -142,12 +156,25 @@ export function fetchMyNotices() {
   return apiFetch<{ notices: MyNotice[] }>('/mypage/notices');
 }
 
+export function markMyNoticeRead(id: string) {
+  return apiPost<{ ok: boolean }>(`/mypage/notices/${encodeURIComponent(id)}/read`, undefined);
+}
+
 export function fetchMyWallet() {
   return apiFetch<{ wallet: MyWallet | null }>('/mypage/wallet');
 }
 
 export function updateMyWallet(walletAddress: string) {
   return apiPost<{ wallet: MyWallet }>('/mypage/wallet', { walletAddress, chain: 'polygon' });
+}
+
+export interface UpdateMyProfilePayload {
+  name: string;
+  phone: string;
+}
+
+export function updateMyProfile(payload: UpdateMyProfilePayload) {
+  return apiPut<{ user: { id: string; name: string; email: string; phone: string | null } }>('/mypage/profile', payload);
 }
 
 export interface LegalDocument {

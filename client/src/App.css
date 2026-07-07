@@ -145,6 +145,21 @@
 
 /* ==================== 商品一覧・詳細 ==================== */
 
+.product-list__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 24px;
+}
+
+.product-list__filters input {
+  flex: 1 1 220px;
+}
+
+.product-list__filters select {
+  flex: 0 1 200px;
+}
+
 .product-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -369,6 +384,19 @@
   border-left: 4px solid var(--accent);
   border-radius: 4px;
   padding: 12px 16px;
+}
+
+.notice-badge-new {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.7em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  background: var(--danger);
+  color: var(--primary-contrast);
+  vertical-align: middle;
 }
 
 /* ==================== 管理画面 ==================== */

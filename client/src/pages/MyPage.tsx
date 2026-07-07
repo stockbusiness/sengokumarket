@@ -6,6 +6,7 @@ import {
   fetchMyNotices,
   fetchMyOrders,
   fetchMyWallet,
+  markMyNoticeRead,
   type MyNftIssue,
   type MyNotice,
   type MyOrder,
@@ -29,7 +30,11 @@ export default function MyPage() {
   useEffect(() => {
     fetchMyOrders().then((d) => setOrders(d.orders));
     fetchMyNftIssues().then((d) => setNftIssues(d.nftIssues));
-    fetchMyNotices().then((d) => setNotices(d.notices));
+    fetchMyNotices().then((d) => {
+      setNotices(d.notices);
+      // 表示した時点で既読化する(次回訪問時から「NEW」表示が外れる)
+      d.notices.filter((n) => !n.read).forEach((n) => markMyNoticeRead(n.id).catch(() => {}));
+    });
     fetchMyWallet().then((d) => setHasWallet(d.wallet !== null));
   }, []);
 
@@ -38,7 +43,7 @@ export default function MyPage() {
       <h1>マイページ</h1>
       {user && (
         <p>
-          {user.name}さん({user.email})
+          {user.name}さん({user.email}) <Link to="/mypage/profile">登録情報を編集する</Link>
         </p>
       )}
 
@@ -93,7 +98,10 @@ export default function MyPage() {
         <ul className="notice-list">
           {notices.map((notice) => (
             <li key={notice.id}>
-              <strong>{notice.title}</strong>
+              <strong>
+                {notice.title}
+                {!notice.read && <span className="notice-badge-new">NEW</span>}
+              </strong>
               <p>{notice.body}</p>
             </li>
           ))}

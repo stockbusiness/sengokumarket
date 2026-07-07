@@ -26,8 +26,8 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-function publicUser(user: { id: string; name: string; email: string; role: string; agencyId?: string | null }) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role, agencyId: user.agencyId ?? null };
+function publicUser(user: { id: string; name: string; email: string; phone?: string | null; role: string; agencyId?: string | null }) {
+  return { id: user.id, name: user.name, email: user.email, phone: user.phone ?? null, role: user.role, agencyId: user.agencyId ?? null };
 }
 
 router.post('/auth/register', registerLimiter, async (req, res) => {

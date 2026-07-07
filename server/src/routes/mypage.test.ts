@@ -137,6 +137,42 @@ describe('マイページAPI', () => {
     expect(titles).not.toContain('下書きお知らせ');
   });
 
+  it('お知らせは既定で未読、既読にするとread=trueになり他人には影響しない', async () => {
+    const before = await agent.get('/api/mypage/notices');
+    const notice = before.body.notices.find((n: { title: string }) => n.title === '公開済みお知らせ');
+    expect(notice.read).toBe(false);
+
+    const markRes = await agent.post(`/api/mypage/notices/${notice.id}/read`).set('Origin', ORIGIN);
+    expect(markRes.status).toBe(200);
+
+    const after = await agent.get('/api/mypage/notices');
+    expect(after.body.notices.find((n: { id: string }) => n.id === notice.id).read).toBe(true);
+
+    const otherAgent = request.agent(app);
+    const otherEmail = `mypage-otherread-test-${Date.now()}@example.com`;
+    await otherAgent.post('/api/auth/register').set('Origin', ORIGIN).send({ name: '他人2', email: otherEmail, password: 'password123' });
+    const otherView = await otherAgent.get('/api/mypage/notices');
+    expect(otherView.body.notices.find((n: { id: string }) => n.id === notice.id).read).toBe(false);
+
+    await prisma.user.deleteMany({ where: { email: otherEmail } });
+  });
+
+  it('氏名・電話番号を編集できる', async () => {
+    const res = await agent.put('/api/mypage/profile').set('Origin', ORIGIN).send({ name: '改名太郎', phone: '080-9999-8888' });
+    expect(res.status).toBe(200);
+    expect(res.body.user.name).toBe('改名太郎');
+    expect(res.body.user.phone).toBe('080-9999-8888');
+
+    const meRes = await agent.get('/api/auth/me');
+    expect(meRes.body.user.name).toBe('改名太郎');
+  });
+
+  it('氏名を空にすると400を返す', async () => {
+    const res = await agent.put('/api/mypage/profile').set('Origin', ORIGIN).send({ name: '  ', phone: '' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('不正な形式のウォレットアドレスは400を返す', async () => {
     const res = await agent.post('/api/mypage/wallet').set('Origin', ORIGIN).send({ walletAddress: '0xshort' });
     expect(res.status).toBe(400);
