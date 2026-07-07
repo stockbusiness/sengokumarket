@@ -158,6 +158,15 @@ export function IconGear(props: SVGProps<SVGSVGElement>) {
   );
 }
 
+export function IconUser(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <circle cx="12" cy="8" r="3.5" />
+      <path d="M5 20 C5 15.5 8 13 12 13 C16 13 19 15.5 19 20" />
+    </svg>
+  );
+}
+
 export function IconHistory(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)}>

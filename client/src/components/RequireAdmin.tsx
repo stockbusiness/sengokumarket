@@ -7,7 +7,7 @@ export default function RequireAdmin({ children }: { children: ReactNode }) {
 
   if (loading) return <p>読み込み中です...</p>;
   if (!user) return <Navigate to="/login" replace />;
-  if (user.role !== 'admin') return <Navigate to="/products" replace />;
+  if (user.role !== 'admin' && user.role !== 'admin_viewer') return <Navigate to="/products" replace />;
 
   return <>{children}</>;
 }

@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { fetchAdminDashboard } from '../lib/adminApi';
+import { useAuth } from '../context/AuthContext';
 import {
   IconBell,
   IconBox,
@@ -16,6 +17,7 @@ import {
   IconSearch,
   IconUpload,
   IconBadge,
+  IconUser,
   IconWallet,
 } from './icons';
 import type { ComponentType, SVGProps } from 'react';
@@ -58,11 +60,13 @@ const NAV_GROUPS: {
       { to: '/admin/legal', label: '法務ページ編集', icon: IconDocument, muted: true },
       { to: '/admin/settings', label: '決済・メール設定', icon: IconGear, muted: true },
       { to: '/admin/audit-logs', label: '監査ログ', icon: IconHistory, muted: true },
+      { to: '/admin/admin-users', label: '管理者アカウント', icon: IconUser, muted: true },
     ],
   },
 ];
 
 export default function AdminLayout() {
+  const { user } = useAuth();
   const [walletMissingCount, setWalletMissingCount] = useState(0);
   const [alertCount, setAlertCount] = useState(0);
 
@@ -118,6 +122,9 @@ export default function AdminLayout() {
           </div>
         </div>
         <div className="admin-content">
+          {user?.role === 'admin_viewer' && (
+            <div className="admin-viewer-banner">閲覧専用アカウントでログイン中です。登録・変更・削除操作はできません。</div>
+          )}
           <Outlet />
         </div>
       </div>

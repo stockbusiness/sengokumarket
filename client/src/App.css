@@ -795,6 +795,16 @@
   color: var(--danger);
 }
 
+.admin-viewer-banner {
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 16px;
+  margin-bottom: 16px;
+  background: rgba(184, 137, 43, 0.1);
+  color: var(--text-h);
+  font-size: 0.9em;
+}
+
 /* ステータス表示。ボタン・入力欄と同じradius-sm(6px)に揃え、ピルと角丸の混在を避ける。
    色は既存のsuccess/danger/mutedトークンのみ流用する */
 .status-badge {

@@ -64,7 +64,7 @@ model User {
   email        String   @unique
   phone        String?
   passwordHash String   @map("password_hash")
-  role         String   @default("user") // user | admin | agency
+  role         String   @default("user") // user | admin | admin_viewer(閲覧専用管理者。仕様書外の拡張) | agency
   agencyId     String?  @map("agency_id") @db.Uuid // role=agencyの場合のみ設定(仕様書外の拡張: 代理店ポータルログイン)
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")

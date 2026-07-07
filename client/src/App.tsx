@@ -32,6 +32,7 @@ import AdminAgenciesPage from './pages/admin/AdminAgenciesPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminLegalPage from './pages/admin/AdminLegalPage';
 import AdminAuditLogsPage from './pages/admin/AdminAuditLogsPage';
+import AdminUsersPage from './pages/admin/AdminUsersPage';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
 import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
@@ -64,7 +65,7 @@ function NavBar() {
           {user ? (
             <>
               <Link to="/mypage">マイページ</Link>
-              {user.role === 'admin' && <Link to="/admin">管理画面</Link>}
+              {(user.role === 'admin' || user.role === 'admin_viewer') && <Link to="/admin">管理画面</Link>}
               {user.role === 'agency' && <Link to="/agency">代理店ポータル</Link>}
               <span className="nav-bar__user">{user.name}さん</span>
               <button
@@ -208,6 +209,7 @@ function App() {
           <Route path="settings" element={<AdminSettingsPage />} />
           <Route path="legal" element={<AdminLegalPage />} />
           <Route path="audit-logs" element={<AdminAuditLogsPage />} />
+          <Route path="admin-users" element={<AdminUsersPage />} />
         </Route>
         <Route
           path="/agency"

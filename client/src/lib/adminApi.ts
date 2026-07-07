@@ -356,3 +356,24 @@ export interface AdminAuditLogEntry {
 export function fetchAdminAuditLogs(page: number) {
   return adminFetch<{ logs: AdminAuditLogEntry[]; total: number; page: number; pageSize: number }>(`/audit-logs?page=${page}`);
 }
+
+// --- 管理者アカウント管理(仕様書外の拡張) ---
+export interface AdminUser {
+  id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'admin_viewer';
+  createdAt: string;
+}
+
+export function fetchAdminUsers() {
+  return adminFetch<{ adminUsers: AdminUser[] }>('/admin-users');
+}
+
+export function createAdminUser(payload: { name: string; email: string; role: 'admin' | 'admin_viewer' }) {
+  return adminSend<{ adminUser: AdminUser }>('POST', '/admin-users', payload);
+}
+
+export function updateAdminUserRole(id: string, role: 'admin' | 'admin_viewer') {
+  return adminSend<{ adminUser: AdminUser }>('PUT', `/admin-users/${id}/role`, { role });
+}
