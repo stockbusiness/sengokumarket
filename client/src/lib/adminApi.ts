@@ -330,3 +330,19 @@ export function fetchAdminLegalDocuments() {
 export function updateAdminLegalDocument(slug: string, payload: { title: string; body: string }) {
   return adminSend<{ document: AdminLegalDocument }>('PUT', `/legal/${slug}`, payload);
 }
+
+// --- 監査ログ(仕様書外の拡張) ---
+export interface AdminAuditLogEntry {
+  id: string;
+  actorEmail: string;
+  actorRole: string;
+  method: string;
+  path: string;
+  requestBody: unknown;
+  statusCode: number;
+  createdAt: string;
+}
+
+export function fetchAdminAuditLogs(page: number) {
+  return adminFetch<{ logs: AdminAuditLogEntry[]; total: number; page: number; pageSize: number }>(`/audit-logs?page=${page}`);
+}

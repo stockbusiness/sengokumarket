@@ -9,6 +9,7 @@ import {
   IconDocument,
   IconGear,
   IconGrid,
+  IconHistory,
   IconLink,
   IconMegaphone,
   IconReceipt,
@@ -56,6 +57,7 @@ const NAV_GROUPS: {
       { to: '/admin/notices', label: 'お知らせ管理', icon: IconMegaphone },
       { to: '/admin/legal', label: '法務ページ編集', icon: IconDocument, muted: true },
       { to: '/admin/settings', label: '決済・メール設定', icon: IconGear, muted: true },
+      { to: '/admin/audit-logs', label: '監査ログ', icon: IconHistory, muted: true },
     ],
   },
 ];

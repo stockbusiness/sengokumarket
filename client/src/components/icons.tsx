@@ -157,3 +157,13 @@ export function IconGear(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function IconHistory(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 10 A8 8 0 1 1 5.5 15.5" />
+      <path d="M4 5 V10 H9" />
+      <path d="M12 8 V12 L15 14" />
+    </svg>
+  );
+}

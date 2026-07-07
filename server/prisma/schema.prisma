@@ -38,6 +38,26 @@ model LoginAttempt {
   @@map("login_attempts")
 }
 
+// 仕様書外の拡張: 管理者・代理店ポータルによる状態変更操作(価格変更・報酬ステータス変更・
+// 注文状態変更等)の監査ログ。誰が・いつ・どのAPIに対して・どんな内容で操作したかを記録する。
+// usersへの物理FKは張らない(退会等でユーザーが削除されてもログ自体は残す)。
+// Stripe/Resend等の秘密情報はミドルウェア側でマスクしてから記録し、平文保存しない。
+model AdminAuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  actorEmail  String   @map("actor_email")
+  actorRole   String   @map("actor_role")
+  method      String
+  path        String
+  requestBody Json?    @map("request_body")
+  statusCode  Int      @map("status_code")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@map("admin_audit_logs")
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   name         String

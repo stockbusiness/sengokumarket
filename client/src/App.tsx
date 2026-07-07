@@ -29,6 +29,7 @@ import AdminReferralsPage from './pages/admin/AdminReferralsPage';
 import AdminAgenciesPage from './pages/admin/AdminAgenciesPage';
 import AdminSettingsPage from './pages/admin/AdminSettingsPage';
 import AdminLegalPage from './pages/admin/AdminLegalPage';
+import AdminAuditLogsPage from './pages/admin/AdminAuditLogsPage';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
 import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
@@ -186,6 +187,7 @@ function App() {
           <Route path="agencies" element={<AdminAgenciesPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />
           <Route path="legal" element={<AdminLegalPage />} />
+          <Route path="audit-logs" element={<AdminAuditLogsPage />} />
         </Route>
         <Route
           path="/agency"

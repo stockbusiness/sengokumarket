@@ -564,6 +564,21 @@
   margin-bottom: 0;
 }
 
+.admin-audit-body {
+  max-width: 360px;
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.admin-pagination {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
 .admin-empty-state {
   padding: 32px 20px;
   text-align: center;
@@ -580,6 +595,7 @@
   border-bottom: 1px solid var(--border);
   text-align: left;
   font-size: 0.9em;
+  overflow-wrap: anywhere;
 }
 
 .admin-content th {

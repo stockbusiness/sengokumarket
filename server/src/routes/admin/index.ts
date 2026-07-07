@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { requireAdmin } from '../../middleware/auth';
+import { auditLog } from '../../middleware/auditLog';
+import auditLogsRouter from './auditLogs';
 import dashboardRouter from './dashboard';
 import productsRouter from './products';
 import ordersRouter from './orders';
@@ -17,7 +19,10 @@ const router = Router();
 
 // 管理APIは認可ミドルウェアで一括保護する(ルート個別にチェックを書かない。仕様書v1.5コーディング規約)。
 router.use(requireAdmin);
+// 状態変更操作(GET以外)の監査ログを一括で記録する(仕様書外の拡張)。
+router.use(auditLog);
 
+router.use(auditLogsRouter);
 router.use(dashboardRouter);
 router.use(productsRouter);
 router.use(ordersRouter);
