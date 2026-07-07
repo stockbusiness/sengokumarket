@@ -37,7 +37,7 @@ export default function ProductDetailPage() {
     <div className="product-detail">
       {product.images.length > 0 && (
         <div className="product-detail__gallery">
-          <img src={product.images[activeImageIndex] ?? product.images[0]} alt={product.name} />
+          <img src={product.images[activeImageIndex] ?? product.images[0]} alt={product.name} fetchPriority="high" />
           {product.images.length > 1 && (
             <div className="product-detail__thumbnails">
               {product.images.map((src, index) => (
@@ -47,7 +47,7 @@ export default function ProductDetailPage() {
                   className={index === activeImageIndex ? 'product-detail__thumbnail is-active' : 'product-detail__thumbnail'}
                   onClick={() => setActiveImageIndex(index)}
                 >
-                  <img src={src} alt={`${product.name} 画像${index + 1}`} />
+                  <img src={src} alt={`${product.name} 画像${index + 1}`} loading="lazy" />
                 </button>
               ))}
             </div>

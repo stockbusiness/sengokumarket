@@ -1,51 +1,54 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { captureReferralFromSearch } from './lib/referral';
 import { useAuth } from './context/AuthContext';
-import ProductListPage from './pages/ProductListPage';
-import ProductDetailPage from './pages/ProductDetailPage';
-import CartPage from './pages/CartPage';
-import CheckoutPage from './pages/CheckoutPage';
-import CheckoutSuccessPage from './pages/CheckoutSuccessPage';
-import CheckoutCancelPage from './pages/CheckoutCancelPage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import PasswordResetRequestPage from './pages/PasswordResetRequestPage';
-import PasswordResetConfirmPage from './pages/PasswordResetConfirmPage';
-import MyPage from './pages/MyPage';
-import WalletPage from './pages/WalletPage';
-import MyProfilePage from './pages/MyProfilePage';
-import ReceiptPage from './pages/ReceiptPage';
 import RequireAuth from './components/RequireAuth';
 import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './components/AdminLayout';
-import AdminDashboardPage from './pages/admin/AdminDashboardPage';
-import AdminProductsPage from './pages/admin/AdminProductsPage';
-import AdminImportProductsPage from './pages/admin/AdminImportProductsPage';
-import AdminOrdersPage from './pages/admin/AdminOrdersPage';
-import AdminNftIssuesPage from './pages/admin/AdminNftIssuesPage';
-import AdminWalletMissingPage from './pages/admin/AdminWalletMissingPage';
-import AdminNoticesPage from './pages/admin/AdminNoticesPage';
-import AdminReferralLinksPage from './pages/admin/AdminReferralLinksPage';
-import AdminReferralsPage from './pages/admin/AdminReferralsPage';
-import AdminAgenciesPage from './pages/admin/AdminAgenciesPage';
-import AdminSettingsPage from './pages/admin/AdminSettingsPage';
-import AdminLegalPage from './pages/admin/AdminLegalPage';
-import AdminAuditLogsPage from './pages/admin/AdminAuditLogsPage';
-import AdminUsersPage from './pages/admin/AdminUsersPage';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
-import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
-import AgencyOrdersPage from './pages/agency/AgencyOrdersPage';
 import RequireReferralAccess from './components/RequireReferralAccess';
-import InviteOnlyPage from './pages/InviteOnlyPage';
-import LandingPage from './pages/LandingPage';
 import Footer from './components/Footer';
-import TokushohoPage from './pages/legal/TokushohoPage';
-import TermsPage from './pages/legal/TermsPage';
-import RefundPolicyPage from './pages/legal/RefundPolicyPage';
-import PrivacyPolicyPage from './pages/legal/PrivacyPolicyPage';
 import './App.css';
+
+// ページ単位でコード分割し、初回表示時に不要なコード(管理画面・代理店ポータル等)を
+// ダウンロードさせない(仕様書外の拡張。表示速度改善)。
+const ProductListPage = lazy(() => import('./pages/ProductListPage'));
+const ProductDetailPage = lazy(() => import('./pages/ProductDetailPage'));
+const CartPage = lazy(() => import('./pages/CartPage'));
+const CheckoutPage = lazy(() => import('./pages/CheckoutPage'));
+const CheckoutSuccessPage = lazy(() => import('./pages/CheckoutSuccessPage'));
+const CheckoutCancelPage = lazy(() => import('./pages/CheckoutCancelPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const RegisterPage = lazy(() => import('./pages/RegisterPage'));
+const PasswordResetRequestPage = lazy(() => import('./pages/PasswordResetRequestPage'));
+const PasswordResetConfirmPage = lazy(() => import('./pages/PasswordResetConfirmPage'));
+const MyPage = lazy(() => import('./pages/MyPage'));
+const WalletPage = lazy(() => import('./pages/WalletPage'));
+const MyProfilePage = lazy(() => import('./pages/MyProfilePage'));
+const ReceiptPage = lazy(() => import('./pages/ReceiptPage'));
+const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage'));
+const AdminProductsPage = lazy(() => import('./pages/admin/AdminProductsPage'));
+const AdminImportProductsPage = lazy(() => import('./pages/admin/AdminImportProductsPage'));
+const AdminOrdersPage = lazy(() => import('./pages/admin/AdminOrdersPage'));
+const AdminNftIssuesPage = lazy(() => import('./pages/admin/AdminNftIssuesPage'));
+const AdminWalletMissingPage = lazy(() => import('./pages/admin/AdminWalletMissingPage'));
+const AdminNoticesPage = lazy(() => import('./pages/admin/AdminNoticesPage'));
+const AdminReferralLinksPage = lazy(() => import('./pages/admin/AdminReferralLinksPage'));
+const AdminReferralsPage = lazy(() => import('./pages/admin/AdminReferralsPage'));
+const AdminAgenciesPage = lazy(() => import('./pages/admin/AdminAgenciesPage'));
+const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage'));
+const AdminLegalPage = lazy(() => import('./pages/admin/AdminLegalPage'));
+const AdminAuditLogsPage = lazy(() => import('./pages/admin/AdminAuditLogsPage'));
+const AdminUsersPage = lazy(() => import('./pages/admin/AdminUsersPage'));
+const AgencyReferralLinksPage = lazy(() => import('./pages/agency/AgencyReferralLinksPage'));
+const AgencyOrdersPage = lazy(() => import('./pages/agency/AgencyOrdersPage'));
+const InviteOnlyPage = lazy(() => import('./pages/InviteOnlyPage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
+const TokushohoPage = lazy(() => import('./pages/legal/TokushohoPage'));
+const TermsPage = lazy(() => import('./pages/legal/TermsPage'));
+const RefundPolicyPage = lazy(() => import('./pages/legal/RefundPolicyPage'));
+const PrivacyPolicyPage = lazy(() => import('./pages/legal/PrivacyPolicyPage'));
 
 function NavBar() {
   const { user, logout } = useAuth();
@@ -103,6 +106,7 @@ function App() {
     <>
       <NavBar />
       <main className="app-main">
+        <Suspense fallback={<p className="page-loading">読み込み中です...</p>}>
         <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/invite-only" element={<InviteOnlyPage />} />
@@ -222,6 +226,7 @@ function App() {
           <Route path="orders" element={<AgencyOrdersPage />} />
         </Route>
         </Routes>
+        </Suspense>
       </main>
       <Footer />
     </>

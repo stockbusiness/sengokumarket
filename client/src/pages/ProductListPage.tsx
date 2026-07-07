@@ -79,7 +79,7 @@ export default function ProductListPage() {
             const totalAvailable = product.variants.reduce((sum, v) => sum + v.availableStock, 0);
             return (
               <Link key={product.id} to={`/products/${product.slug}`} className="product-card">
-                {product.images[0] && <img src={product.images[0]} alt={product.name} />}
+                {product.images[0] && <img src={product.images[0]} alt={product.name} loading="lazy" />}
                 <h2>{product.name}</h2>
                 <p>{product.basePrice.toLocaleString()}円(税込)</p>
                 <p>{totalAvailable > 0 ? '在庫あり' : '売り切れ'}</p>
