@@ -10,6 +10,8 @@ export const SETTING_KEYS = [
   'resend_api_key',
   'mail_from',
   'agency_api_key',
+  'external_agency_system_base_url',
+  'external_agency_system_api_key',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

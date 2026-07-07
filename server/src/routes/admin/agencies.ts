@@ -1,7 +1,22 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
+import { sendError } from '../../lib/apiError';
+import { HttpError } from '../../lib/httpError';
+import { syncAgencyHierarchyFromExternalSystem } from '../../services/agencyHierarchySync';
 
 const router = Router();
+
+// 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)の階層取得APIを呼び出し、即時同期する。
+// 通常は日次バッチ(cron)で自動同期されるが、承認直後などにその場で反映したい場合に使う。
+router.post('/agencies/sync-external', async (_req, res) => {
+  try {
+    const result = await syncAgencyHierarchyFromExternalSystem();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
 
 // 発行フォームのドロップダウン用(id / nameのみ。仕様書v1.5 13章)
 router.get('/agencies', async (_req, res) => {

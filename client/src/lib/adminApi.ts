@@ -194,6 +194,10 @@ export interface AdminAgencyDetail {
 export function fetchAdminAgenciesDetail() {
   return adminFetch<{ agencies: AdminAgencyDetail[] }>('/agencies/detail');
 }
+
+export function syncAgenciesFromExternalSystem() {
+  return adminSend<{ agenciesSynced: number; applicationsApproved: number }>('POST', '/agencies/sync-external');
+}
 export function fetchAdminInfluencers(agencyId?: string) {
   return adminFetch<{ influencers: { id: string; name: string }[] }>(
     `/influencers${agencyId ? `?agency_id=${agencyId}` : ''}`,
@@ -297,6 +301,8 @@ export interface AdminSettings {
   resend_api_key: AdminSettingInfo;
   mail_from: AdminSettingInfo;
   agency_api_key: AdminSettingInfo;
+  external_agency_system_base_url: AdminSettingInfo;
+  external_agency_system_api_key: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {

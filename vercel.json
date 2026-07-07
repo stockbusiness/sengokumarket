@@ -17,5 +17,8 @@
         { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains" }
       ]
     }
+  ],
+  "crons": [
+    { "path": "/api/internal/cron/sync-agency-hierarchy", "schedule": "0 18 * * *" }
   ]
 }

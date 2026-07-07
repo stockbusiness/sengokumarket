@@ -16,9 +16,11 @@ import mypageRouter from './routes/mypage';
 import adminRouter from './routes/admin';
 import agencyRouter from './routes/agency';
 import integrationAgenciesRouter from './routes/integrations/agencies';
+import internalCronRouter from './routes/internalCron';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
+import { requireCronSecret } from './middleware/cronAuth';
 import { sendError } from './lib/apiError';
 
 export function createApp(): Express {
@@ -43,6 +45,9 @@ export function createApp(): Express {
   // 外部の代理店システムからのサーバー間API連携。Cookie/Originに依存しないAPIキー認証のため、
   // ブラウザCookieセッション向けのOrigin検証(requireSameOrigin)より前に登録する(仕様書外の拡張)。
   app.use('/api/integrations/agencies', requireAgencyApiKey, integrationAgenciesRouter);
+
+  // Vercel Cronからの呼び出し。Cookie/Originに依存しないため同様にrequireSameOriginより前段に置く(仕様書外の拡張)。
+  app.use('/api/internal/cron', requireCronSecret, internalCronRouter);
 
   // Cookie認証はSameSite=Strict + Origin検証でCSRF対策する(仕様書v1.5 16章)。
   app.use('/api', requireSameOrigin);

@@ -7,6 +7,7 @@ import {
   fetchMyOrders,
   fetchMyWallet,
   markMyNoticeRead,
+  submitAgencyApplication,
   type MyNftIssue,
   type MyNotice,
   type MyOrder,
@@ -21,11 +22,13 @@ const NFT_STATUS_LABEL: Record<string, string> = {
 };
 
 export default function MyPage() {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const [orders, setOrders] = useState<MyOrder[]>([]);
   const [nftIssues, setNftIssues] = useState<MyNftIssue[]>([]);
   const [notices, setNotices] = useState<MyNotice[]>([]);
   const [hasWallet, setHasWallet] = useState<boolean | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applicationError, setApplicationError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyOrders().then((d) => setOrders(d.orders));
@@ -37,6 +40,19 @@ export default function MyPage() {
     });
     fetchMyWallet().then((d) => setHasWallet(d.wallet !== null));
   }, []);
+
+  async function handleApply() {
+    setApplying(true);
+    setApplicationError(null);
+    try {
+      await submitAgencyApplication();
+      await refresh();
+    } catch (e) {
+      setApplicationError(e instanceof Error ? e.message : '申請に失敗しました');
+    } finally {
+      setApplying(false);
+    }
+  }
 
   return (
     <div className="mypage">
@@ -108,6 +124,32 @@ export default function MyPage() {
           ))}
         </ul>
       </section>
+
+      {user?.role === 'user' && (
+        <section>
+          <h2>代理店(インフルエンサー)申請</h2>
+          {user.agencyApplicationSubmittedAt ? (
+            <p>申請済みです。承認をお待ちください。</p>
+          ) : (
+            <>
+              <p>紹介URLを発行して報酬を受け取る代理店(インフルエンサー)になることができます。</p>
+              {applicationError && <p className="checkout-error">{applicationError}</p>}
+              <button type="button" className="btn-primary" onClick={handleApply} disabled={applying}>
+                {applying ? '申請中...' : '代理店になる(インフルエンサー申請)'}
+              </button>
+            </>
+          )}
+        </section>
+      )}
+
+      {user?.role === 'agency' && (
+        <section>
+          <h2>代理店(インフルエンサー)申請</h2>
+          <p>
+            既に代理店として登録されています。<Link to="/agency">代理店ポータル</Link>から紹介URLを発行できます。
+          </p>
+        </section>
+      )}
     </div>
   );
 }

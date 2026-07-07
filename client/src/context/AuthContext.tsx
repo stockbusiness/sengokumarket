@@ -7,6 +7,7 @@ export interface AuthUser {
   phone: string | null;
   role: string;
   agencyId: string | null;
+  agencyApplicationSubmittedAt: string | null;
 }
 
 interface AuthContextValue {

@@ -185,6 +185,10 @@ export function updateMyProfile(payload: UpdateMyProfilePayload) {
   return apiPut<{ user: { id: string; name: string; email: string; phone: string | null } }>('/mypage/profile', payload);
 }
 
+export function submitAgencyApplication() {
+  return apiPost<{ ok: boolean }>('/mypage/agency-application', undefined);
+}
+
 export interface LegalDocument {
   slug: string;
   title: string;

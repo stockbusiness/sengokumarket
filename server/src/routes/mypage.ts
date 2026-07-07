@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
 import { requireAuth } from '../middleware/auth';
+import { HttpError } from '../lib/httpError';
+import { pushAgencyCandidateToExternalSystem } from '../services/externalAgencySystem';
 
 const router = Router();
 
@@ -110,6 +112,43 @@ router.put('/profile', async (req, res) => {
   });
 
   res.json({ user: { id: user.id, name: user.name, email: user.email, phone: user.phone, role: user.role, agencyId: user.agencyId } });
+});
+
+// 仕様書外の拡張: 会員が代理店(インフルエンサー)への昇格を外部代理店システムへ申請する。
+// 申請自体はsengoku-ai.com側で審査・承認され、承認結果は階層取得APIの定期同期で反映される。
+router.post('/agency-application', async (req, res) => {
+  const user = await prisma.user.findUniqueOrThrow({ where: { id: req.authUser!.id } });
+
+  if (user.role !== 'user') {
+    return sendError(res, 400, 'ALREADY_AGENCY_OR_ADMIN', '既に代理店または管理者権限を持つアカウントです');
+  }
+  if (user.agencyApplicationSubmittedAt) {
+    return sendError(res, 400, 'APPLICATION_ALREADY_SUBMITTED', '既に代理店申請済みです。承認をお待ちください');
+  }
+
+  let parentExternalId: string | null = null;
+  if (user.referredByAgencyId) {
+    const referringAgency = await prisma.agency.findUnique({ where: { id: user.referredByAgencyId } });
+    parentExternalId = referringAgency?.externalId ?? null;
+  }
+
+  try {
+    await pushAgencyCandidateToExternalSystem({
+      externalId: user.id,
+      name: user.name,
+      contactName: user.name,
+      contactEmail: user.email,
+      loginEmail: user.email,
+      parentExternalId,
+    });
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: { agencyApplicationSubmittedAt: new Date() } });
+
+  res.status(201).json({ ok: true });
 });
 
 router.get('/wallet', async (req, res) => {

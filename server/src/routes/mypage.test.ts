@@ -1,7 +1,17 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+
+const pushAgencyCandidateToExternalSystem = vi.fn(async (..._args: unknown[]) => ({
+  external_id: 'x',
+  code: 'AG999999',
+  status: 'active',
+}));
+
+vi.mock('../services/externalAgencySystem', () => ({
+  pushAgencyCandidateToExternalSystem: (...args: unknown[]) => pushAgencyCandidateToExternalSystem(...args),
+}));
 
 const app = createApp();
 const ORIGIN = 'http://localhost:5173';
@@ -221,5 +231,69 @@ describe('マイページAPI', () => {
     expect(issuedAfter.walletAddress).toBeNull();
     expect(failedAfter.status).toBe('failed');
     expect(failedAfter.walletAddress).toBeNull();
+  });
+
+  describe('代理店(インフルエンサー)申請(仕様書外の拡張)', () => {
+    it('申請すると外部代理店システムへ送信され、申請日時が記録される', async () => {
+      pushAgencyCandidateToExternalSystem.mockClear();
+      const res = await agent.post('/api/mypage/agency-application').set('Origin', ORIGIN);
+      expect(res.status).toBe(201);
+      expect(pushAgencyCandidateToExternalSystem).toHaveBeenCalledTimes(1);
+
+      const updated = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+      expect(updated.agencyApplicationSubmittedAt).not.toBeNull();
+    });
+
+    it('既に申請済みの場合は400を返し、再送信しない', async () => {
+      pushAgencyCandidateToExternalSystem.mockClear();
+      const res = await agent.post('/api/mypage/agency-application').set('Origin', ORIGIN);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('APPLICATION_ALREADY_SUBMITTED');
+      expect(pushAgencyCandidateToExternalSystem).not.toHaveBeenCalled();
+    });
+
+    it('永久帰属している代理店がある場合、その代理店のexternal_idをparent_external_idとして送信する', async () => {
+      const referrerAgency = await prisma.agency.create({
+        data: { name: '申請テスト用紹介元代理店', code: `AGAPPTEST${Date.now()}`, externalId: `apptest-parent-${Date.now()}` },
+      });
+
+      const email = `mypage-apptest-referred-${Date.now()}@example.com`;
+      const referredAgent = request.agent(app);
+      const registerRes = await referredAgent
+        .post('/api/auth/register')
+        .set('Origin', ORIGIN)
+        .send({ name: '被紹介太郎', email, password: 'password123' });
+
+      await prisma.user.update({
+        where: { id: registerRes.body.user.id },
+        data: { referredByAgencyId: referrerAgency.id },
+      });
+
+      pushAgencyCandidateToExternalSystem.mockClear();
+      const res = await referredAgent.post('/api/mypage/agency-application').set('Origin', ORIGIN);
+      expect(res.status).toBe(201);
+      expect(pushAgencyCandidateToExternalSystem).toHaveBeenCalledWith(
+        expect.objectContaining({ parentExternalId: referrerAgency.externalId }),
+      );
+
+      await prisma.user.deleteMany({ where: { id: registerRes.body.user.id } });
+      await prisma.agency.delete({ where: { id: referrerAgency.id } });
+    });
+
+    it('既に代理店・管理者ロールのユーザーは400を返す', async () => {
+      const email = `mypage-apptest-agency-${Date.now()}@example.com`;
+      const agencyRoleAgent = request.agent(app);
+      const registerRes = await agencyRoleAgent
+        .post('/api/auth/register')
+        .set('Origin', ORIGIN)
+        .send({ name: '既に代理店太郎', email, password: 'password123' });
+      await prisma.user.update({ where: { id: registerRes.body.user.id }, data: { role: 'agency' } });
+
+      const res = await agencyRoleAgent.post('/api/mypage/agency-application').set('Origin', ORIGIN);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('ALREADY_AGENCY_OR_ADMIN');
+
+      await prisma.user.deleteMany({ where: { id: registerRes.body.user.id } });
+    });
   });
 });

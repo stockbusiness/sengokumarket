@@ -78,6 +78,11 @@ model User {
   referredByCode           String?   @map("referred_by_code")
   referredAt               DateTime? @map("referred_at")
 
+  // 仕様書外の拡張: 会員が代理店(インフルエンサー)への昇格を申請した日時。
+  // 外部代理店システム(sengoku-ai.com)へ候補として送信済み・承認待ちであることを示す。
+  // 承認されるとroleがagencyに変わり、このフィールドはクリアされる。
+  agencyApplicationSubmittedAt DateTime? @map("agency_application_submitted_at")
+
   wallet              Wallet?
   orders              Order[]
   nftIssues           NftIssue[]
