@@ -1052,3 +1052,106 @@
 .admin-legal-preview .legal-page {
   max-width: none;
 }
+
+/* ==================== トップページ(ランディング) ==================== */
+
+.landing-hero {
+  text-align: center;
+  padding: 40px 24px 48px;
+  margin: 0 0 32px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+  color: var(--primary-contrast);
+  box-shadow: var(--shadow);
+}
+
+.landing-hero__eyebrow {
+  font-family: var(--font-heading);
+  letter-spacing: 0.2em;
+  color: var(--accent-light);
+  margin: 0 0 4px;
+}
+
+.landing-hero h1 {
+  color: var(--primary-contrast);
+  border-bottom-color: var(--accent-light);
+}
+
+.landing-hero__lead {
+  max-width: 32em;
+  margin: 0 auto 24px;
+  color: var(--primary-contrast);
+  opacity: 0.92;
+}
+
+.landing-hero__cta {
+  display: inline-block;
+}
+
+.landing-section {
+  margin: 0 0 40px;
+}
+
+.landing-section--cta {
+  text-align: center;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.landing-section--cta p {
+  margin-top: 16px;
+  color: var(--text-muted);
+}
+
+.landing-benefits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.landing-benefits__item {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: var(--shadow);
+}
+
+.landing-benefits__item h3 {
+  font-family: var(--font-heading);
+  font-size: 1.05rem;
+  color: var(--text-h);
+  margin: 0 0 8px;
+}
+
+.landing-benefits__item p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.landing-faq {
+  margin: 0;
+}
+
+.landing-faq__item {
+  border-bottom: 1px solid var(--border);
+  padding: 16px 0;
+}
+
+.landing-faq__item:first-child {
+  padding-top: 0;
+}
+
+.landing-faq dt {
+  font-weight: 700;
+  color: var(--text-h);
+  margin-bottom: 6px;
+}
+
+.landing-faq dd {
+  margin: 0;
+  color: var(--text-muted);
+}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { captureReferralFromSearch } from './lib/referral';
 import { useAuth } from './context/AuthContext';
 import ProductListPage from './pages/ProductListPage';
@@ -35,6 +35,7 @@ import AgencyLayout from './components/AgencyLayout';
 import AgencyReferralLinksPage from './pages/agency/AgencyReferralLinksPage';
 import RequireReferralAccess from './components/RequireReferralAccess';
 import InviteOnlyPage from './pages/InviteOnlyPage';
+import LandingPage from './pages/LandingPage';
 import Footer from './components/Footer';
 import TokushohoPage from './pages/legal/TokushohoPage';
 import TermsPage from './pages/legal/TermsPage';
@@ -49,7 +50,7 @@ function NavBar() {
   return (
     <header className="site-header">
       <nav className="nav-bar">
-        <Link to="/products" className="brand">
+        <Link to="/" className="brand">
           <span className="brand__mark" aria-hidden="true" />
           <span className="brand__name">戦国経済圏</span>
           <span className="brand__sub">評議員デジタル会員証</span>
@@ -100,7 +101,7 @@ function App() {
       <NavBar />
       <main className="app-main">
         <Routes>
-        <Route path="/" element={<Navigate to="/products" replace />} />
+        <Route path="/" element={<LandingPage />} />
         <Route path="/invite-only" element={<InviteOnlyPage />} />
         <Route
           path="/products"
