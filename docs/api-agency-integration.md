@@ -13,9 +13,16 @@
 
 ## 2. 認証
 
-サーバー間通信のため、Cookie/JWTではなく固定のAPIキーで認証します。
+サーバー間通信のため、Cookie/JWTではなく固定のAPIキーで認証します。次のどちらのヘッダーでも認証できます。
 
-- ヘッダー: `x-api-key: <APIキー>`
+```http
+x-api-key: <APIキー>
+```
+
+```http
+Authorization: Bearer <APIキー>
+```
+
 - APIキーは本システムの管理画面(`/admin/settings`)の「代理店連携APIキー」欄で発行・確認できます。運営担当者から共有を受けてください。
 - キー未設定時は `503 API_KEY_NOT_CONFIGURED`、未指定は `401 API_KEY_REQUIRED`、不一致は `401 INVALID_API_KEY` を返します。
 
@@ -100,7 +107,8 @@ Content-Type: application/json
 
 ```json
 {
-  "agency": {
+  "success": true,
+  "data": {
     "id": "9805a3a7-ee08-4c08-a042-fdbf5bc403cd",
     "external_id": "agency-001",
     "name": "株式会社サンプル代理店",
@@ -110,13 +118,15 @@ Content-Type: application/json
     "contact_name": "山田太郎",
     "contact_email": "yamada@example.com",
     "parent_external_id": null,
-    "login_provisioned": true
+    "login_provisioned": true,
+    "synced": true
   }
 }
 ```
 
 - `code`: 本システム側で自動採番される内部コード(AG連番)。代理店システム側から指定・変更はできません。
 - `login_provisioned`: このリクエストで新規にログインアカウントを発行した場合のみ`true`。既にアカウントがある代理店に`login_email`を送っても`false`が返り、二重発行はされません。
+- `synced`: 常に`true`(受信・反映が成功したことを示す)。
 
 **主なエラー**
 

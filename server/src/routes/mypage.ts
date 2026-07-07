@@ -139,6 +139,7 @@ router.post('/agency-application', async (req, res) => {
       contactName: user.name,
       contactEmail: user.email,
       loginEmail: user.email,
+      phone: user.phone,
       parentExternalId,
     });
   } catch (e) {

@@ -1,34 +1,33 @@
 import { HttpError } from '../lib/httpError';
 import { getSetting } from './settings';
 
-// 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)との連携。
-// 本システムが呼び出し元(クライアント)側になる(先方の仕様書に準拠)。
+// 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)との連携(先方仕様書v3.6.38準拠)。
+// 本システムが呼び出し元(クライアント)側になる。
 // - 階層取得API(GET): 先方が管理する代理店階層を本システムへ反映するために取得する
 // - 代理店同期API(POST): 本システム側で生まれた代理店候補(会員の代理店申請等)を先方へ送る
 
-export interface ExternalAgencyContact {
-  email: string | null;
-  phone: string | null;
-  line_url: string | null;
+interface ExternalAgencyTreeNode {
+  agent_code: string;
+  name: string;
+  level?: number;
+  role_label?: string;
+  status?: string;
+  contact?: { email: string | null; phone: string | null; line_url: string | null } | null;
+  children?: ExternalAgencyTreeNode[];
+}
+
+interface HierarchyResponse {
+  success: boolean;
+  format: string;
+  data?: ExternalAgencyTreeNode[];
 }
 
 export interface ExternalAgencyNode {
-  id: number;
   code: string;
   name: string;
-  person_name: string | null;
-  level: number;
   status: string;
-  parent_id: number | null;
-  parent_code: string | null;
-  contact?: ExternalAgencyContact | null;
-}
-
-interface HierarchyFlatResponse {
-  ok: boolean;
-  format: string;
-  agents?: ExternalAgencyNode[];
-  tree?: ExternalAgencyNode[];
+  parentCode: string | null;
+  contactEmail: string | null;
 }
 
 export interface PushAgencyCandidateInput {
@@ -37,13 +36,19 @@ export interface PushAgencyCandidateInput {
   contactName?: string | null;
   contactEmail?: string | null;
   loginEmail?: string | null;
+  phone?: string | null;
   parentExternalId?: string | null;
 }
 
 export interface PushAgencyCandidateResult {
   external_id: string;
-  code: string;
   status: string;
+  synced: boolean;
+}
+
+interface SyncResponse {
+  success: boolean;
+  data?: PushAgencyCandidateResult;
 }
 
 async function getConfig(): Promise<{ baseUrl: string; apiKey: string }> {
@@ -57,12 +62,24 @@ async function getConfig(): Promise<{ baseUrl: string; apiKey: string }> {
   return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey };
 }
 
-// 先方は階層取得APIをAuthorization: Bearer、代理店同期APIをx-api-keyで例示しているが、
-// どちらのヘッダーでも認証可能とのことなので、本システムは一貫してx-api-keyを送る。
+// ツリー構造(children)をたどり、parentCodeを付与しながらフラットな配列にする。
+function flattenTree(nodes: ExternalAgencyTreeNode[], parentCode: string | null, out: ExternalAgencyNode[]): void {
+  for (const node of nodes) {
+    out.push({
+      code: node.agent_code,
+      name: node.name,
+      status: node.status ?? 'active',
+      parentCode,
+      contactEmail: node.contact?.email ?? null,
+    });
+    if (node.children?.length) flattenTree(node.children, node.agent_code, out);
+  }
+}
+
 export async function fetchExternalAgencyHierarchy(): Promise<ExternalAgencyNode[]> {
   const { baseUrl, apiKey } = await getConfig();
 
-  const res = await fetch(`${baseUrl}/api/hierarchy.php?format=flat&include_contact=1&include_inactive=1`, {
+  const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree&include_contact=1`, {
     headers: { 'x-api-key': apiKey },
   });
 
@@ -70,12 +87,14 @@ export async function fetchExternalAgencyHierarchy(): Promise<ExternalAgencyNode
     throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `階層取得APIの呼び出しに失敗しました(${res.status})`);
   }
 
-  const body = (await res.json()) as HierarchyFlatResponse;
-  if (!body.ok) {
+  const body = (await res.json()) as HierarchyResponse;
+  if (!body.success) {
     throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', '階層取得APIがエラーを返しました');
   }
 
-  return body.agents ?? body.tree ?? [];
+  const flat: ExternalAgencyNode[] = [];
+  flattenTree(body.data ?? [], null, flat);
+  return flat;
 }
 
 export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandidateInput): Promise<PushAgencyCandidateResult> {
@@ -85,12 +104,17 @@ export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandi
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
     body: JSON.stringify({
+      event: 'upsert',
+      source: 'sengoku-rr',
       external_id: input.externalId,
+      parent_external_id: input.parentExternalId ?? undefined,
       name: input.name,
       contact_name: input.contactName ?? undefined,
       contact_email: input.contactEmail ?? undefined,
       login_email: input.loginEmail ?? undefined,
-      parent_external_id: input.parentExternalId ?? undefined,
+      phone: input.phone ?? undefined,
+      status: 'active',
+      updated_at: new Date().toISOString(),
     }),
   });
 
@@ -98,6 +122,10 @@ export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandi
     throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `代理店同期APIの呼び出しに失敗しました(${res.status})`);
   }
 
-  const body = (await res.json()) as { agency: PushAgencyCandidateResult };
-  return body.agency;
+  const body = (await res.json()) as SyncResponse;
+  if (!body.success || !body.data) {
+    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', '代理店同期APIがエラーを返しました');
+  }
+
+  return body.data;
 }

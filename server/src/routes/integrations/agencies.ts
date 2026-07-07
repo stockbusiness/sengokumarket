@@ -224,7 +224,11 @@ router.post('/', async (req, res) => {
       }
     }
 
-    res.status(existing ? 200 : 201).json({ agency: { ...serializeAgency(agency), login_provisioned: loginProvisioned } });
+    // レスポンス形式は先方仕様書v3.6.38の{success, data}エンベロープに合わせる。
+    res.status(existing ? 200 : 201).json({
+      success: true,
+      data: { ...serializeAgency(agency), login_provisioned: loginProvisioned, synced: true },
+    });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
       return sendError(res, 409, 'LOGIN_EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に使用されています');

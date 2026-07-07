@@ -24,8 +24,8 @@ export async function syncAgencyHierarchyFromExternalSystem(): Promise<AgencyHie
         where: { id: existing.id },
         data: {
           name: node.name,
-          contactName: node.person_name ?? node.name,
-          contactEmail: node.contact?.email ?? null,
+          contactName: node.name,
+          contactEmail: node.contactEmail,
           status,
         },
       });
@@ -37,8 +37,8 @@ export async function syncAgencyHierarchyFromExternalSystem(): Promise<AgencyHie
             name: node.name,
             code,
             externalId: node.code,
-            contactName: node.person_name ?? node.name,
-            contactEmail: node.contact?.email ?? null,
+            contactName: node.name,
+            contactEmail: node.contactEmail,
             status,
             defaultCommissionRate: 0,
           },
@@ -47,12 +47,12 @@ export async function syncAgencyHierarchyFromExternalSystem(): Promise<AgencyHie
     }
   }
 
-  // 2nd pass: parent_codeを見て親子関係を反映する(1st passで親子とも作成済みである前提)。
+  // 2nd pass: parentCodeを見て親子関係を反映する(1st passで親子とも作成済みである前提)。
   for (const node of nodes) {
-    if (!node.parent_code) continue;
+    if (!node.parentCode) continue;
     const [self, parent] = await Promise.all([
       prisma.agency.findUnique({ where: { externalId: node.code } }),
-      prisma.agency.findUnique({ where: { externalId: node.parent_code } }),
+      prisma.agency.findUnique({ where: { externalId: node.parentCode } }),
     ]);
     if (self && parent && self.parentAgencyId !== parent.id) {
       await prisma.agency.update({ where: { id: self.id }, data: { parentAgencyId: parent.id } });
@@ -83,5 +83,5 @@ export async function syncAgencyHierarchyFromExternalSystem(): Promise<AgencyHie
 }
 
 function findApprovedNodeByEmail(nodes: ExternalAgencyNode[], email: string): ExternalAgencyNode | null {
-  return nodes.find((n) => n.status === 'active' && n.contact?.email?.toLowerCase() === email.toLowerCase()) ?? null;
+  return nodes.find((n) => n.status === 'active' && n.contactEmail?.toLowerCase() === email.toLowerCase()) ?? null;
 }

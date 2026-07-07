@@ -40,6 +40,11 @@ describe('外部代理店システム連携API', () => {
     expect(res.status).toBe(401);
   });
 
+  it('Authorization: Bearerヘッダーでも認証できる(仕様書v3.6.38準拠)', async () => {
+    const res = await request(app).get('/api/integrations/agencies').set('Authorization', `Bearer ${API_KEY}`);
+    expect(res.status).toBe(200);
+  });
+
   it('親代理店→子代理店の順で作成し、ツリー構造を取得できる', async () => {
     const parentExternalId = `integration-test-parent-${Date.now()}`;
     const childExternalId = `integration-test-child-${Date.now()}`;
@@ -49,14 +54,15 @@ describe('外部代理店システム連携API', () => {
       .set('x-api-key', API_KEY)
       .send({ external_id: parentExternalId, name: '親代理店テスト', default_commission_rate: 15 });
     expect(parentRes.status).toBe(201);
-    expect(parentRes.body.agency.code).toMatch(/^AG\d+/);
+    expect(parentRes.body.success).toBe(true);
+    expect(parentRes.body.data.code).toMatch(/^AG\d+/);
 
     const childRes = await request(app)
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: childExternalId, name: '子代理店テスト', parent_external_id: parentExternalId });
     expect(childRes.status).toBe(201);
-    expect(childRes.body.agency.parent_external_id).toBe(parentExternalId);
+    expect(childRes.body.data.parent_external_id).toBe(parentExternalId);
 
     const detailRes = await request(app)
       .get(`/api/integrations/agencies/${parentExternalId}`)
@@ -86,8 +92,8 @@ describe('外部代理店システム連携API', () => {
       .set('x-api-key', API_KEY)
       .send({ external_id: externalId, name: '更新後' });
     expect(second.status).toBe(200);
-    expect(second.body.agency.id).toBe(first.body.agency.id);
-    expect(second.body.agency.name).toBe('更新後');
+    expect(second.body.data.id).toBe(first.body.data.id);
+    expect(second.body.data.name).toBe('更新後');
 
     const count = await prisma.agency.count({ where: { externalId } });
     expect(count).toBe(1);
@@ -104,12 +110,12 @@ describe('外部代理店システム連携API', () => {
       .send({ external_id: externalId, name: 'ログイン代理店', login_email: loginEmail });
 
     expect(res.status).toBe(201);
-    expect(res.body.agency.login_provisioned).toBe(true);
+    expect(res.body.data.login_provisioned).toBe(true);
     expect(sendAgencyAccountSetupEmail).toHaveBeenCalledTimes(1);
 
     const user = await prisma.user.findUnique({ where: { email: loginEmail } });
     expect(user?.role).toBe('agency');
-    expect(user?.agencyId).toBe(res.body.agency.id);
+    expect(user?.agencyId).toBe(res.body.data.id);
 
     // 同じ代理店に対して再度login_emailを送っても二重作成されない
     sendAgencyAccountSetupEmail.mockClear();
@@ -117,7 +123,7 @@ describe('外部代理店システム連携API', () => {
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: externalId, name: 'ログイン代理店', login_email: loginEmail });
-    expect(second.body.agency.login_provisioned).toBe(false);
+    expect(second.body.data.login_provisioned).toBe(false);
     expect(sendAgencyAccountSetupEmail).not.toHaveBeenCalled();
   });
 
@@ -128,7 +134,7 @@ describe('外部代理店システム連携API', () => {
       .set('x-api-key', API_KEY)
       .send({ external_id: referrerExternalId, name: '元の紹介代理店' });
     expect(referrerRes.status).toBe(201);
-    const referrerAgencyId = referrerRes.body.agency.id;
+    const referrerAgencyId = referrerRes.body.data.id;
 
     const memberEmail = `integration-agency-test-member-${Date.now()}@example.com`;
     const member = await prisma.user.create({
@@ -152,14 +158,14 @@ describe('外部代理店システム連携API', () => {
       .send({ external_id: newAgencyExternalId, name: 'インフルエンサー昇格代理店', login_email: memberEmail });
 
     expect(res.status).toBe(201);
-    expect(res.body.agency.login_provisioned).toBe(true);
-    expect(res.body.agency.parent_external_id).toBe(referrerExternalId);
+    expect(res.body.data.login_provisioned).toBe(true);
+    expect(res.body.data.parent_external_id).toBe(referrerExternalId);
     expect(sendAgencyAccessGrantedEmail).toHaveBeenCalledWith(memberEmail, '購入者太郎');
     expect(sendAgencyAccountSetupEmail).not.toHaveBeenCalled();
 
     const updatedMember = await prisma.user.findUnique({ where: { id: member.id } });
     expect(updatedMember?.role).toBe('agency');
-    expect(updatedMember?.agencyId).toBe(res.body.agency.id);
+    expect(updatedMember?.agencyId).toBe(res.body.data.id);
     // 既存のパスワードはそのまま(仮パスワードへの上書きはされない)
     expect(updatedMember?.passwordHash).toBe('existing-password-hash');
   });
@@ -170,7 +176,7 @@ describe('外部代理店システム連携API', () => {
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: referrerExternalId, name: '元の紹介代理店2' });
-    const referrerAgencyId = referrerRes.body.agency.id;
+    const referrerAgencyId = referrerRes.body.data.id;
 
     const explicitParentExternalId = `integration-test-explicit-parent-${Date.now()}`;
     await request(app)
@@ -201,7 +207,7 @@ describe('外部代理店システム連携API', () => {
       });
 
     expect(res.status).toBe(201);
-    expect(res.body.agency.parent_external_id).toBe(explicitParentExternalId);
+    expect(res.body.data.parent_external_id).toBe(explicitParentExternalId);
   });
 
   it('既に管理者・代理店として使われているメールアドレスをlogin_emailに指定すると409', async () => {
@@ -225,7 +231,7 @@ describe('外部代理店システム連携API', () => {
       .set('x-api-key', API_KEY)
       .send({ external_id: `integration-test-contactname-${Date.now()}`, name: 'integration-test-名前会社' });
     expect(res.status).toBe(201);
-    expect(res.body.agency.contact_name).toBe('integration-test-名前会社');
+    expect(res.body.data.contact_name).toBe('integration-test-名前会社');
   });
 
   it('parent_external_idが空文字の場合は本部直下扱いになる', async () => {
@@ -234,7 +240,7 @@ describe('外部代理店システム連携API', () => {
       .set('x-api-key', API_KEY)
       .send({ external_id: `integration-test-rootempty-${Date.now()}`, name: 'root', parent_external_id: '' });
     expect(res.status).toBe(201);
-    expect(res.body.agency.parent_external_id).toBeNull();
+    expect(res.body.data.parent_external_id).toBeNull();
   });
 
   it('自分自身を親に指定すると400', async () => {
