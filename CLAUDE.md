@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-戦国経済圏の「評議員NFT(デジタル会員証)」を販売するECカートのMVP。
+戦国楽市楽座の「評議員NFT(デジタル会員証)」を販売するECカートのMVP。
 Stripe決済 + 手動NFT発行管理 + インフルエンサー代理店の紹介報酬管理を含む。
 
 **正式な仕様書は `docs/sengoku_nft_cart_codex_instructions_v1_5.md`(v1.5)。**

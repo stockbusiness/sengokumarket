@@ -67,7 +67,7 @@ export default function ReceiptPage() {
           </tbody>
         </table>
 
-        <p className="receipt-card__issuer">戦国経済圏</p>
+        <p className="receipt-card__issuer">戦国楽市楽座</p>
       </div>
     </div>
   );

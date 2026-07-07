@@ -27,7 +27,7 @@ async function main() {
       slug: 'council-nft',
       category: '評議員NFT',
       itemType: 'nft',
-      description: '戦国経済圏に参加する評議員向けの限定NFTです。',
+      description: '戦国楽市楽座に参加する評議員向けの限定NFTです。',
       basePrice: 25000,
       status: 'published',
     },
