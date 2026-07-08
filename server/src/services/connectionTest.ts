@@ -51,6 +51,12 @@ export async function testResendConnection(
   }
 }
 
+function truncateForDisplay(text: string, max = 200): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
 export async function testExternalAgencyConnection(baseUrlOverride?: string, apiKeyOverride?: string): Promise<ConnectionTestResult> {
   const rawBaseUrl = baseUrlOverride?.trim() || (await getSetting('external_agency_system_base_url'));
   const apiKey = apiKeyOverride?.trim() || (await getSetting('external_agency_system_api_key'));
@@ -63,12 +69,22 @@ export async function testExternalAgencyConnection(baseUrlOverride?: string, api
     const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree`, {
       headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
     });
-    if (!res.ok) {
-      return { ok: false, message: `接続に失敗しました(HTTP ${res.status})` };
+    const rawText = await res.text();
+    let body: { success?: boolean; data?: unknown[]; message?: string; error?: string } | null = null;
+    try {
+      body = rawText ? JSON.parse(rawText) : null;
+    } catch {
+      body = null;
     }
-    const body = (await res.json()) as { success?: boolean; data?: unknown[]; message?: string };
-    if (!body.success) {
-      return { ok: false, message: `先方APIがエラーを返しました: ${body.message ?? '(メッセージなし)'}` };
+    // 先方の実際のレスポンス内容を見て原因を切り分けられるよう、成形できた場合はmessage/errorを、
+    // それ以外は生のレスポンス本文(先頭のみ)をそのまま表示する。
+    const detail = body?.message ?? body?.error ?? (truncateForDisplay(rawText) || '(本文なし)');
+
+    if (!res.ok) {
+      return { ok: false, message: `接続に失敗しました(HTTP ${res.status}): ${detail}` };
+    }
+    if (!body || !body.success) {
+      return { ok: false, message: `先方APIがエラーを返しました: ${detail}` };
     }
     return { ok: true, message: `接続に成功しました(取得件数: ${body.data?.length ?? 0}件)` };
   } catch (e) {
