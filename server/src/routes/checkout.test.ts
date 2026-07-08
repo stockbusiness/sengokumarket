@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { referralCookieHeader } from '../test/referralCookie';
+import { createAdminAgent } from '../test/adminAgent';
 
 // このテストファイルでは注文作成の業務ロジックのみを検証する。
 // 実際のStripe API呼び出しはネットワーク/実キーが必要なため、成功を返すダミー実装に差し替える。
@@ -315,5 +316,104 @@ describe('POST /api/checkout/create-session', () => {
 
       await prisma.agency.update({ where: { id: agencyId }, data: { defaultCommissionRate: 15 } });
     });
+  });
+});
+
+describe('銀行振込(手動確認型)決済(仕様書外の拡張)', () => {
+  let productId: string;
+  let variantId: string;
+
+  const baseCustomer = {
+    customerName: '振込太郎',
+    customerEmail: '',
+    customerPhone: '090-1234-5678',
+    customerPostalCode: '100-0001',
+    customerAddress: '東京都千代田区1-1-1',
+    agreedToTerms: true,
+  };
+
+  beforeAll(async () => {
+    const product = await prisma.product.create({
+      data: {
+        name: '振込テスト商品',
+        slug: `test-banktransfer-product-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    productId = product.id;
+
+    const variant = await prisma.productVariant.create({
+      data: { productId, name: 'テストA', price: 10000, stock: 5, reservedStock: 0 },
+    });
+    variantId = variant.id;
+  });
+
+  afterAll(async () => {
+    await prisma.orderItem.deleteMany({ where: { productId } });
+    await prisma.order.deleteMany({ where: { customerEmail: { contains: 'banktransfer-test' } } });
+    await prisma.productVariant.deleteMany({ where: { productId } });
+    await prisma.product.delete({ where: { id: productId } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'banktransfer-test' } } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'admin-test' } } });
+    await prisma.setting.deleteMany({ where: { key: { in: ['bank_transfer_enabled', 'bank_transfer_info'] } } });
+    await prisma.$disconnect();
+  });
+
+  it('GET /checkout/configは銀行振込が未設定の間はbankTransferAvailable=falseを返す', async () => {
+    const res = await request(app).get('/api/checkout/config');
+    expect(res.status).toBe(200);
+    expect(res.body.bankTransferAvailable).toBe(false);
+    expect(res.body.bankTransferInfo).toBeNull();
+  });
+
+  it('銀行振込が未設定の場合、paymentMethod=bank_transferで注文するとBANK_TRANSFER_NOT_AVAILABLEになる', async () => {
+    const res = await request(app)
+      .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
+      .send({
+        ...baseCustomer,
+        customerEmail: `unavailable-banktransfer-test-${Date.now()}@example.com`,
+        items: [{ variantId, quantity: 1 }],
+        paymentMethod: 'bank_transfer',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('BANK_TRANSFER_NOT_AVAILABLE');
+  });
+
+  it('銀行振込を有効化すると、Stripeセッションを作らずに振込案内付きで注文を仮作成する', async () => {
+    const { agent } = await createAdminAgent(app);
+    await agent
+      .put('/api/admin/bank-transfer-settings')
+      .set('Origin', 'http://localhost:5173')
+      .send({ enabled: true, info: '銀行名: テスト銀行\n支店名: 本店\n口座番号: 1234567' });
+
+    const config = await request(app).get('/api/checkout/config');
+    expect(config.body.bankTransferAvailable).toBe(true);
+    expect(config.body.bankTransferInfo).toContain('テスト銀行');
+
+    const email = `enabled-banktransfer-test-${Date.now()}@example.com`;
+    const res = await request(app)
+      .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
+      .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }], paymentMethod: 'bank_transfer' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.stripeCheckoutUrl).toBeNull();
+    expect(res.body.paymentMethod).toBe('bank_transfer');
+    expect(res.body.bankTransferInfo).toContain('テスト銀行');
+
+    const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+    expect(order.paymentMethod).toBe('bank_transfer');
+    expect(order.paymentStatus).toBe('pending');
+    expect(order.stripeSessionId).toBeNull();
+
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
+    expect(variant.reservedStock).toBeGreaterThanOrEqual(1);
   });
 });

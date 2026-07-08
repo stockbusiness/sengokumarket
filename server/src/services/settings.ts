@@ -12,6 +12,10 @@ export const SETTING_KEYS = [
   'agency_api_key',
   'external_agency_system_base_url',
   'external_agency_system_api_key',
+  // 銀行振込(手動確認型)の案内文・有効/無効。他のキーと異なり秘密情報ではないため、
+  // 管理画面では専用のbankTransferSettingsルートで平文のまま表示・編集する(マスク表示の対象外)。
+  'bank_transfer_enabled',
+  'bank_transfer_info',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

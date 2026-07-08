@@ -2,7 +2,16 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { getStoredReferralCode } from '../lib/referral';
-import { ApiError, createCheckoutSession, resolveReferralCode } from '../lib/api';
+import { ApiError, createCheckoutSession, fetchCheckoutConfig, resolveReferralCode } from '../lib/api';
+
+type PaymentMethod = 'stripe' | 'bank_transfer';
+
+interface BankTransferResult {
+  orderNumber: string;
+  totalAmount: number;
+  bankTransferInfo: string;
+  bankTransferExpiryDays: number;
+}
 
 export default function CheckoutPage() {
   const { items, totalAmount } = useCart();
@@ -16,13 +25,22 @@ export default function CheckoutPage() {
   const [referralCode, setReferralCode] = useState('');
   const [referrerName, setReferrerName] = useState<string | null>(null);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('stripe');
+  const [bankTransferAvailable, setBankTransferAvailable] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ orderNumber: string; totalAmount: number } | null>(null);
+  const [bankTransferResult, setBankTransferResult] = useState<BankTransferResult | null>(null);
 
   useEffect(() => {
     const stored = getStoredReferralCode();
     if (stored) setReferralCode(stored);
+  }, []);
+
+  useEffect(() => {
+    fetchCheckoutConfig()
+      .then((data) => setBankTransferAvailable(data.bankTransferAvailable))
+      .catch(() => setBankTransferAvailable(false));
   }, []);
 
   useEffect(() => {
@@ -43,7 +61,7 @@ export default function CheckoutPage() {
     };
   }, [referralCode]);
 
-  if (items.length === 0 && !result) {
+  if (items.length === 0 && !result && !bankTransferResult) {
     return <p>カートが空です。</p>;
   }
 
@@ -65,9 +83,19 @@ export default function CheckoutPage() {
         referralCode: referralCode || null,
         agreedToTerms,
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+        paymentMethod,
       });
       if (data.stripeCheckoutUrl) {
         window.location.href = data.stripeCheckoutUrl;
+        return;
+      }
+      if (data.paymentMethod === 'bank_transfer' && data.bankTransferInfo) {
+        setBankTransferResult({
+          orderNumber: data.orderNumber,
+          totalAmount: data.totalAmount,
+          bankTransferInfo: data.bankTransferInfo,
+          bankTransferExpiryDays: data.bankTransferExpiryDays ?? 7,
+        });
         return;
       }
       setResult({ orderNumber: data.orderNumber, totalAmount: data.totalAmount });
@@ -82,6 +110,29 @@ export default function CheckoutPage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (bankTransferResult) {
+    return (
+      <div className="checkout-page">
+        <h1>お振込みのご案内</h1>
+        <p>注文番号: {bankTransferResult.orderNumber}</p>
+        <p>お振込み金額: {bankTransferResult.totalAmount.toLocaleString()}円(税込)</p>
+        <p>
+          お振込みの際は、お振込人名の前に<strong>注文番号「{bankTransferResult.orderNumber}」</strong>をご入力ください。
+        </p>
+        <div className="checkout-bank-transfer-info">
+          {bankTransferResult.bankTransferInfo.split('\n').map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
+        <p>ご注文から{bankTransferResult.bankTransferExpiryDays}日以内にお振込みください。期限を過ぎますと、ご注文は自動的にキャンセルとなります。</p>
+        <p>ご案内メールも送信しておりますので、あわせてご確認ください。</p>
+        <p>
+          <a href="/products">商品一覧に戻る</a>
+        </p>
+      </div>
+    );
   }
 
   if (result) {
@@ -129,6 +180,32 @@ export default function CheckoutPage() {
         <input type="text" value={referralCode} onChange={(e) => setReferralCode(e.target.value)} />
       </label>
       {referrerName && <p>紹介元: {referrerName}</p>}
+
+      <fieldset className="checkout-payment-method">
+        <legend>お支払い方法</legend>
+        <label>
+          <input
+            type="radio"
+            name="paymentMethod"
+            value="stripe"
+            checked={paymentMethod === 'stripe'}
+            onChange={() => setPaymentMethod('stripe')}
+          />
+          クレジットカード決済
+        </label>
+        {bankTransferAvailable && (
+          <label>
+            <input
+              type="radio"
+              name="paymentMethod"
+              value="bank_transfer"
+              checked={paymentMethod === 'bank_transfer'}
+              onChange={() => setPaymentMethod('bank_transfer')}
+            />
+            銀行振込
+          </label>
+        )}
+      </fieldset>
 
       <label>
         <input type="checkbox" checked={agreedToTerms} onChange={(e) => setAgreedToTerms(e.target.checked)} />

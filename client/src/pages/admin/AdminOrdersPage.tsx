@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react';
-import { buildOrdersExportCsvUrl, fetchAdminOrders, updateAdminOrder, type AdminOrder } from '../../lib/adminApi';
+import {
+  buildOrdersExportCsvUrl,
+  confirmBankTransferPayment,
+  fetchAdminOrders,
+  updateAdminOrder,
+  type AdminOrder,
+} from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
@@ -16,6 +22,12 @@ export default function AdminOrdersPage() {
 
   async function changeStatus(order: AdminOrder, orderStatus: string) {
     await updateAdminOrder(order.id, { orderStatus });
+    load();
+  }
+
+  async function handleConfirmBankTransfer(order: AdminOrder) {
+    if (!window.confirm(`注文番号 ${order.orderNumber} の入金を確認しましたか？\nこの操作は取り消せません。`)) return;
+    await confirmBankTransferPayment(order.id);
     load();
   }
 
@@ -43,6 +55,7 @@ export default function AdminOrdersPage() {
                 <th>注文番号</th>
                 <th>購入者</th>
                 <th>金額</th>
+                <th>決済方法</th>
                 <th>決済ステータス</th>
                 <th>注文ステータス</th>
                 <th>紹介コード</th>
@@ -61,8 +74,17 @@ export default function AdminOrdersPage() {
                     {o.customerEmail}
                   </td>
                   <td>{o.totalAmount.toLocaleString()}円</td>
+                  <td>{o.paymentMethod === 'bank_transfer' ? '銀行振込' : 'クレジットカード'}</td>
                   <td>
                     <StatusBadge status={o.paymentStatus} />
+                    {o.paymentMethod === 'bank_transfer' && o.paymentStatus === 'pending' && (
+                      <>
+                        <br />
+                        <button type="button" className="btn-primary btn-small" onClick={() => handleConfirmBankTransfer(o)}>
+                          入金確認
+                        </button>
+                      </>
+                    )}
                   </td>
                   <td>
                     <StatusSelect value={o.orderStatus} options={ORDER_STATUSES} onChange={(v) => changeStatus(o, v)} />

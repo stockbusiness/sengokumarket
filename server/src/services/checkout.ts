@@ -21,6 +21,7 @@ export interface CreatePendingOrderInput {
   referralCode?: string | null;
   agreedToTerms: boolean;
   items: CheckoutItemInput[];
+  paymentMethod?: 'stripe' | 'bank_transfer';
 }
 
 export interface CreatePendingOrderResult {
@@ -48,6 +49,7 @@ export function validateCreatePendingOrderInput(body: unknown): CreatePendingOrd
   if (!Array.isArray(b?.items) || b.items.length === 0) {
     throw new HttpError(400, 'VALIDATION_ERROR', 'カートが空です');
   }
+  const paymentMethod = b?.paymentMethod === 'bank_transfer' ? 'bank_transfer' : 'stripe';
   const items = (b.items as unknown[]).map((raw) => {
     const item = raw as Record<string, unknown>;
     if (!isNonEmptyString(item?.variantId) || !Number.isInteger(item.quantity) || (item.quantity as number) < 1) {
@@ -65,6 +67,7 @@ export function validateCreatePendingOrderInput(body: unknown): CreatePendingOrd
     referralCode: isNonEmptyString(b.referralCode) ? (b.referralCode as string).trim() : null,
     agreedToTerms: true,
     items,
+    paymentMethod,
   };
 }
 
@@ -181,6 +184,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         totalAmount,
         paymentStatus: 'pending',
         orderStatus: 'pending',
+        paymentMethod: input.paymentMethod ?? 'stripe',
         referralCode: referral.referralCode,
         referrerName: referral.referrerName,
         agencyName: referral.agencyName,

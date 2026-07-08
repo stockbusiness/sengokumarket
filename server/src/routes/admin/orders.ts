@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { buildCsv } from '../../lib/csv';
+import { HttpError } from '../../lib/httpError';
+import { confirmBankTransferPayment } from '../../services/bankTransfer';
 
 const router = Router();
 
@@ -15,6 +17,7 @@ function serializeOrder(order: {
   totalAmount: number;
   paymentStatus: string;
   orderStatus: string;
+  paymentMethod: string;
   paidAt: Date | null;
   referralCode: string | null;
   agencyName: string | null;
@@ -32,6 +35,7 @@ function serializeOrder(order: {
     totalAmount: order.totalAmount,
     paymentStatus: order.paymentStatus,
     orderStatus: order.orderStatus,
+    paymentMethod: order.paymentMethod,
     paidAt: order.paidAt,
     referralCode: order.referralCode,
     agencyName: order.agencyName,
@@ -63,6 +67,7 @@ router.get('/orders/export.csv', async (_req, res) => {
     o.customerEmail,
     o.orderItems.map((i) => `${i.productName}${i.variantName ? ` ${i.variantName}` : ''} × ${i.quantity}`).join(' / '),
     o.totalAmount,
+    o.paymentMethod === 'bank_transfer' ? '銀行振込' : 'クレジットカード',
     o.paymentStatus,
     o.orderStatus,
     o.referralCode ?? '',
@@ -81,6 +86,7 @@ router.get('/orders/export.csv', async (_req, res) => {
       '購入者メール',
       '商品明細',
       '合計金額(税込)',
+      '決済方法',
       '決済ステータス',
       '注文ステータス',
       '紹介コード',
@@ -126,6 +132,18 @@ router.put('/orders/:id', async (req, res) => {
   });
 
   res.json({ order: serializeOrder(updated) });
+});
+
+// 仕様書外の拡張: 銀行振込(手動確認型)の入金確認。決済確定に伴う在庫確定・NFT発行キュー作成・
+// 報酬計算・購入完了メール送信は、Stripe決済完了時と同じ処理を共通関数で行う。
+router.post('/orders/:id/confirm-bank-transfer', async (req, res) => {
+  try {
+    const result = await confirmBankTransferPayment(req.params.id);
+    res.json({ order: serializeOrder(result.order) });
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
 });
 
 export default router;

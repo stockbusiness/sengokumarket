@@ -13,6 +13,7 @@ import agenciesRouter from './agencies';
 import referralLinksRouter from './referralLinks';
 import referralsRouter from './referrals';
 import settingsRouter from './settings';
+import bankTransferSettingsRouter from './bankTransferSettings';
 import importProductsRouter from './importProducts';
 import legalRouter from './legal';
 
@@ -37,6 +38,7 @@ router.use(agenciesRouter);
 router.use(referralLinksRouter);
 router.use(referralsRouter);
 router.use(settingsRouter);
+router.use(bankTransferSettingsRouter);
 router.use(importProductsRouter);
 router.use(legalRouter);
 

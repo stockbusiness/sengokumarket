@@ -27,6 +27,32 @@ export async function sendPurchaseCompleteEmail(order: Order, items: OrderItem[]
   await sendMail({ to: order.customerEmail, subject: `【ご購入ありがとうございます】注文番号 ${order.orderNumber}`, html });
 }
 
+// 仕様書外の拡張: 銀行振込(手動確認型)の注文受付直後に送る振込案内メール。
+// 決済確定(入金確認)は別途管理者が行うため、このメールでは注文内容と振込先・期限のみ案内する。
+export async function sendBankTransferInstructionsEmail(order: Order, items: OrderItem[], bankInfo: string, expiryDays: number): Promise<void> {
+  const itemsHtml = items
+    .map((item) => `<li>${item.productName} ${item.variantName ?? ''} × ${item.quantity} — ${item.subtotal.toLocaleString()}円(税込)</li>`)
+    .join('');
+  const bankInfoHtml = bankInfo
+    .split('\n')
+    .map((line) => `<p>${line}</p>`)
+    .join('');
+
+  const html = `
+    <p>${order.customerName} 様</p>
+    <p>ご注文ありがとうございます。以下の内容でお申し込みを承りました。</p>
+    <p>注文番号: ${order.orderNumber}</p>
+    <ul>${itemsHtml}</ul>
+    <p>お振込み金額: ${order.totalAmount.toLocaleString()}円(税込)</p>
+    <p>お振込みの際は、お振込人名の前に<strong>注文番号「${order.orderNumber}」</strong>をご入力ください。</p>
+    ${bankInfoHtml}
+    <p>ご注文から${expiryDays}日以内にお振込みください。期限を過ぎますと、ご注文は自動的にキャンセルとなります。</p>
+    <p>入金確認後、担当者より順次デジタル会員証の発行手続きをご案内いたします。</p>
+  `;
+
+  await sendMail({ to: order.customerEmail, subject: `【お振込みのご案内】注文番号 ${order.orderNumber}`, html });
+}
+
 // 仕様書外の拡張: カート放棄リマインド。決済セッションが未完了のまま期限切れ(expired)になった
 // 直後に送る。既に在庫の仮引当は解放済みのため、元のStripeセッションへの復帰リンクは案内せず、
 // 商品ページへ戻って改めて購入手続きをやり直せるように案内する。

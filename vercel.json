@@ -19,6 +19,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/internal/cron/sync-agency-hierarchy", "schedule": "0 18 * * *" }
+    { "path": "/api/internal/cron/sync-agency-hierarchy", "schedule": "0 18 * * *" },
+    { "path": "/api/internal/cron/expire-bank-transfer-orders", "schedule": "0 19 * * *" }
   ]
 }

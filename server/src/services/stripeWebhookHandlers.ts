@@ -1,62 +1,11 @@
 import type Stripe from 'stripe';
-import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { findOrderForEvent } from './orderLookup';
-import { createPasswordResetToken } from './passwordReset';
-import { sendCartAbandonedEmail, sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
-
-type Tx = Prisma.TransactionClient;
+import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
+import { sendCartAbandonedEmail } from './mailTemplates';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
-}
-
-// order_items.item_type = 'nft' の行のみ、quantity個ぶん個別レコードを作成する(仕様書v1.5 6.7 / 7.2)
-async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: string | null) {
-  const orderItems = await tx.orderItem.findMany({ where: { orderId, itemType: 'nft' } });
-  if (orderItems.length === 0) return;
-
-  const wallet = userId ? await tx.wallet.findUnique({ where: { userId } }) : null;
-
-  for (const item of orderItems) {
-    const rows = Array.from({ length: item.quantity }, () => ({
-      orderId,
-      orderItemId: item.id,
-      userId,
-      productId: item.productId,
-      variantId: item.variantId,
-      status: wallet ? 'ready_to_issue' : 'wallet_required',
-      walletAddress: wallet ? wallet.walletAddress : null,
-    }));
-    await tx.nftIssue.createMany({ data: rows });
-  }
-}
-
-// referral_link_idがある注文のみcommissionsを作成する。0円はstatus=cancelledで作成(追跡用)。仕様書v1.5 6.14
-async function createCommissionForOrder(tx: Tx, order: NonNullable<Awaited<ReturnType<typeof findOrderForEvent>>>) {
-  if (!order.referralLinkId) return;
-
-  const commissionRate = Number(order.commissionRate);
-  const commissionAmount = Math.round((order.totalAmount * commissionRate) / 100);
-  const status = commissionRate > 0 ? 'pending' : 'cancelled';
-
-  await tx.commission.create({
-    data: {
-      orderId: order.id,
-      agencyId: order.agencyId,
-      influencerId: order.influencerId,
-      referralCode: order.referralCode,
-      baseAmount: order.totalAmount,
-      commissionRate,
-      commissionAmount,
-      status,
-    },
-  });
-
-  await tx.order.update({
-    where: { id: order.id },
-    data: { commissionAmount, commissionStatus: status },
-  });
 }
 
 export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
@@ -89,36 +38,14 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
       },
     });
 
-    const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
-    for (const item of orderItems) {
-      if (!item.variantId) continue;
-      await tx.productVariant.update({
-        where: { id: item.variantId },
-        data: { stock: { decrement: item.quantity }, reservedStock: { decrement: item.quantity } },
-      });
-    }
-
-    await createNftIssuesForOrder(tx, order.id, order.userId);
-    await createCommissionForOrder(tx, updatedOrder);
-
-    return { order: updatedOrder, items: orderItems };
+    return applyPaidOrderSideEffects(tx, updatedOrder);
   });
 
   if (!result) return;
 
-  // メール送信(トークン発行含む)はトランザクション外で行い、失敗しても決済処理自体は
-  // 失敗させない(仕様書v1.5 7.2 手順8 / 7.6)。stripe_events登録済みのため、ここで
-  // 例外を投げるとWebhookが二重処理されずリトライされなくなってしまう。
-  try {
-    await sendPurchaseCompleteEmail(result.order, result.items);
-
-    if (result.order.guestAccountCreated && result.order.userId) {
-      const token = await createPasswordResetToken(result.order.userId);
-      await sendGuestPasswordSetupEmail(result.order.customerEmail, result.order.customerName, token);
-    }
-  } catch (e) {
-    console.error('post-payment email dispatch failed', { orderId: result.order.id, error: e });
-  }
+  // stripe_events登録済みのため、ここで例外を投げるとWebhookが二重処理されずリトライされなくなってしまう
+  // (sendPostPaymentEmails内部で例外は握りつぶし済み)。
+  await sendPostPaymentEmails(result.order, result.items);
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {

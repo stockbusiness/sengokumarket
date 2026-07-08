@@ -4,6 +4,8 @@ import { sendError } from '../lib/apiError';
 import { HttpError } from '../lib/httpError';
 import { cancelOrderReservation, createPendingOrder, validateCreatePendingOrderInput } from '../services/checkout';
 import { createStripeCheckoutSession } from '../services/stripeCheckout';
+import { BANK_TRANSFER_EXPIRY_DAYS, getBankTransferConfig, isBankTransferAvailable } from '../services/bankTransfer';
+import { sendBankTransferInstructionsEmail } from '../services/mailTemplates';
 import { prisma } from '../lib/prisma';
 import { requireReferralOrAuth } from '../middleware/referralAccess';
 
@@ -12,12 +14,43 @@ const router = Router();
 // 在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ(仕様書外の拡張)。
 const createSessionLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
 
+// チェックアウト画面が決済手段の選択肢を出し分けるための公開設定(仕様書外の拡張)。
+router.get('/checkout/config', async (_req, res) => {
+  const config = await getBankTransferConfig();
+  const bankTransferAvailable = config.enabled && config.info.trim().length > 0;
+  res.json({
+    bankTransferAvailable,
+    bankTransferInfo: bankTransferAvailable ? config.info : null,
+    bankTransferExpiryDays: BANK_TRANSFER_EXPIRY_DAYS,
+  });
+});
+
 router.post('/checkout/create-session', createSessionLimiter, requireReferralOrAuth, async (req, res) => {
   let orderId: string | null = null;
   try {
     const input = validateCreatePendingOrderInput(req.body);
+
+    if (input.paymentMethod === 'bank_transfer' && !(await isBankTransferAvailable())) {
+      return sendError(res, 400, 'BANK_TRANSFER_NOT_AVAILABLE', '銀行振込は現在ご利用いただけません');
+    }
+
     const { order, items } = await createPendingOrder(input);
     orderId = order.id;
+
+    if (input.paymentMethod === 'bank_transfer') {
+      const config = await getBankTransferConfig();
+      await sendBankTransferInstructionsEmail(order, items, config.info, BANK_TRANSFER_EXPIRY_DAYS);
+
+      return res.status(201).json({
+        orderId: order.id,
+        orderNumber: order.orderNumber,
+        totalAmount: order.totalAmount,
+        stripeCheckoutUrl: null,
+        paymentMethod: 'bank_transfer',
+        bankTransferInfo: config.info,
+        bankTransferExpiryDays: BANK_TRANSFER_EXPIRY_DAYS,
+      });
+    }
 
     const session = await createStripeCheckoutSession(order, items);
 
@@ -31,6 +64,7 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
       orderNumber: order.orderNumber,
       totalAmount: order.totalAmount,
       stripeCheckoutUrl: session.url,
+      paymentMethod: 'stripe',
     });
   } catch (e) {
     if (e instanceof HttpError) {

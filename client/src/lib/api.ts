@@ -86,12 +86,24 @@ export interface CreateCheckoutSessionPayload {
   referralCode: string | null;
   agreedToTerms: boolean;
   items: { variantId: string; quantity: number }[];
+  paymentMethod: 'stripe' | 'bank_transfer';
 }
 
 export function createCheckoutSession(payload: CreateCheckoutSessionPayload) {
-  return apiPost<{ orderId: string; orderNumber: string; totalAmount: number; stripeCheckoutUrl: string | null }>(
-    '/checkout/create-session',
-    payload,
+  return apiPost<{
+    orderId: string;
+    orderNumber: string;
+    totalAmount: number;
+    stripeCheckoutUrl: string | null;
+    paymentMethod: 'stripe' | 'bank_transfer';
+    bankTransferInfo?: string;
+    bankTransferExpiryDays?: number;
+  }>('/checkout/create-session', payload);
+}
+
+export function fetchCheckoutConfig() {
+  return apiFetch<{ bankTransferAvailable: boolean; bankTransferInfo: string | null; bankTransferExpiryDays: number }>(
+    '/checkout/config',
   );
 }
 

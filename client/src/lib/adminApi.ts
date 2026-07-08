@@ -96,6 +96,7 @@ export interface AdminOrder {
   totalAmount: number;
   paymentStatus: string;
   orderStatus: string;
+  paymentMethod: string;
   paidAt: string | null;
   referralCode: string | null;
   agencyName: string | null;
@@ -116,6 +117,24 @@ export function updateAdminOrder(id: string, payload: { orderStatus?: string; ad
 
 export function buildOrdersExportCsvUrl() {
   return '/api/admin/orders/export.csv';
+}
+
+export function confirmBankTransferPayment(id: string) {
+  return adminSend<{ order: AdminOrder }>('POST', `/orders/${id}/confirm-bank-transfer`, undefined);
+}
+
+// --- 銀行振込設定(仕様書外の拡張) ---
+export interface BankTransferSettings {
+  enabled: boolean;
+  info: string;
+}
+
+export function fetchBankTransferSettings() {
+  return adminFetch<BankTransferSettings>('/bank-transfer-settings');
+}
+
+export function updateBankTransferSettings(payload: BankTransferSettings) {
+  return adminSend<BankTransferSettings>('PUT', '/bank-transfer-settings', payload);
 }
 
 // --- NFT issues ---
