@@ -7,7 +7,7 @@ import { getSetting } from './settings';
 // - 代理店同期API(POST): 本システム側で生まれた代理店候補(会員の代理店申請等)を先方へ送る
 
 interface ExternalAgencyTreeNode {
-  agent_code: string;
+  code: string;
   name: string;
   level?: number;
   role_label?: string;
@@ -61,10 +61,12 @@ function truncateForDisplay(text: string, max = 200): string {
   return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
 }
 
-// 先方の実装差異(successキーの代わりにok、data配列のキー名が不明)を吸収するため、
-// トップレベルの最初の配列値を代理店一覧とみなす。
-function findFirstArrayField(obj: Record<string, unknown>): unknown[] | null {
-  for (const value of Object.values(obj)) {
+// レスポンスにはprojects(LPプロジェクト一覧)等、代理店データ以外の配列も含まれるため、
+// キー名を決め打ちで探す(先方仕様書v3.6.40では tree)。将来の形式変更に備えて他の
+// 一般的な名前もフォールバックとして試す。
+function findAgencyTreeArray(body: Record<string, unknown>): unknown[] | null {
+  for (const key of ['tree', 'data', 'agencies', 'nodes']) {
+    const value = body[key];
     if (Array.isArray(value)) return value;
   }
   return null;
@@ -74,13 +76,13 @@ function findFirstArrayField(obj: Record<string, unknown>): unknown[] | null {
 function flattenTree(nodes: ExternalAgencyTreeNode[], parentCode: string | null, out: ExternalAgencyNode[]): void {
   for (const node of nodes) {
     out.push({
-      code: node.agent_code,
+      code: node.code,
       name: node.name,
       status: node.status ?? 'active',
       parentCode,
-      contactEmail: node.contact?.email ?? null,
+      contactEmail: node.contact?.email || null,
     });
-    if (node.children?.length) flattenTree(node.children, node.agent_code, out);
+    if (node.children?.length) flattenTree(node.children, node.code, out);
   }
 }
 
@@ -110,22 +112,22 @@ export async function fetchExternalAgencyHierarchy(baseUrlOverride?: string, api
     throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `階層取得APIがエラーを返しました: ${detail()}`);
   }
 
-  const nodes = findFirstArrayField(body) as ExternalAgencyTreeNode[] | null;
+  const nodes = findAgencyTreeArray(body) as ExternalAgencyTreeNode[] | null;
   if (!nodes) {
     throw new HttpError(
       502,
       'EXTERNAL_AGENCY_SYSTEM_ERROR',
-      `階層取得APIのレスポンスに代理店一覧が見つかりませんでした(受信したキー: ${Object.keys(body).join(', ')})`,
+      `階層取得APIのレスポンスに代理店一覧(tree)が見つかりませんでした(受信したキー: ${Object.keys(body).join(', ')})`,
     );
   }
 
-  // agent_code/nameが無いと後続のDB反映処理が壊れた形で進んでしまうため、ここで検知して
+  // code/nameが無いと後続のDB反映処理が壊れた形で進んでしまうため、ここで検知して
   // 実際に受信したノードの形を提示する(Prismaの分かりにくいエラーで落ちるのを防ぐ)。
-  if (nodes.length > 0 && (typeof nodes[0].agent_code !== 'string' || typeof nodes[0].name !== 'string')) {
+  if (nodes.length > 0 && (typeof nodes[0].code !== 'string' || typeof nodes[0].name !== 'string')) {
     throw new HttpError(
       502,
       'EXTERNAL_AGENCY_SYSTEM_ERROR',
-      `代理店ノードの形式が想定(agent_code/name)と異なります(受信したキー: ${Object.keys(nodes[0] as object).join(', ')})`,
+      `代理店ノードの形式が想定(code/name)と異なります(受信したキー: ${Object.keys(nodes[0] as object).join(', ')})`,
     );
   }
 
