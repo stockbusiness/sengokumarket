@@ -1152,10 +1152,21 @@
   gap: 4px;
 }
 
-.admin-legal-editor textarea {
+.admin-legal-raw-textarea {
   font-family: 'Menlo', 'Consolas', monospace;
   font-size: 0.9rem;
   line-height: 1.6;
+}
+
+.admin-legal-help {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  margin: 0 0 4px;
+}
+
+.admin-legal-field-help {
+  color: var(--text-muted);
+  font-size: 0.8em;
 }
 
 .admin-legal-saved {
