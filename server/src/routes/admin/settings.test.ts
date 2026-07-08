@@ -7,11 +7,13 @@ import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 const testStripeConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'stripe ok' }));
 const testResendConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'resend ok' }));
 const testExternalAgencyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'external ok' }));
+const testAgencyKeyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'agency key ok' }));
 
 vi.mock('../../services/connectionTest', () => ({
   testStripeConnection: (...args: unknown[]) => testStripeConnection(...args),
   testResendConnection: (...args: unknown[]) => testResendConnection(...args),
   testExternalAgencyConnection: (...args: unknown[]) => testExternalAgencyConnection(...args),
+  testAgencyKeyConnection: (...args: unknown[]) => testAgencyKeyConnection(...args),
 }));
 
 const app = createApp();
@@ -108,5 +110,14 @@ describe('管理API: 接続テスト(仕様書外の拡張)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, message: 'external ok' });
     expect(testExternalAgencyConnection).toHaveBeenCalledWith('https://example.com', 'key');
+  });
+
+  it('POST /settings/test/agency-keyはtestAgencyKeyConnectionの結果を返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    testAgencyKeyConnection.mockClear();
+    const res = await agent.post('/api/admin/settings/test/agency-key').set('Origin', TEST_ORIGIN).send({ agency_api_key: 'mykey' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'agency key ok' });
+    expect(testAgencyKeyConnection).toHaveBeenCalledWith('mykey');
   });
 });

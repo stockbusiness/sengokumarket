@@ -360,6 +360,10 @@ export function testExternalAgencyConnection(baseUrl: string, apiKey: string) {
   });
 }
 
+export function testAgencyKeyConnection(agencyApiKey: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/agency-key', { agency_api_key: agencyApiKey });
+}
+
 // --- CSV商品インポート ---
 export interface ImportRowResult {
   line: number;

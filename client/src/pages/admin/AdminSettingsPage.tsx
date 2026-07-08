@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import {
   fetchAdminSettings,
   fetchBankTransferSettings,
+  testAgencyKeyConnection,
   testExternalAgencyConnection,
   testResendConnection,
   testStripeConnection,
@@ -24,8 +25,7 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
   {
     key: 'agency_api_key',
     label: '代理店連携APIキー(外部の代理店システムからの受信用)',
-    helpText:
-      'このキーはこちらで発行し、外部の代理店システム側の管理画面に設定してもらう値です。下のボタンで生成できます。接続テストは保存済みの値でのみ確認できるため、生成後は一度保存してからお試しください。',
+    helpText: 'このキーはこちらで発行し、外部の代理店システム側の管理画面に設定してもらう値です。下のボタンで生成できます。',
     generatable: true,
   },
   { key: 'external_agency_system_base_url', label: '外部代理店システムのURL(例: https://sengoku-ai.com)' },
@@ -111,23 +111,9 @@ export default function AdminSettingsPage() {
     );
   }
 
-  // 代理店連携APIキー(自システムの受信用)は、外部から呼ばれる実際の公開URLへ
-  // 直接リクエストして疎通確認する(サーバー内部からのテストでは公開URL経由の疎通は確認できないため)。
   async function handleTestAgencyKey() {
     setAgencyKeyTest('testing');
-    try {
-      const res = await fetch(`${window.location.origin}/api/integrations/agencies`, {
-        headers: { 'x-api-key': inputs.agency_api_key ?? '' },
-      });
-      if (res.ok) {
-        setAgencyKeyTest({ ok: true, message: 'このキーで正しく認証できました' });
-      } else {
-        const body = await res.json().catch(() => null);
-        setAgencyKeyTest({ ok: false, message: body?.message ?? `認証に失敗しました(HTTP ${res.status})` });
-      }
-    } catch {
-      setAgencyKeyTest({ ok: false, message: '接続に失敗しました' });
-    }
+    setAgencyKeyTest(await testAgencyKeyConnection(inputs.agency_api_key ?? ''));
   }
 
   return (

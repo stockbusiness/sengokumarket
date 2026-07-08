@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { sendError } from '../../lib/apiError';
 import { getAllSettingsMasked, setSetting, SETTING_KEYS, type SettingKey } from '../../services/settings';
-import { testExternalAgencyConnection, testResendConnection, testStripeConnection } from '../../services/connectionTest';
+import {
+  testAgencyKeyConnection,
+  testExternalAgencyConnection,
+  testResendConnection,
+  testStripeConnection,
+} from '../../services/connectionTest';
 
 const router = Router();
 
@@ -45,6 +50,11 @@ router.post('/settings/test/external-agency', async (req, res) => {
     readString(req.body, 'external_agency_system_base_url'),
     readString(req.body, 'external_agency_system_api_key'),
   );
+  res.json(result);
+});
+
+router.post('/settings/test/agency-key', async (req, res) => {
+  const result = await testAgencyKeyConnection(readString(req.body, 'agency_api_key'));
   res.json(result);
 });
 
