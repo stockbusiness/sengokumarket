@@ -1,6 +1,8 @@
 import Stripe from 'stripe';
 import { Resend } from 'resend';
 import { getSetting } from './settings';
+import { fetchExternalAgencyHierarchy } from './externalAgencySystem';
+import { HttpError } from '../lib/httpError';
 
 // 仕様書外の拡張: 管理画面の「決済・メール設定」から、保存前(入力中)の値、または
 // 保存済みの値で外部サービスへの接続を試せるようにする。
@@ -51,43 +53,19 @@ export async function testResendConnection(
   }
 }
 
-function truncateForDisplay(text: string, max = 200): string {
-  const trimmed = text.trim();
-  if (!trimmed) return '';
-  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
-}
-
+// 実際の階層同期(agencyHierarchySync)と全く同じ取得・解析ロジックを通すことで、
+// 「テストは通ったのに本番の同期は失敗する」という食い違いが起きないようにする。
 export async function testExternalAgencyConnection(baseUrlOverride?: string, apiKeyOverride?: string): Promise<ConnectionTestResult> {
   const rawBaseUrl = baseUrlOverride?.trim() || (await getSetting('external_agency_system_base_url'));
   const apiKey = apiKeyOverride?.trim() || (await getSetting('external_agency_system_api_key'));
   if (!rawBaseUrl) return { ok: false, message: '外部代理店システムのURLが未入力です' };
   if (!apiKey) return { ok: false, message: '外部代理店システムAPIキーが未入力です' };
 
-  const baseUrl = rawBaseUrl.replace(/\/$/, '');
-
   try {
-    const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree`, {
-      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
-    });
-    const rawText = await res.text();
-    let body: { success?: boolean; data?: unknown[]; message?: string; error?: string } | null = null;
-    try {
-      body = rawText ? JSON.parse(rawText) : null;
-    } catch {
-      body = null;
-    }
-    // 先方の実際のレスポンス内容を見て原因を切り分けられるよう、成形できた場合はmessage/errorを、
-    // それ以外は生のレスポンス本文(先頭のみ)をそのまま表示する。
-    const detail = body?.message ?? body?.error ?? (truncateForDisplay(rawText) || '(本文なし)');
-
-    if (!res.ok) {
-      return { ok: false, message: `接続に失敗しました(HTTP ${res.status}): ${detail}` };
-    }
-    if (!body || !body.success) {
-      return { ok: false, message: `先方APIがエラーを返しました: ${detail}` };
-    }
-    return { ok: true, message: `接続に成功しました(取得件数: ${body.data?.length ?? 0}件)` };
+    const agencies = await fetchExternalAgencyHierarchy(rawBaseUrl, apiKey);
+    return { ok: true, message: `接続に成功しました(取得件数: ${agencies.length}件)` };
   } catch (e) {
+    if (e instanceof HttpError) return { ok: false, message: e.message };
     return { ok: false, message: `接続に失敗しました: ${e instanceof Error ? e.message : '不明なエラー'}` };
   }
 }

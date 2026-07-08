@@ -16,12 +16,6 @@ interface ExternalAgencyTreeNode {
   children?: ExternalAgencyTreeNode[];
 }
 
-interface HierarchyResponse {
-  success: boolean;
-  format: string;
-  data?: ExternalAgencyTreeNode[];
-}
-
 export interface ExternalAgencyNode {
   code: string;
   name: string;
@@ -52,15 +46,28 @@ interface SyncResponse {
   message?: string;
 }
 
-async function getConfig(): Promise<{ baseUrl: string; apiKey: string }> {
-  const [baseUrl, apiKey] = await Promise.all([
-    getSetting('external_agency_system_base_url'),
-    getSetting('external_agency_system_api_key'),
-  ]);
+async function getConfig(baseUrlOverride?: string, apiKeyOverride?: string): Promise<{ baseUrl: string; apiKey: string }> {
+  const baseUrl = baseUrlOverride?.trim() || (await getSetting('external_agency_system_base_url'));
+  const apiKey = apiKeyOverride?.trim() || (await getSetting('external_agency_system_api_key'));
   if (!baseUrl || !apiKey) {
     throw new HttpError(503, 'EXTERNAL_AGENCY_SYSTEM_NOT_CONFIGURED', '外部代理店システムの連携設定が未登録です');
   }
   return { baseUrl: baseUrl.replace(/\/$/, ''), apiKey };
+}
+
+function truncateForDisplay(text: string, max = 200): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+// 先方の実装差異(successキーの代わりにok、data配列のキー名が不明)を吸収するため、
+// トップレベルの最初の配列値を代理店一覧とみなす。
+function findFirstArrayField(obj: Record<string, unknown>): unknown[] | null {
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) return value;
+  }
+  return null;
 }
 
 // ツリー構造(children)をたどり、parentCodeを付与しながらフラットな配列にする。
@@ -77,24 +84,43 @@ function flattenTree(nodes: ExternalAgencyTreeNode[], parentCode: string | null,
   }
 }
 
-export async function fetchExternalAgencyHierarchy(): Promise<ExternalAgencyNode[]> {
-  const { baseUrl, apiKey } = await getConfig();
+export async function fetchExternalAgencyHierarchy(baseUrlOverride?: string, apiKeyOverride?: string): Promise<ExternalAgencyNode[]> {
+  const { baseUrl, apiKey } = await getConfig(baseUrlOverride, apiKeyOverride);
 
   const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree&include_contact=1`, {
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
   });
 
+  const rawText = await res.text();
+  let body: Record<string, unknown> | null = null;
+  try {
+    body = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : null;
+  } catch {
+    body = null;
+  }
+  const detail = () => (body?.message as string) || (body?.error as string) || truncateForDisplay(rawText) || '(メッセージなし)';
+
   if (!res.ok) {
-    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `階層取得APIの呼び出しに失敗しました(${res.status})`);
+    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `階層取得APIの呼び出しに失敗しました(HTTP ${res.status}): ${detail()}`);
   }
 
-  const body = (await res.json()) as HierarchyResponse;
-  if (!body.success) {
-    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', '階層取得APIがエラーを返しました');
+  // 先方の実装がsuccessキーではなくokキーを使う場合にも対応する。
+  const succeeded = body?.success === true || body?.ok === true;
+  if (!body || !succeeded) {
+    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', `階層取得APIがエラーを返しました: ${detail()}`);
+  }
+
+  const nodes = findFirstArrayField(body) as ExternalAgencyTreeNode[] | null;
+  if (!nodes) {
+    throw new HttpError(
+      502,
+      'EXTERNAL_AGENCY_SYSTEM_ERROR',
+      `階層取得APIのレスポンスに代理店一覧が見つかりませんでした(受信したキー: ${Object.keys(body).join(', ')})`,
+    );
   }
 
   const flat: ExternalAgencyNode[] = [];
-  flattenTree(body.data ?? [], null, flat);
+  flattenTree(nodes, null, flat);
   return flat;
 }
 
