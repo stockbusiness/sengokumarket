@@ -81,7 +81,7 @@ export async function fetchExternalAgencyHierarchy(): Promise<ExternalAgencyNode
   const { baseUrl, apiKey } = await getConfig();
 
   const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree&include_contact=1`, {
-    headers: { 'x-api-key': apiKey },
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
   });
 
   if (!res.ok) {

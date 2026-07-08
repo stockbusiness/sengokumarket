@@ -60,7 +60,9 @@ export async function testExternalAgencyConnection(baseUrlOverride?: string, api
   const baseUrl = rawBaseUrl.replace(/\/$/, '');
 
   try {
-    const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree`, { headers: { 'x-api-key': apiKey } });
+    const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree`, {
+      headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
+    });
     if (!res.ok) {
       return { ok: false, message: `接続に失敗しました(HTTP ${res.status})` };
     }
