@@ -7,16 +7,35 @@ import {
   type AdminSettings,
 } from '../../lib/adminApi';
 
-const FIELDS: { key: keyof AdminSettings; label: string }[] = [
+const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; generatable?: boolean }[] = [
   { key: 'stripe_secret_key', label: 'Stripeシークレットキー' },
-  { key: 'stripe_webhook_secret', label: 'Stripe Webhookシークレット' },
+  {
+    key: 'stripe_webhook_secret',
+    label: 'Stripe Webhookシークレット',
+    helpText: `Webhook URL: ${window.location.origin}/api/stripe/webhook (Stripeダッシュボードの「Webhookエンドポイントを追加」でこのURLを登録し、発行されたシークレットをこちらに入力してください)`,
+  },
   { key: 'stripe_public_key', label: 'Stripe公開可能キー' },
   { key: 'resend_api_key', label: 'Resend APIキー' },
   { key: 'mail_from', label: '送信元メールアドレス(MAIL_FROM)' },
-  { key: 'agency_api_key', label: '代理店連携APIキー(外部の代理店システムからの受信用)' },
+  {
+    key: 'agency_api_key',
+    label: '代理店連携APIキー(外部の代理店システムからの受信用)',
+    helpText: 'このキーはこちらで発行し、外部の代理店システム側の管理画面に設定してもらう値です。下のボタンで生成できます。',
+    generatable: true,
+  },
   { key: 'external_agency_system_base_url', label: '外部代理店システムのURL(例: https://sengoku-ai.com)' },
-  { key: 'external_agency_system_api_key', label: '外部代理店システムAPIキー(こちらから送信する際に使用)' },
+  {
+    key: 'external_agency_system_api_key',
+    label: '外部代理店システムAPIキー(こちらから送信する際に使用)',
+    helpText: 'このキーは外部の代理店システム側で発行される値です。先方から共有を受けて入力してください。',
+  },
 ];
+
+function generateApiKey(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
@@ -66,12 +85,22 @@ export default function AdminSettingsPage() {
             <label key={field.key}>
               {field.label}
               {settings[field.key].configured && <span> (設定済み: {settings[field.key].masked})</span>}
+              {field.helpText && <span className="admin-settings-help">{field.helpText}</span>}
               <input
                 type="text"
                 value={inputs[field.key] ?? ''}
                 onChange={(e) => setInputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
                 placeholder={settings[field.key].configured ? '変更する場合のみ入力' : '未設定'}
               />
+              {field.generatable && (
+                <button
+                  type="button"
+                  className="btn-secondary btn-small"
+                  onClick={() => setInputs((prev) => ({ ...prev, [field.key]: generateApiKey() }))}
+                >
+                  ランダムなキーを生成
+                </button>
+              )}
             </label>
           ))}
           {message && <p>{message}</p>}

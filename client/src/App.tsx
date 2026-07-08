@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { Suspense, useEffect } from 'react';
 import { Link, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { captureReferralFromSearch } from './lib/referral';
+import { lazyWithReload } from './lib/lazyWithReload';
 import { useAuth } from './context/AuthContext';
 import RequireAuth from './components/RequireAuth';
 import RequireAdmin from './components/RequireAdmin';
@@ -9,46 +10,48 @@ import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
 import RequireReferralAccess from './components/RequireReferralAccess';
 import Footer from './components/Footer';
+import ErrorBoundary from './components/ErrorBoundary';
 import './App.css';
 
 // ページ単位でコード分割し、初回表示時に不要なコード(管理画面・代理店ポータル等)を
 // ダウンロードさせない(仕様書外の拡張。表示速度改善)。
-const ProductListPage = lazy(() => import('./pages/ProductListPage'));
-const ProductDetailPage = lazy(() => import('./pages/ProductDetailPage'));
-const CartPage = lazy(() => import('./pages/CartPage'));
-const CheckoutPage = lazy(() => import('./pages/CheckoutPage'));
-const CheckoutSuccessPage = lazy(() => import('./pages/CheckoutSuccessPage'));
-const CheckoutCancelPage = lazy(() => import('./pages/CheckoutCancelPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
-const RegisterPage = lazy(() => import('./pages/RegisterPage'));
-const PasswordResetRequestPage = lazy(() => import('./pages/PasswordResetRequestPage'));
-const PasswordResetConfirmPage = lazy(() => import('./pages/PasswordResetConfirmPage'));
-const MyPage = lazy(() => import('./pages/MyPage'));
-const WalletPage = lazy(() => import('./pages/WalletPage'));
-const MyProfilePage = lazy(() => import('./pages/MyProfilePage'));
-const ReceiptPage = lazy(() => import('./pages/ReceiptPage'));
-const AdminDashboardPage = lazy(() => import('./pages/admin/AdminDashboardPage'));
-const AdminProductsPage = lazy(() => import('./pages/admin/AdminProductsPage'));
-const AdminImportProductsPage = lazy(() => import('./pages/admin/AdminImportProductsPage'));
-const AdminOrdersPage = lazy(() => import('./pages/admin/AdminOrdersPage'));
-const AdminNftIssuesPage = lazy(() => import('./pages/admin/AdminNftIssuesPage'));
-const AdminWalletMissingPage = lazy(() => import('./pages/admin/AdminWalletMissingPage'));
-const AdminNoticesPage = lazy(() => import('./pages/admin/AdminNoticesPage'));
-const AdminReferralLinksPage = lazy(() => import('./pages/admin/AdminReferralLinksPage'));
-const AdminReferralsPage = lazy(() => import('./pages/admin/AdminReferralsPage'));
-const AdminAgenciesPage = lazy(() => import('./pages/admin/AdminAgenciesPage'));
-const AdminSettingsPage = lazy(() => import('./pages/admin/AdminSettingsPage'));
-const AdminLegalPage = lazy(() => import('./pages/admin/AdminLegalPage'));
-const AdminAuditLogsPage = lazy(() => import('./pages/admin/AdminAuditLogsPage'));
-const AdminUsersPage = lazy(() => import('./pages/admin/AdminUsersPage'));
-const AgencyReferralLinksPage = lazy(() => import('./pages/agency/AgencyReferralLinksPage'));
-const AgencyOrdersPage = lazy(() => import('./pages/agency/AgencyOrdersPage'));
-const InviteOnlyPage = lazy(() => import('./pages/InviteOnlyPage'));
-const LandingPage = lazy(() => import('./pages/LandingPage'));
-const TokushohoPage = lazy(() => import('./pages/legal/TokushohoPage'));
-const TermsPage = lazy(() => import('./pages/legal/TermsPage'));
-const RefundPolicyPage = lazy(() => import('./pages/legal/RefundPolicyPage'));
-const PrivacyPolicyPage = lazy(() => import('./pages/legal/PrivacyPolicyPage'));
+// lazyWithReloadは、デプロイ直後のチャンク読み込み失敗時に自動で1回だけ再読み込みする。
+const ProductListPage = lazyWithReload(() => import('./pages/ProductListPage'));
+const ProductDetailPage = lazyWithReload(() => import('./pages/ProductDetailPage'));
+const CartPage = lazyWithReload(() => import('./pages/CartPage'));
+const CheckoutPage = lazyWithReload(() => import('./pages/CheckoutPage'));
+const CheckoutSuccessPage = lazyWithReload(() => import('./pages/CheckoutSuccessPage'));
+const CheckoutCancelPage = lazyWithReload(() => import('./pages/CheckoutCancelPage'));
+const LoginPage = lazyWithReload(() => import('./pages/LoginPage'));
+const RegisterPage = lazyWithReload(() => import('./pages/RegisterPage'));
+const PasswordResetRequestPage = lazyWithReload(() => import('./pages/PasswordResetRequestPage'));
+const PasswordResetConfirmPage = lazyWithReload(() => import('./pages/PasswordResetConfirmPage'));
+const MyPage = lazyWithReload(() => import('./pages/MyPage'));
+const WalletPage = lazyWithReload(() => import('./pages/WalletPage'));
+const MyProfilePage = lazyWithReload(() => import('./pages/MyProfilePage'));
+const ReceiptPage = lazyWithReload(() => import('./pages/ReceiptPage'));
+const AdminDashboardPage = lazyWithReload(() => import('./pages/admin/AdminDashboardPage'));
+const AdminProductsPage = lazyWithReload(() => import('./pages/admin/AdminProductsPage'));
+const AdminImportProductsPage = lazyWithReload(() => import('./pages/admin/AdminImportProductsPage'));
+const AdminOrdersPage = lazyWithReload(() => import('./pages/admin/AdminOrdersPage'));
+const AdminNftIssuesPage = lazyWithReload(() => import('./pages/admin/AdminNftIssuesPage'));
+const AdminWalletMissingPage = lazyWithReload(() => import('./pages/admin/AdminWalletMissingPage'));
+const AdminNoticesPage = lazyWithReload(() => import('./pages/admin/AdminNoticesPage'));
+const AdminReferralLinksPage = lazyWithReload(() => import('./pages/admin/AdminReferralLinksPage'));
+const AdminReferralsPage = lazyWithReload(() => import('./pages/admin/AdminReferralsPage'));
+const AdminAgenciesPage = lazyWithReload(() => import('./pages/admin/AdminAgenciesPage'));
+const AdminSettingsPage = lazyWithReload(() => import('./pages/admin/AdminSettingsPage'));
+const AdminLegalPage = lazyWithReload(() => import('./pages/admin/AdminLegalPage'));
+const AdminAuditLogsPage = lazyWithReload(() => import('./pages/admin/AdminAuditLogsPage'));
+const AdminUsersPage = lazyWithReload(() => import('./pages/admin/AdminUsersPage'));
+const AgencyReferralLinksPage = lazyWithReload(() => import('./pages/agency/AgencyReferralLinksPage'));
+const AgencyOrdersPage = lazyWithReload(() => import('./pages/agency/AgencyOrdersPage'));
+const InviteOnlyPage = lazyWithReload(() => import('./pages/InviteOnlyPage'));
+const LandingPage = lazyWithReload(() => import('./pages/LandingPage'));
+const TokushohoPage = lazyWithReload(() => import('./pages/legal/TokushohoPage'));
+const TermsPage = lazyWithReload(() => import('./pages/legal/TermsPage'));
+const RefundPolicyPage = lazyWithReload(() => import('./pages/legal/RefundPolicyPage'));
+const PrivacyPolicyPage = lazyWithReload(() => import('./pages/legal/PrivacyPolicyPage'));
 
 function NavBar() {
   const { user, logout } = useAuth();
@@ -106,6 +109,7 @@ function App() {
     <>
       <NavBar />
       <main className="app-main">
+        <ErrorBoundary>
         <Suspense fallback={<p className="page-loading">読み込み中です...</p>}>
         <Routes>
         <Route path="/" element={<LandingPage />} />
@@ -227,6 +231,7 @@ function App() {
         </Route>
         </Routes>
         </Suspense>
+        </ErrorBoundary>
       </main>
       <Footer />
     </>

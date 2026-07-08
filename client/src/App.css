@@ -20,6 +20,15 @@
   padding: 48px 0;
 }
 
+.app-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+  padding: 48px 24px;
+}
+
 /* ==================== ヘッダー・ナビゲーション ==================== */
 
 .site-header {
@@ -925,6 +934,7 @@
 @media (max-width: 900px) {
   .admin-layout {
     flex-direction: column;
+    align-items: stretch;
     gap: 16px;
   }
 
@@ -935,6 +945,9 @@
     width: 100%;
     gap: 8px;
     padding: 10px;
+    /* 横スクロールできることが分かるよう、右端をフェードさせる */
+    mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent 100%);
   }
 
   .admin-nav__group {
@@ -949,6 +962,10 @@
 
   .admin-nav__link {
     white-space: nowrap;
+  }
+
+  .admin-topbar {
+    justify-content: flex-end;
   }
 
   .admin-topbar__search {
@@ -1192,6 +1209,12 @@
   color: var(--text-muted);
   font-size: 0.9em;
   margin: 0 0 4px;
+}
+
+.admin-settings-help {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  font-weight: 400;
 }
 
 .admin-legal-field-help {
