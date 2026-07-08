@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma';
-import { sendError } from '../../lib/apiError';
+import { sendIntegrationError } from '../../lib/apiError';
 import { generateAgencyCode } from '../../services/referralCodeGenerator';
 import { createPasswordResetToken } from '../../services/passwordReset';
 import { sendAgencyAccountSetupEmail, sendAgencyAccessGrantedEmail } from '../../services/mailTemplates';
@@ -24,6 +24,7 @@ function serializeAgency(agency: {
   defaultCommissionRate: { toNumber(): number };
   contactName: string | null;
   contactEmail: string | null;
+  pendingParentExternalId: string | null;
   parentAgency: { externalId: string | null } | null;
 }) {
   return {
@@ -35,7 +36,8 @@ function serializeAgency(agency: {
     default_commission_rate: agency.defaultCommissionRate.toNumber(),
     contact_name: agency.contactName,
     contact_email: agency.contactEmail,
-    parent_external_id: agency.parentAgency?.externalId ?? null,
+    // 親が未解決(先方仕様書v3.6.40)の間は、受け取ったexternal_idをそのまま返す。
+    parent_external_id: agency.parentAgency?.externalId ?? agency.pendingParentExternalId ?? null,
   };
 }
 
@@ -71,7 +73,7 @@ router.get('/', async (req, res) => {
   const queryExternalId = req.query.external_id;
   if (typeof queryExternalId === 'string' && queryExternalId.length > 0) {
     const detail = await findAgencyDetail(queryExternalId);
-    if (!detail) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
+    if (!detail) return sendIntegrationError(res, 404, 'Agency not found');
     return res.json({ agency: detail });
   }
 
@@ -84,7 +86,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:externalId', async (req, res) => {
   const detail = await findAgencyDetail(req.params.externalId);
-  if (!detail) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
+  if (!detail) return sendIntegrationError(res, 404, 'Agency not found');
   res.json({ agency: detail });
 });
 
@@ -101,23 +103,23 @@ router.post('/', async (req, res) => {
   } = req.body ?? {};
 
   if (!isNonEmptyString(externalId)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'external_idを指定してください');
+    return sendIntegrationError(res, 422, 'external_id is required');
   }
   if (!isNonEmptyString(name)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'nameを指定してください');
+    return sendIntegrationError(res, 422, 'name is required');
   }
   if (
     defaultCommissionRate !== undefined &&
     defaultCommissionRate !== null &&
     (typeof defaultCommissionRate !== 'number' || defaultCommissionRate < 0 || defaultCommissionRate > 100)
   ) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'default_commission_rateは0〜100の数値で指定してください');
+    return sendIntegrationError(res, 422, 'default_commission_rate must be a number between 0 and 100');
   }
   if (status !== undefined && status !== 'active' && status !== 'inactive') {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'statusはactiveまたはinactiveを指定してください');
+    return sendIntegrationError(res, 422, 'status must be "active" or "inactive"');
   }
   if (loginEmail !== undefined && loginEmail !== null && !isValidEmail(loginEmail)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', 'login_emailの形式が正しくありません');
+    return sendIntegrationError(res, 422, 'login_email is invalid');
   }
 
   try {
@@ -125,25 +127,33 @@ router.post('/', async (req, res) => {
 
     // parent_external_id: 未指定なら現状維持(新規なら本部直下)、null/空文字は本部直下への解除。
     let parentAgencyId: string | null | undefined;
+    let pendingParentExternalId: string | null | undefined;
     if (parentExternalId === null || parentExternalId === '') {
       parentAgencyId = null;
+      pendingParentExternalId = null;
     } else if (parentExternalId !== undefined) {
       if (!isNonEmptyString(parentExternalId)) {
-        return sendError(res, 400, 'VALIDATION_ERROR', 'parent_external_idの形式が正しくありません');
+        return sendIntegrationError(res, 422, 'parent_external_id is invalid');
       }
       if (parentExternalId === externalId) {
-        return sendError(res, 400, 'VALIDATION_ERROR', '自分自身を親代理店に指定することはできません');
+        return sendIntegrationError(res, 422, 'Cannot set itself as parent_external_id');
       }
       const parent = await prisma.agency.findUnique({ where: { externalId: parentExternalId } });
-      if (!parent) return sendError(res, 404, 'PARENT_AGENCY_NOT_FOUND', '親代理店が見つかりません(先に親を登録してください)');
-
-      if (existing) {
-        const cyclic = await wouldCreateCycle(existing.id, parent.id);
-        if (cyclic) {
-          return sendError(res, 400, 'VALIDATION_ERROR', '自分の配下代理店を親代理店に指定することはできません');
+      if (!parent) {
+        // 仕様書v3.6.40: 親が未登録の場合はエラーにせず、external_idを未解決のまま保存し、
+        // 親レコードが後から届いた時点で自動的に再紐付けする(下記の再紐付け処理を参照)。
+        parentAgencyId = null;
+        pendingParentExternalId = parentExternalId;
+      } else {
+        if (existing) {
+          const cyclic = await wouldCreateCycle(existing.id, parent.id);
+          if (cyclic) {
+            return sendIntegrationError(res, 422, 'Cannot set a descendant agency as parent_external_id');
+          }
         }
+        parentAgencyId = parent.id;
+        pendingParentExternalId = null;
       }
-      parentAgencyId = parent.id;
     } else if (!existing && isNonEmptyString(loginEmail)) {
       // 仕様書外の拡張: 新規代理店作成時にparent_external_idの指定がなく、login_emailが
       // 「このサイトで購入経験があり、既に代理店へ永久帰属しているユーザー」のメールアドレスと
@@ -161,6 +171,7 @@ router.post('/', async (req, res) => {
           data: {
             name,
             parentAgencyId,
+            pendingParentExternalId,
             defaultCommissionRate: defaultCommissionRate ?? undefined,
             contactName: contactName ?? undefined,
             contactEmail: contactEmail ?? undefined,
@@ -176,6 +187,7 @@ router.post('/', async (req, res) => {
               name,
               code,
               parentAgencyId: parentAgencyId ?? null,
+              pendingParentExternalId: pendingParentExternalId ?? null,
               defaultCommissionRate: defaultCommissionRate ?? 0,
               // contact_name未指定時はnameを使う(相手仕様書5章のフィールド説明に合わせる)。
               contactName: contactName ?? name,
@@ -186,6 +198,12 @@ router.post('/', async (req, res) => {
           });
         });
 
+    // 仕様書v3.6.40: このexternal_idを親として待っていた代理店(未解決のまま保存されていた子)を再紐付けする。
+    await prisma.agency.updateMany({
+      where: { pendingParentExternalId: externalId },
+      data: { parentAgencyId: agency.id, pendingParentExternalId: null },
+    });
+
     let loginProvisioned = false;
     if (isNonEmptyString(loginEmail)) {
       const alreadyHasLogin = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
@@ -195,7 +213,7 @@ router.post('/', async (req, res) => {
         if (existingUserByEmail) {
           // 既に代理店ポータル・管理者として使われているアカウントは横取りしない。
           if (['agency', 'admin', 'admin_viewer'].includes(existingUserByEmail.role)) {
-            return sendError(res, 409, 'LOGIN_EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に別の管理者・代理店アカウントとして使用されています');
+            return sendIntegrationError(res, 409, 'login_email is already used by another admin/agency account');
           }
 
           // 仕様書外の拡張: 既存の一般会員アカウント(評議員NFT購入者等)を代理店ポータルログインに
@@ -224,14 +242,14 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // レスポンス形式は先方仕様書v3.6.38の{success, data}エンベロープに合わせる。
+    // レスポンス形式は先方仕様書v3.6.40の{success, data}エンベロープに合わせる。
     res.status(existing ? 200 : 201).json({
       success: true,
       data: { ...serializeAgency(agency), login_provisioned: loginProvisioned, synced: true },
     });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return sendError(res, 409, 'LOGIN_EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に使用されています');
+      return sendIntegrationError(res, 409, 'login_email is already in use');
     }
     throw e;
   }

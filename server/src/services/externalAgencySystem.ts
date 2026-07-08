@@ -1,7 +1,7 @@
 import { HttpError } from '../lib/httpError';
 import { getSetting } from './settings';
 
-// 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)との連携(先方仕様書v3.6.38準拠)。
+// 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)との連携(先方仕様書v3.6.40準拠)。
 // 本システムが呼び出し元(クライアント)側になる。
 // - 階層取得API(GET): 先方が管理する代理店階層を本システムへ反映するために取得する
 // - 代理店同期API(POST): 本システム側で生まれた代理店候補(会員の代理店申請等)を先方へ送る
@@ -49,6 +49,7 @@ export interface PushAgencyCandidateResult {
 interface SyncResponse {
   success: boolean;
   data?: PushAgencyCandidateResult;
+  message?: string;
 }
 
 async function getConfig(): Promise<{ baseUrl: string; apiKey: string }> {
@@ -124,7 +125,7 @@ export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandi
 
   const body = (await res.json()) as SyncResponse;
   if (!body.success || !body.data) {
-    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', '代理店同期APIがエラーを返しました');
+    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', body.message ?? '代理店同期APIがエラーを返しました');
   }
 
   return body.data;

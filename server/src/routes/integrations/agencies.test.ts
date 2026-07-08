@@ -30,14 +30,16 @@ describe('外部代理店システム連携API', () => {
     await prisma.$disconnect();
   });
 
-  it('APIキーがない場合は401', async () => {
+  it('APIキーがない場合は401(success:falseのエンベロープで返す。仕様書v3.6.40)', async () => {
     const res = await request(app).get('/api/integrations/agencies');
     expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
   });
 
   it('APIキーが誤っている場合は401', async () => {
     const res = await request(app).get('/api/integrations/agencies').set('x-api-key', 'wrong-key');
     expect(res.status).toBe(401);
+    expect(res.body.success).toBe(false);
   });
 
   it('Authorization: Bearerヘッダーでも認証できる(仕様書v3.6.38準拠)', async () => {
@@ -71,12 +73,30 @@ describe('外部代理店システム連携API', () => {
     expect(detailRes.body.agency.child_external_ids).toContain(childExternalId);
   });
 
-  it('存在しないparent_external_idは404', async () => {
-    const res = await request(app)
+  it('存在しないparent_external_idはエラーにせず保存され、親が後から届くと自動的に再紐付けされる(仕様書v3.6.40)', async () => {
+    const childExternalId = `integration-test-orphan-${Date.now()}`;
+    const parentExternalId = `integration-test-orphan-parent-${Date.now()}`;
+
+    const childRes = await request(app)
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
-      .send({ external_id: `integration-test-orphan-${Date.now()}`, name: 'orphan', parent_external_id: 'nonexistent' });
-    expect(res.status).toBe(404);
+      .send({ external_id: childExternalId, name: 'orphan', parent_external_id: parentExternalId });
+    expect(childRes.status).toBe(201);
+    expect(childRes.body.success).toBe(true);
+    // 未解決の間は受け取ったparent_external_idをそのまま返す
+    expect(childRes.body.data.parent_external_id).toBe(parentExternalId);
+
+    const childBeforeLink = await prisma.agency.findUniqueOrThrow({ where: { externalId: childExternalId } });
+    expect(childBeforeLink.parentAgencyId).toBeNull();
+
+    const parentRes = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: parentExternalId, name: 'orphan-parent' });
+    expect(parentRes.status).toBe(201);
+
+    const childAfterLink = await prisma.agency.findUniqueOrThrow({ where: { externalId: childExternalId } });
+    expect(childAfterLink.parentAgencyId).toBe(parentRes.body.data.id);
   });
 
   it('同じexternal_idで再送すると更新になり、二重作成されない', async () => {
@@ -222,7 +242,7 @@ describe('外部代理店システム連携API', () => {
       .send({ external_id: `integration-test-conflict-${Date.now()}`, name: '衝突テスト代理店', login_email: takenEmail });
 
     expect(res.status).toBe(409);
-    expect(res.body.error.code).toBe('LOGIN_EMAIL_ALREADY_EXISTS');
+    expect(res.body.success).toBe(false);
   });
 
   it('contact_name未指定時はnameが使われる', async () => {
@@ -243,7 +263,7 @@ describe('外部代理店システム連携API', () => {
     expect(res.body.data.parent_external_id).toBeNull();
   });
 
-  it('自分自身を親に指定すると400', async () => {
+  it('自分自身を親に指定すると422', async () => {
     const externalId = `integration-test-selfparent-${Date.now()}`;
     await request(app)
       .post('/api/integrations/agencies')
@@ -254,10 +274,11 @@ describe('外部代理店システム連携API', () => {
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: externalId, name: 'self', parent_external_id: externalId });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
+    expect(res.body.success).toBe(false);
   });
 
-  it('自分の配下代理店を親に指定すると400(循環防止)', async () => {
+  it('自分の配下代理店を親に指定すると422(循環防止)', async () => {
     const grandparent = `integration-test-cycle-gp-${Date.now()}`;
     const parent = `integration-test-cycle-p-${Date.now()}`;
     const child = `integration-test-cycle-c-${Date.now()}`;
@@ -277,7 +298,7 @@ describe('外部代理店システム連携API', () => {
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: grandparent, name: 'gp', parent_external_id: child });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(422);
   });
 
   it('GET /?external_id=でもクエリ形式で詳細取得できる', async () => {

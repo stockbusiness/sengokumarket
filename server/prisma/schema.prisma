@@ -307,6 +307,9 @@ model Agency {
   code                  String   @unique
   externalId            String?  @unique @map("external_id") // 外部の代理店システム側のID(仕様書外の拡張: API連携用)
   parentAgencyId        String?  @map("parent_agency_id") @db.Uuid // 親代理店(多階層ツリー構造。仕様書外の拡張)
+  // 仕様書外の拡張(先方仕様書v3.6.40): 連携APIで親がまだ登録されていない代理店を受信した場合、
+  // エラーにせずexternal_id文字列のまま保持しておき、親が後から届いた時点で自動的に再紐付けする。
+  pendingParentExternalId String? @map("pending_parent_external_id")
   contactName           String?  @map("contact_name")
   contactEmail          String?  @map("contact_email")
   status                String   @default("active") // active | inactive
