@@ -119,6 +119,16 @@ export async function fetchExternalAgencyHierarchy(baseUrlOverride?: string, api
     );
   }
 
+  // agent_code/nameが無いと後続のDB反映処理が壊れた形で進んでしまうため、ここで検知して
+  // 実際に受信したノードの形を提示する(Prismaの分かりにくいエラーで落ちるのを防ぐ)。
+  if (nodes.length > 0 && (typeof nodes[0].agent_code !== 'string' || typeof nodes[0].name !== 'string')) {
+    throw new HttpError(
+      502,
+      'EXTERNAL_AGENCY_SYSTEM_ERROR',
+      `代理店ノードの形式が想定(agent_code/name)と異なります(受信したキー: ${Object.keys(nodes[0] as object).join(', ')})`,
+    );
+  }
+
   const flat: ExternalAgencyNode[] = [];
   flattenTree(nodes, null, flat);
   return flat;
