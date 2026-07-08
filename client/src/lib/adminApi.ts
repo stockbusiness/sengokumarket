@@ -336,6 +336,30 @@ export function updateAdminSettings(payload: Partial<Record<keyof AdminSettings,
   return adminSend<{ settings: AdminSettings }>('PUT', '/settings', payload);
 }
 
+export interface ConnectionTestResult {
+  ok: boolean;
+  message: string;
+}
+
+export function testStripeConnection(stripeSecretKey: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/stripe', { stripe_secret_key: stripeSecretKey });
+}
+
+export function testResendConnection(resendApiKey: string, mailFrom: string, to: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/resend', {
+    resend_api_key: resendApiKey,
+    mail_from: mailFrom,
+    to,
+  });
+}
+
+export function testExternalAgencyConnection(baseUrl: string, apiKey: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/external-agency', {
+    external_agency_system_base_url: baseUrl,
+    external_agency_system_api_key: apiKey,
+  });
+}
+
 // --- CSV商品インポート ---
 export interface ImportRowResult {
   line: number;

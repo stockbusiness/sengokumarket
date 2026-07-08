@@ -44,13 +44,17 @@ describe('管理API: 監査ログ(仕様書外の拡張)', () => {
   it('決済連携キー等の秘密情報はリクエストボディがそのまま記録されない(マスクされる)', async () => {
     const { agent, email } = await createAdminAgent(app);
 
-    await agent.put('/api/admin/settings').set('Origin', TEST_ORIGIN).send({ stripe_secret_key: 'sk_live_secretvalue' });
+    await agent
+      .put('/api/admin/settings')
+      .set('Origin', TEST_ORIGIN)
+      .send({ stripe_secret_key: 'sk_live_secretvalue', external_agency_system_api_key: 'external-secret-value' });
 
     const logs = await prisma.adminAuditLog.findMany({
       where: { path: '/api/admin/settings', method: 'PUT', actorEmail: email },
     });
     expect(logs).toHaveLength(1);
     expect((logs[0].requestBody as Record<string, unknown>).stripe_secret_key).toBe('[REDACTED]');
+    expect((logs[0].requestBody as Record<string, unknown>).external_agency_system_api_key).toBe('[REDACTED]');
   });
 
   it('GET /api/admin/audit-logs で新しい順に一覧取得できる', async () => {

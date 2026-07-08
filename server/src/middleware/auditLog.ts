@@ -10,6 +10,7 @@ const REDACTED_KEYS = new Set([
   'stripe_public_key',
   'resend_api_key',
   'agency_api_key',
+  'external_agency_system_api_key',
   'token',
 ]);
 

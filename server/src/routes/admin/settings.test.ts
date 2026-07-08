@@ -1,8 +1,18 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
+
+const testStripeConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'stripe ok' }));
+const testResendConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'resend ok' }));
+const testExternalAgencyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'external ok' }));
+
+vi.mock('../../services/connectionTest', () => ({
+  testStripeConnection: (...args: unknown[]) => testStripeConnection(...args),
+  testResendConnection: (...args: unknown[]) => testResendConnection(...args),
+  testExternalAgencyConnection: (...args: unknown[]) => testExternalAgencyConnection(...args),
+}));
 
 const app = createApp();
 
@@ -48,5 +58,55 @@ describe('管理API: Stripe/Resend設定(仕様書外の拡張)', () => {
 
     const res = await agent.put('/api/admin/settings').set('Origin', TEST_ORIGIN).send({ mail_from: '' });
     expect(res.body.settings.mail_from.masked).toBe(beforeMasked);
+  });
+});
+
+describe('管理API: 接続テスト(仕様書外の拡張)', () => {
+  afterAll(async () => {
+    await prisma.user.deleteMany({ where: { email: { contains: 'admin-test' } } });
+    await prisma.$disconnect();
+  });
+
+  it('一般ユーザーは403', async () => {
+    const email = `admin-connectiontest-test-user-${Date.now()}@example.com`;
+    const agent = request.agent(app);
+    await agent.post('/api/auth/register').set('Origin', TEST_ORIGIN).send({ name: '一般', email, password: 'password123' });
+    const res = await agent.post('/api/admin/settings/test/stripe').set('Origin', TEST_ORIGIN).send({});
+    expect(res.status).toBe(403);
+  });
+
+  it('POST /settings/test/stripeは入力値でtestStripeConnectionを呼び、結果を返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    testStripeConnection.mockClear();
+    const res = await agent.post('/api/admin/settings/test/stripe').set('Origin', TEST_ORIGIN).send({ stripe_secret_key: 'sk_test_x' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'stripe ok' });
+    expect(testStripeConnection).toHaveBeenCalledWith('sk_test_x');
+  });
+
+  it('POST /settings/test/resendはtoが未指定だと400', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.post('/api/admin/settings/test/resend').set('Origin', TEST_ORIGIN).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('POST /settings/test/resendはtoを指定するとtestResendConnectionを呼ぶ', async () => {
+    const { agent } = await createAdminAgent(app);
+    testResendConnection.mockClear();
+    const res = await agent.post('/api/admin/settings/test/resend').set('Origin', TEST_ORIGIN).send({ to: 'me@example.com' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'resend ok' });
+    expect(testResendConnection).toHaveBeenCalledWith(undefined, undefined, 'me@example.com');
+  });
+
+  it('POST /settings/test/external-agencyはtestExternalAgencyConnectionの結果を返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .post('/api/admin/settings/test/external-agency')
+      .set('Origin', TEST_ORIGIN)
+      .send({ external_agency_system_base_url: 'https://example.com', external_agency_system_api_key: 'key' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'external ok' });
+    expect(testExternalAgencyConnection).toHaveBeenCalledWith('https://example.com', 'key');
   });
 });

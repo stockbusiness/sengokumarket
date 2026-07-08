@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import {
   fetchAdminSettings,
   fetchBankTransferSettings,
+  testExternalAgencyConnection,
+  testResendConnection,
+  testStripeConnection,
   updateAdminSettings,
   updateBankTransferSettings,
   type AdminSettings,
+  type ConnectionTestResult,
 } from '../../lib/adminApi';
 
 const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; generatable?: boolean }[] = [
@@ -20,7 +24,8 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
   {
     key: 'agency_api_key',
     label: '代理店連携APIキー(外部の代理店システムからの受信用)',
-    helpText: 'このキーはこちらで発行し、外部の代理店システム側の管理画面に設定してもらう値です。下のボタンで生成できます。',
+    helpText:
+      'このキーはこちらで発行し、外部の代理店システム側の管理画面に設定してもらう値です。下のボタンで生成できます。接続テストは保存済みの値でのみ確認できるため、生成後は一度保存してからお試しください。',
     generatable: true,
   },
   { key: 'external_agency_system_base_url', label: '外部代理店システムのURL(例: https://sengoku-ai.com)' },
@@ -37,6 +42,14 @@ function generateApiKey(): string {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+type TestState = 'testing' | ConnectionTestResult | null;
+
+function TestResultText({ state }: { state: TestState }) {
+  if (state === 'testing') return <span className="admin-settings-help">テスト中...</span>;
+  if (!state) return null;
+  return <p className={state.ok ? 'admin-settings-test-ok' : 'admin-settings-test-ng'}>{state.message}</p>;
+}
+
 export default function AdminSettingsPage() {
   const [settings, setSettings] = useState<AdminSettings | null>(null);
   const [inputs, setInputs] = useState<Partial<Record<keyof AdminSettings, string>>>({});
@@ -45,6 +58,12 @@ export default function AdminSettingsPage() {
   const [bankTransferEnabled, setBankTransferEnabled] = useState(false);
   const [bankTransferInfo, setBankTransferInfo] = useState('');
   const [bankTransferMessage, setBankTransferMessage] = useState<string | null>(null);
+
+  const [stripeTest, setStripeTest] = useState<TestState>(null);
+  const [agencyKeyTest, setAgencyKeyTest] = useState<TestState>(null);
+  const [externalAgencyTest, setExternalAgencyTest] = useState<TestState>(null);
+  const [resendTestTo, setResendTestTo] = useState('');
+  const [resendTest, setResendTest] = useState<TestState>(null);
 
   function load() {
     fetchAdminSettings().then((d) => setSettings(d.settings));
@@ -74,6 +93,43 @@ export default function AdminSettingsPage() {
     loadBankTransfer();
   }
 
+  async function handleTestStripe() {
+    setStripeTest('testing');
+    setStripeTest(await testStripeConnection(inputs.stripe_secret_key ?? ''));
+  }
+
+  async function handleTestResend() {
+    if (!resendTestTo) return;
+    setResendTest('testing');
+    setResendTest(await testResendConnection(inputs.resend_api_key ?? '', inputs.mail_from ?? '', resendTestTo));
+  }
+
+  async function handleTestExternalAgency() {
+    setExternalAgencyTest('testing');
+    setExternalAgencyTest(
+      await testExternalAgencyConnection(inputs.external_agency_system_base_url ?? '', inputs.external_agency_system_api_key ?? ''),
+    );
+  }
+
+  // 代理店連携APIキー(自システムの受信用)は、外部から呼ばれる実際の公開URLへ
+  // 直接リクエストして疎通確認する(サーバー内部からのテストでは公開URL経由の疎通は確認できないため)。
+  async function handleTestAgencyKey() {
+    setAgencyKeyTest('testing');
+    try {
+      const res = await fetch(`${window.location.origin}/api/integrations/agencies`, {
+        headers: { 'x-api-key': inputs.agency_api_key ?? '' },
+      });
+      if (res.ok) {
+        setAgencyKeyTest({ ok: true, message: 'このキーで正しく認証できました' });
+      } else {
+        const body = await res.json().catch(() => null);
+        setAgencyKeyTest({ ok: false, message: body?.message ?? `認証に失敗しました(HTTP ${res.status})` });
+      }
+    } catch {
+      setAgencyKeyTest({ ok: false, message: '接続に失敗しました' });
+    }
+  }
+
   return (
     <div>
       <h1>決済・メール設定</h1>
@@ -82,26 +138,68 @@ export default function AdminSettingsPage() {
       {settings && (
         <form onSubmit={handleSubmit} className="admin-form-card">
           {FIELDS.map((field) => (
-            <label key={field.key}>
-              {field.label}
-              {settings[field.key].configured && <span> (設定済み: {settings[field.key].masked})</span>}
-              {field.helpText && <span className="admin-settings-help">{field.helpText}</span>}
-              <input
-                type="text"
-                value={inputs[field.key] ?? ''}
-                onChange={(e) => setInputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                placeholder={settings[field.key].configured ? '変更する場合のみ入力' : '未設定'}
-              />
-              {field.generatable && (
-                <button
-                  type="button"
-                  className="btn-secondary btn-small"
-                  onClick={() => setInputs((prev) => ({ ...prev, [field.key]: generateApiKey() }))}
-                >
-                  ランダムなキーを生成
-                </button>
+            <Fragment key={field.key}>
+              <label>
+                {field.label}
+                {settings[field.key].configured && <span> (設定済み: {settings[field.key].masked})</span>}
+                {field.helpText && <span className="admin-settings-help">{field.helpText}</span>}
+                <input
+                  type="text"
+                  value={inputs[field.key] ?? ''}
+                  onChange={(e) => setInputs((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                  placeholder={settings[field.key].configured ? '変更する場合のみ入力' : '未設定'}
+                />
+                {field.generatable && (
+                  <button
+                    type="button"
+                    className="btn-secondary btn-small"
+                    onClick={() => setInputs((prev) => ({ ...prev, [field.key]: generateApiKey() }))}
+                  >
+                    ランダムなキーを生成
+                  </button>
+                )}
+              </label>
+
+              {field.key === 'stripe_secret_key' && (
+                <div className="admin-settings-test">
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestStripe}>
+                    接続テスト
+                  </button>
+                  <TestResultText state={stripeTest} />
+                </div>
               )}
-            </label>
+
+              {field.key === 'mail_from' && (
+                <div className="admin-settings-test">
+                  <label>
+                    テスト送信先メールアドレス
+                    <input type="email" value={resendTestTo} onChange={(e) => setResendTestTo(e.target.value)} placeholder="test@example.com" />
+                  </label>
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestResend} disabled={!resendTestTo}>
+                    テストメール送信
+                  </button>
+                  <TestResultText state={resendTest} />
+                </div>
+              )}
+
+              {field.key === 'agency_api_key' && (
+                <div className="admin-settings-test">
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestAgencyKey}>
+                    接続テスト
+                  </button>
+                  <TestResultText state={agencyKeyTest} />
+                </div>
+              )}
+
+              {field.key === 'external_agency_system_api_key' && (
+                <div className="admin-settings-test">
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestExternalAgency}>
+                    接続テスト
+                  </button>
+                  <TestResultText state={externalAgencyTest} />
+                </div>
+              )}
+            </Fragment>
           ))}
           {message && <p>{message}</p>}
           <button type="submit" className="btn-primary">
