@@ -151,7 +151,9 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
   afterAll(async () => {
     await prisma.ssoUsedJti.deleteMany({ where: { sub: { contains: 'auth-route-sso-test' } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'auth-route-sso-test' } } });
-    await prisma.agency.deleteMany({ where: { code: { contains: 'auth-route-sso-test' } } });
+    // JITプロビジョニング(仕様書外の拡張)によりcodeは連番AGxxxで自動採番されるため、
+    // codeではなくexternalIdで絞り込む(codeで絞ると自動作成された代理店が消えずに残る)。
+    await prisma.agency.deleteMany({ where: { externalId: { contains: 'auth-route-sso-test' } } });
     await prisma.$disconnect();
   });
 
@@ -220,7 +222,7 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('対応する代理店が無い場合はagency_not_linkedを返す', async () => {
+  it('対応する代理店が無く、トークンにメールクレームも無い場合はagency_not_linkedを返す(代理店自体はJITプロビジョニングされる)', async () => {
     const { token, publicKey, kid } = await buildSignedToken('auth-route-sso-test-unlinked');
     stubJwks(publicKey, kid);
 

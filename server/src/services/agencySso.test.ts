@@ -65,8 +65,8 @@ describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書
 
   afterAll(async () => {
     await prisma.ssoUsedJti.deleteMany({ where: { sub: { contains: 'agency-sso-test' } } });
-    await prisma.user.deleteMany({ where: { email: 'agency-sso-test-user@example.com' } });
-    await prisma.agency.deleteMany({ where: { code: { contains: 'agency-sso-test' } } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'agency-sso-test' } } });
+    await prisma.agency.deleteMany({ where: { externalId: { contains: 'agency-sso-test' } } });
     await prisma.$disconnect();
   });
 
@@ -124,11 +124,55 @@ describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書
     await expect(verifyAndConsumeAgencySsoToken(token)).rejects.toMatchObject({ code: 'sso_invalid' });
   });
 
-  it('RR側に対応する代理店が存在しない場合はagency_not_linkedになる', async () => {
-    const { token, publicKey, kid } = await buildSignedToken({ sub: 'agency-sso-test-unknown-code' });
+  it('RR側に対応する代理店が存在しない場合はトークンのclaimから代理店・ログインアカウントを自動作成する(Google方式のJITプロビジョニング)', async () => {
+    const { token, publicKey, kid } = await buildSignedToken({
+      sub: 'agency-sso-test-jit-new-code',
+      agency_name: 'JIT新規代理店',
+      actor_email: 'agency-sso-test-jit-new@example.com',
+      actor_name: 'JIT新規担当者',
+    });
+
+    stubJwks(publicKey, kid);
+    const result = await verifyAndConsumeAgencySsoToken(token);
+
+    const user = await prisma.user.findUnique({ where: { id: result.userId } });
+    expect(user?.email).toBe('agency-sso-test-jit-new@example.com');
+    expect(user?.role).toBe('agency');
+
+    const agency = await prisma.agency.findUnique({ where: { externalId: 'agency-sso-test-jit-new-code' } });
+    expect(agency?.name).toBe('JIT新規代理店');
+    expect(agency?.id).toBe(user?.agencyId);
+  });
+
+  it('新規代理店だがトークンにメールクレームが無い場合はagency_not_linkedになる', async () => {
+    const { token, publicKey, kid } = await buildSignedToken({ sub: 'agency-sso-test-jit-no-email' });
 
     stubJwks(publicKey, kid);
     await expect(verifyAndConsumeAgencySsoToken(token)).rejects.toMatchObject({ code: 'agency_not_linked' });
+  });
+
+  it('メールクレームが既存アカウント(役割問わず)と重複する場合は自動昇格させずagency_not_linkedになる', async () => {
+    await prisma.user.create({
+      data: {
+        name: 'agency-sso-test 既存一般会員',
+        email: 'agency-sso-test-existing-member@example.com',
+        passwordHash: 'unused',
+        role: 'user',
+      },
+    });
+
+    const { token, publicKey, kid } = await buildSignedToken({
+      sub: 'agency-sso-test-jit-collision-code',
+      agency_name: 'JIT衝突代理店',
+      actor_email: 'agency-sso-test-existing-member@example.com',
+    });
+
+    stubJwks(publicKey, kid);
+    await expect(verifyAndConsumeAgencySsoToken(token)).rejects.toMatchObject({ code: 'agency_not_linked' });
+
+    const user = await prisma.user.findUnique({ where: { email: 'agency-sso-test-existing-member@example.com' } });
+    expect(user?.role).toBe('user');
+    expect(user?.agencyId).toBeNull();
   });
 
   it('代理店が停止中の場合はagency_inactiveになる', async () => {

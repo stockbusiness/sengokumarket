@@ -1,9 +1,11 @@
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { Prisma } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { Prisma, type Agency } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { getSetting } from './settings';
+import { generateAgencyCode } from './referralCodeGenerator';
 
 // 仕様書外の拡張(先方仕様書v3.6.45準拠): 代理店システム(IdP)発行のSSOトークンを検証し、
 // 対応する代理店ポータルアカウントを特定する。エラーコードは先方仕様書のログイン画面
@@ -69,6 +71,64 @@ function isSafeInternalPath(value: unknown): value is string {
   return typeof value === 'string' && value.startsWith('/') && !value.startsWith('//');
 }
 
+function stringClaim(payload: jwt.JwtPayload, key: string): string | null {
+  const value = (payload as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+// 仕様書外の拡張(Googleログイン等と同じJITプロビジョニング): 先方の署名済みトークンは
+// 信頼できる主張とみなし、対応する代理店・ログインアカウントが無ければトークンの
+// クレーム(agency_name/contact_email/actor_*)からその場で作成する。連携APIの
+// login_email送信を待たなくてもSSO単体でログインできるようにする。
+async function resolveOrProvisionAgency(sub: string, payload: jwt.JwtPayload): Promise<Agency> {
+  const existing = await prisma.agency.findUnique({ where: { externalId: sub } });
+  if (existing) {
+    if (existing.status !== 'active') {
+      throw new HttpError(403, 'agency_inactive', 'この代理店は停止中です');
+    }
+    return existing;
+  }
+
+  const agencyName = stringClaim(payload, 'agency_name') ?? sub;
+  return prisma.$transaction(async (tx) => {
+    const code = await generateAgencyCode(tx);
+    return tx.agency.create({
+      data: { name: agencyName, code, externalId: sub, status: 'active', defaultCommissionRate: 0 },
+    });
+  });
+}
+
+async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPayload) {
+  const existing = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
+  if (existing) return existing;
+
+  const email = stringClaim(payload, 'actor_email') ?? stringClaim(payload, 'contact_email');
+  if (!email) {
+    throw new HttpError(401, 'agency_not_linked', 'ログイン用のメールアドレス情報がSSOトークンに含まれていません');
+  }
+
+  const existingByEmail = await prisma.user.findUnique({ where: { email } });
+  if (existingByEmail) {
+    // 既存アカウント(役割問わず)は自動昇格させず、必ず連携API(login_email)経由の
+    // 明示的な紐付けを要求する。SSOトークンのメールクレームだけを根拠に既存アカウントの
+    // 権限を変更しない(未承認の権限昇格を避けるための保守的なデフォルト)。
+    throw new HttpError(409, 'agency_not_linked', 'このメールアドレスは既に別のアカウントで使用されています');
+  }
+
+  const actorName = stringClaim(payload, 'actor_name') ?? agency.name;
+  return prisma.user.create({
+    data: {
+      name: actorName,
+      email,
+      // SSO経由のみでログインする想定のため、パスワードは平文で扱わずランダム値をハッシュ化するのみ
+      // (仕様書v1.5 16章の原則を踏襲)。本人が通常ログインも使いたい場合はパスワード再設定から行う。
+      passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+      role: 'agency',
+      agencyId: agency.id,
+    },
+  });
+}
+
 export async function verifyAndConsumeAgencySsoToken(token: string): Promise<AgencySsoLoginResult> {
   const rawBaseUrl = await getSetting('external_agency_system_base_url');
   if (!rawBaseUrl) {
@@ -120,18 +180,8 @@ export async function verifyAndConsumeAgencySsoToken(token: string): Promise<Age
     throw e;
   }
 
-  const agency = await prisma.agency.findUnique({ where: { externalId: sub } });
-  if (!agency) {
-    throw new HttpError(401, 'agency_not_linked', '代理店ポータルとの連携が見つかりません');
-  }
-  if (agency.status !== 'active') {
-    throw new HttpError(403, 'agency_inactive', 'この代理店は停止中です');
-  }
-
-  const user = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
-  if (!user) {
-    throw new HttpError(401, 'agency_not_linked', '代理店ポータルのログインアカウントが未発行です');
-  }
+  const agency = await resolveOrProvisionAgency(sub, payload);
+  const user = await resolveOrProvisionLoginUser(agency, payload);
 
   return { userId: user.id, returnTo: isSafeInternalPath(payload.return_to) ? payload.return_to : null };
 }
