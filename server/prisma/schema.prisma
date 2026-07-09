@@ -330,6 +330,20 @@ model Agency {
   @@map("agencies")
 }
 
+// 仕様書外の拡張(先方仕様書v3.6.45): 代理店システムからのSSOログインで使用したJWTの
+// jtiを記録し、同一トークンの再利用(リプレイ)を拒否するための台帳。
+model SsoUsedJti {
+  id        String   @id @default(uuid()) @db.Uuid
+  jti       String   @unique
+  sub       String
+  aud       String
+  expiresAt DateTime @map("expires_at")
+  usedAt    DateTime @default(now()) @map("used_at")
+
+  @@index([expiresAt])
+  @@map("sso_used_jti")
+}
+
 model Influencer {
   id                    String   @id @default(uuid()) @db.Uuid
   agencyId              String?  @map("agency_id") @db.Uuid

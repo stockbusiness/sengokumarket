@@ -47,6 +47,32 @@ describe('外部代理店システム連携API', () => {
     expect(res.status).toBe(200);
   });
 
+  it('event=connection_testは代理店データを保存せず200を返す(仕様書v3.6.40接続テスト)', async () => {
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ event: 'connection_test', dry_run: true, source: 'sengoku-ai', external_id: '__connection_test__' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const saved = await prisma.agency.findUnique({ where: { externalId: '__connection_test__' } });
+    expect(saved).toBeNull();
+  });
+
+  it('dry_run=trueのみでも代理店データを保存せず200を返す', async () => {
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ dry_run: true, external_id: 'integration-test-dry-run' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const saved = await prisma.agency.findUnique({ where: { externalId: 'integration-test-dry-run' } });
+    expect(saved).toBeNull();
+  });
+
   it('親代理店→子代理店の順で作成し、ツリー構造を取得できる', async () => {
     const parentExternalId = `integration-test-parent-${Date.now()}`;
     const childExternalId = `integration-test-child-${Date.now()}`;

@@ -10,6 +10,8 @@ import { isLocked, recordLoginFailure, recordLoginSuccess } from '../services/lo
 import { requireAuth } from '../middleware/auth';
 import { createPasswordResetToken, consumePasswordResetToken } from '../services/passwordReset';
 import { sendPasswordResetEmail } from '../services/mailTemplates';
+import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
+import { HttpError } from '../lib/httpError';
 
 const router = Router();
 
@@ -21,6 +23,7 @@ const passwordResetRequestLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+const agencySsoLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -101,6 +104,30 @@ router.post('/auth/login', async (req, res) => {
   const token = signAuthToken({ sub: user.id, role: user.role, agencyId: user.agencyId ?? undefined });
   setAuthCookie(res, token);
   res.json({ user: publicUser(user) });
+});
+
+// 仕様書外の拡張(先方仕様書v3.6.45準拠): 代理店システム(IdP)発行のSSOトークンを検証し、
+// 対応する代理店ポータルアカウントで通常ログインと同じセッションを発行する。
+router.post('/auth/agency-sso', agencySsoLimiter, async (req, res) => {
+  const { token } = req.body ?? {};
+  if (!isNonEmptyString(token)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'トークンを指定してください');
+  }
+
+  let result;
+  try {
+    result = await verifyAndConsumeAgencySsoToken(token);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: result.userId } });
+  if (!user) return sendError(res, 401, 'agency_not_linked', '代理店ポータルとの連携が見つかりません');
+
+  const jwt = signAuthToken({ sub: user.id, role: user.role, agencyId: user.agencyId ?? undefined });
+  setAuthCookie(res, jwt);
+  res.json({ user: publicUser(user), returnTo: result.returnTo });
 });
 
 router.post('/auth/logout', (_req, res) => {

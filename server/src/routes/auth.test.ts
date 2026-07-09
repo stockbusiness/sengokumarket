@@ -1,7 +1,9 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { setSetting } from '../services/settings';
 
 const app = createApp();
 const ORIGIN = 'http://localhost:5173';
@@ -140,5 +142,100 @@ describe('認証API', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('INVALID_OR_EXPIRED_TOKEN');
+  });
+});
+
+// 仕様書外の拡張(先方仕様書v3.6.45): 代理店システムからのSSOログイン受け口。
+describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
+  afterAll(async () => {
+    await prisma.ssoUsedJti.deleteMany({ where: { sub: { contains: 'auth-route-sso-test' } } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'auth-route-sso-test' } } });
+    await prisma.agency.deleteMany({ where: { code: { contains: 'auth-route-sso-test' } } });
+    await prisma.$disconnect();
+  });
+
+  async function buildSignedToken(sub: string) {
+    const issuer = `https://auth-route-sso-test-${Date.now()}-${Math.random().toString(36).slice(2)}.example.com`;
+    await setSetting('external_agency_system_base_url', issuer);
+
+    const kid = crypto.randomUUID();
+    const pair = await generateKeyPair('RS256');
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({
+      sub,
+      aud: 'sengoku-rr',
+      iat: now,
+      exp: now + 30,
+      jti: crypto.randomUUID(),
+    })
+      .setProtectedHeader({ alg: 'RS256', kid })
+      .setIssuer(issuer)
+      .sign(pair.privateKey);
+
+    return { token, publicKey: pair.publicKey, kid };
+  }
+
+  function stubJwks(publicKey: Awaited<ReturnType<typeof generateKeyPair>>['publicKey'], kid: string) {
+    return vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        const jwk = await exportJWK(publicKey);
+        return new Response(JSON.stringify({ keys: [{ ...jwk, kid, alg: 'RS256', use: 'sig' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+  }
+
+  it('正しいトークンでログインしセッションCookieが発行される', async () => {
+    const agency = await prisma.agency.create({
+      data: {
+        name: 'SSOルートテスト代理店',
+        code: 'auth-route-sso-test-linked',
+        externalId: 'auth-route-sso-test-linked',
+        status: 'active',
+        defaultCommissionRate: 0,
+      },
+    });
+    await prisma.user.create({
+      data: {
+        name: 'SSOルートテスト担当者',
+        email: 'auth-route-sso-test-user@example.com',
+        passwordHash: 'unused',
+        role: 'agency',
+        agencyId: agency.id,
+      },
+    });
+
+    const { token, publicKey, kid } = await buildSignedToken('auth-route-sso-test-linked');
+    stubJwks(publicKey, kid);
+
+    const res = await request(app).post('/api/auth/agency-sso').set('Origin', ORIGIN).send({ token });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe('auth-route-sso-test-user@example.com');
+    expect(res.headers['set-cookie']?.[0]).toContain('session=');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('対応する代理店が無い場合はagency_not_linkedを返す', async () => {
+    const { token, publicKey, kid } = await buildSignedToken('auth-route-sso-test-unlinked');
+    stubJwks(publicKey, kid);
+
+    const res = await request(app).post('/api/auth/agency-sso').set('Origin', ORIGIN).send({ token });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error.code).toBe('agency_not_linked');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('tokenが未指定の場合はVALIDATION_ERRORを返す', async () => {
+    const res = await request(app).post('/api/auth/agency-sso').set('Origin', ORIGIN).send({});
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 });

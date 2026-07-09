@@ -91,6 +91,14 @@ router.get('/:externalId', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
+  const body = req.body ?? {};
+
+  // 先方仕様書v3.6.40: 接続テストボタン(event=connection_test またはdry_run=true)は
+  // 認証・受信可否の確認のみを行い、代理店データとしては一切保存しない。
+  if (body.event === 'connection_test' || body.dry_run === true) {
+    return res.status(200).json({ success: true, data: { external_id: body.external_id ?? null, status: 'ok', synced: false } });
+  }
+
   const {
     external_id: externalId,
     name,
@@ -100,7 +108,7 @@ router.post('/', async (req, res) => {
     contact_email: contactEmail,
     status,
     login_email: loginEmail,
-  } = req.body ?? {};
+  } = body;
 
   if (!isNonEmptyString(externalId)) {
     return sendIntegrationError(res, 422, 'external_id is required');

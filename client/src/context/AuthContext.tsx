@@ -17,6 +17,7 @@ interface AuthContextValue {
   register: (name: string, email: string, password: string, phone?: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
+  loginWithAgencySso: (token: string) => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -27,6 +28,16 @@ async function parseJsonOrThrow(res: Response) {
     throw new Error(body?.error?.message ?? `リクエストに失敗しました(${res.status})`);
   }
   return body;
+}
+
+// 仕様書外の拡張(先方仕様書v3.6.45): 代理店システムからのSSOログイン失敗時、
+// /login?error=<code> のリダイレクトに使うエラーコードをそのまま保持する。
+export class AgencySsoError extends Error {
+  code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -76,8 +87,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const loginWithAgencySso = useCallback(async (token: string) => {
+    const res = await fetch('/api/auth/agency-sso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new AgencySsoError(body?.error?.code ?? 'sso_invalid', body?.error?.message ?? 'ログインに失敗しました');
+    }
+    setUser(body.user);
+    return (body.returnTo as string | null) ?? null;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh }}>{children}</AuthContext.Provider>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refresh, loginWithAgencySso }}>
+      {children}
+    </AuthContext.Provider>
   );
 }
 

@@ -46,6 +46,7 @@ const AdminAuditLogsPage = lazyWithReload(() => import('./pages/admin/AdminAudit
 const AdminUsersPage = lazyWithReload(() => import('./pages/admin/AdminUsersPage'));
 const AgencyReferralLinksPage = lazyWithReload(() => import('./pages/agency/AgencyReferralLinksPage'));
 const AgencyOrdersPage = lazyWithReload(() => import('./pages/agency/AgencyOrdersPage'));
+const AgencySsoCallbackPage = lazyWithReload(() => import('./pages/agency/AgencySsoCallbackPage'));
 const InviteOnlyPage = lazyWithReload(() => import('./pages/InviteOnlyPage'));
 const LandingPage = lazyWithReload(() => import('./pages/LandingPage'));
 const TokushohoPage = lazyWithReload(() => import('./pages/legal/TokushohoPage'));
@@ -218,6 +219,7 @@ function App() {
           <Route path="audit-logs" element={<AdminAuditLogsPage />} />
           <Route path="admin-users" element={<AdminUsersPage />} />
         </Route>
+        <Route path="/agency/sso" element={<AgencySsoCallbackPage />} />
         <Route
           path="/agency"
           element={
