@@ -1,4 +1,5 @@
-import { createRemoteJWKSet, errors as joseErrors, jwtVerify } from 'jose';
+import crypto from 'crypto';
+import jwt from 'jsonwebtoken';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
@@ -7,16 +8,56 @@ import { getSetting } from './settings';
 // 仕様書外の拡張(先方仕様書v3.6.45準拠): 代理店システム(IdP)発行のSSOトークンを検証し、
 // 対応する代理店ポータルアカウントを特定する。エラーコードは先方仕様書のログイン画面
 // リダイレクトパラメータ(/login?error=...)の値とそのまま揃えている。
+//
+// joseやjwks-rsa(内部でjoseに依存)はESM専用パッケージを含み、このサーバー(CommonJS
+// ビルド)からのrequireに失敗する恐れがあるため使わない。JWKS取得はプロジェクトの他の
+// 外部連携と同じ素のfetch、鍵の変換はNode組み込みのcrypto.createPublicKeyのみで行う。
 const SSO_AUDIENCE = 'sengoku-rr';
 const CLOCK_TOLERANCE_SECONDS = 60;
+const JWKS_CACHE_TTL_MS = 10 * 60 * 1000;
 
-let cachedJwks: { url: string; jwks: ReturnType<typeof createRemoteJWKSet> } | null = null;
+interface CachedJwks {
+  url: string;
+  fetchedAt: number;
+  keys: Map<string, crypto.KeyObject>;
+}
 
-function getJwks(jwksUrl: string) {
-  if (!cachedJwks || cachedJwks.url !== jwksUrl) {
-    cachedJwks = { url: jwksUrl, jwks: createRemoteJWKSet(new URL(jwksUrl)) };
+let cachedJwks: CachedJwks | null = null;
+
+async function fetchJwks(jwksUrl: string): Promise<Map<string, crypto.KeyObject>> {
+  const res = await fetch(jwksUrl);
+  if (!res.ok) {
+    throw new HttpError(401, 'sso_invalid', `JWKSの取得に失敗しました(HTTP ${res.status})`);
   }
-  return cachedJwks.jwks;
+  const body = (await res.json()) as { keys?: Array<Record<string, unknown>> };
+  const keys = new Map<string, crypto.KeyObject>();
+  for (const jwk of body.keys ?? []) {
+    const kid = jwk.kid;
+    if (typeof kid !== 'string') continue;
+    try {
+      keys.set(kid, crypto.createPublicKey({ key: jwk as crypto.JsonWebKeyInput['key'], format: 'jwk' }));
+    } catch {
+      // このプロジェクトが対応しない鍵形式(RSA以外等)は無視する。
+    }
+  }
+  return keys;
+}
+
+async function getSigningKey(jwksUrl: string, kid: string): Promise<crypto.KeyObject> {
+  const now = Date.now();
+  const needsRefresh =
+    !cachedJwks || cachedJwks.url !== jwksUrl || now - cachedJwks.fetchedAt > JWKS_CACHE_TTL_MS || !cachedJwks.keys.has(kid);
+
+  if (needsRefresh) {
+    const keys = await fetchJwks(jwksUrl);
+    cachedJwks = { url: jwksUrl, fetchedAt: now, keys };
+  }
+
+  const key = cachedJwks!.keys.get(kid);
+  if (!key) {
+    throw new HttpError(401, 'sso_invalid', '対応する検証鍵が見つかりません(kid不一致)');
+  }
+  return key;
 }
 
 export interface AgencySsoLoginResult {
@@ -35,21 +76,29 @@ export async function verifyAndConsumeAgencySsoToken(token: string): Promise<Age
   }
   const baseUrl = rawBaseUrl.replace(/\/$/, '');
 
-  const jwks = getJwks(`${baseUrl}/api/sso/jwks.php`);
+  const kid = jwt.decode(token, { complete: true })?.header.kid;
+  if (typeof kid !== 'string') {
+    throw new HttpError(401, 'sso_invalid', 'SSOトークンの形式が不正です');
+  }
 
-  let payload;
+  let payload: jwt.JwtPayload;
   try {
-    const result = await jwtVerify(token, jwks, {
+    const key = await getSigningKey(`${baseUrl}/api/sso/jwks.php`, kid);
+    const decoded = jwt.verify(token, key, {
       issuer: baseUrl,
       audience: SSO_AUDIENCE,
       algorithms: ['RS256'],
       clockTolerance: CLOCK_TOLERANCE_SECONDS,
     });
-    payload = result.payload;
+    if (typeof decoded === 'string') {
+      throw new HttpError(401, 'sso_invalid', 'SSOトークンの形式が不正です');
+    }
+    payload = decoded;
   } catch (e) {
-    if (e instanceof joseErrors.JWTExpired) {
+    if (e instanceof jwt.TokenExpiredError) {
       throw new HttpError(401, 'sso_expired', 'SSOトークンの有効期限が切れています');
     }
+    if (e instanceof HttpError) throw e;
     throw new HttpError(401, 'sso_invalid', 'SSOトークンの検証に失敗しました');
   }
 

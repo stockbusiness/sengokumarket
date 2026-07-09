@@ -1,22 +1,28 @@
+import crypto from 'crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../lib/prisma';
 import { setSetting } from '../services/settings';
 import { verifyAndConsumeAgencySsoToken } from './agencySso';
 
-type PublicKey = Awaited<ReturnType<typeof generateKeyPair>>['publicKey'];
-
 const AUDIENCE = 'sengoku-rr';
 
-// fetchExternalAgencyHierarchy同様、jose側のRemoteJWKSetはURL単位でキャッシュし、
-// 未知のkidでもcooldown(既定30秒)の間は再取得しない。テストごとに異なる発行者URLを
-// 使うことで、前のテストの鍵ペアがキャッシュされて誤って再利用されるのを防ぐ。
+function generateRsaKeyPair() {
+  return crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+}
+
+// jwks-rsaはURL単位でJWKSをキャッシュし、未知のkidでもcooldownの間は再取得しない。
+// テストごとに異なる発行者URLを使うことで、前のテストの鍵ペアが誤って再利用されるのを防ぐ。
 async function buildSignedToken(overrides: Partial<Record<string, unknown>> = {}) {
   const issuer = `https://sso-test-${crypto.randomUUID()}.example.com`;
   await setSetting('external_agency_system_base_url', issuer);
 
   const kid = crypto.randomUUID();
-  const pair = await generateKeyPair('RS256');
+  const { publicKey, privateKey } = generateRsaKeyPair();
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     sub: 'agency-sso-test-code',
@@ -24,10 +30,11 @@ async function buildSignedToken(overrides: Partial<Record<string, unknown>> = {}
     iat: now,
     exp: now + 30,
     jti: crypto.randomUUID(),
+    iss: issuer,
     ...overrides,
   };
-  const token = await new SignJWT(payload).setProtectedHeader({ alg: 'RS256', kid }).setIssuer(issuer).sign(pair.privateKey);
-  return { token, publicKey: pair.publicKey, kid };
+  const token = jwt.sign(payload, privateKey, { algorithm: 'RS256', keyid: kid, noTimestamp: true });
+  return { token, publicKey, kid };
 }
 
 describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書v3.6.45)', () => {
@@ -67,11 +74,11 @@ describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書
     vi.unstubAllGlobals();
   });
 
-  function stubJwks(publicKey: PublicKey, kid: string) {
+  function stubJwks(publicKey: string, kid: string) {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
-        const jwk = await exportJWK(publicKey);
+        const jwk = crypto.createPublicKey(publicKey).export({ format: 'jwk' }) as Record<string, unknown>;
         return new Response(JSON.stringify({ keys: [{ ...jwk, kid, alg: 'RS256', use: 'sig' }] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },

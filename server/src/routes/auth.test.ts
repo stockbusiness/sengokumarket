@@ -1,6 +1,7 @@
+import crypto from 'crypto';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
+import jwt from 'jsonwebtoken';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { setSetting } from '../services/settings';
@@ -159,27 +160,26 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
     await setSetting('external_agency_system_base_url', issuer);
 
     const kid = crypto.randomUUID();
-    const pair = await generateKeyPair('RS256');
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    });
     const now = Math.floor(Date.now() / 1000);
-    const token = await new SignJWT({
-      sub,
-      aud: 'sengoku-rr',
-      iat: now,
-      exp: now + 30,
-      jti: crypto.randomUUID(),
-    })
-      .setProtectedHeader({ alg: 'RS256', kid })
-      .setIssuer(issuer)
-      .sign(pair.privateKey);
+    const token = jwt.sign(
+      { sub, aud: 'sengoku-rr', iat: now, exp: now + 30, jti: crypto.randomUUID(), iss: issuer },
+      privateKey,
+      { algorithm: 'RS256', keyid: kid, noTimestamp: true },
+    );
 
-    return { token, publicKey: pair.publicKey, kid };
+    return { token, publicKey, kid };
   }
 
-  function stubJwks(publicKey: Awaited<ReturnType<typeof generateKeyPair>>['publicKey'], kid: string) {
+  function stubJwks(publicKey: string, kid: string) {
     return vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
-        const jwk = await exportJWK(publicKey);
+        const jwk = crypto.createPublicKey(publicKey).export({ format: 'jwk' }) as Record<string, unknown>;
         return new Response(JSON.stringify({ keys: [{ ...jwk, kid, alg: 'RS256', use: 'sig' }] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
