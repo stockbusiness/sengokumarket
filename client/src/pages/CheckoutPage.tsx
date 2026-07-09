@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
+import { useAuth } from '../context/AuthContext';
 import { getStoredReferralCode } from '../lib/referral';
 import { ApiError, createCheckoutSession, fetchCheckoutConfig, resolveReferralCode, validateCoupon, type CouponValidationResult } from '../lib/api';
 
@@ -15,6 +16,7 @@ interface BankTransferResult {
 
 export default function CheckoutPage() {
   const { items, totalAmount } = useCart();
+  const { user } = useAuth();
   const navigate = useNavigate();
 
   const [customerName, setCustomerName] = useState('');
@@ -42,6 +44,16 @@ export default function CheckoutPage() {
     const stored = getStoredReferralCode();
     if (stored) setReferralCode(stored);
   }, []);
+
+  // ログイン中はマイページの氏名・メール・電話番号を初期値として自動入力する
+  // (郵便番号・住所はプロフィールに保存されていないため対象外)。あくまで初期値なので
+  // 引き続き編集は可能。
+  useEffect(() => {
+    if (!user) return;
+    setCustomerName((prev) => prev || user.name);
+    setCustomerEmail((prev) => prev || user.email);
+    setCustomerPhone((prev) => prev || user.phone || '');
+  }, [user]);
 
   useEffect(() => {
     fetchCheckoutConfig()
