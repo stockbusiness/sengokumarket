@@ -90,12 +90,22 @@ async function resolveOrProvisionAgency(sub: string, payload: jwt.JwtPayload): P
   }
 
   const agencyName = stringClaim(payload, 'agency_name') ?? sub;
-  return prisma.$transaction(async (tx) => {
-    const code = await generateAgencyCode(tx);
-    return tx.agency.create({
-      data: { name: agencyName, code, externalId: sub, status: 'active', defaultCommissionRate: 0 },
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const code = await generateAgencyCode(tx);
+      return tx.agency.create({
+        data: { name: agencyName, code, externalId: sub, status: 'active', defaultCommissionRate: 0 },
+      });
     });
-  });
+  } catch (e) {
+    // 同一subの初回SSOが二重タブ等で競合した場合、片方はexternalIdのユニーク制約に
+    // 引っかかる。500にせず、先に作成された方を取得して処理を続行する。
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const created = await prisma.agency.findUnique({ where: { externalId: sub } });
+      if (created) return created;
+    }
+    throw e;
+  }
 }
 
 async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPayload) {
@@ -109,24 +119,39 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
 
   const existingByEmail = await prisma.user.findUnique({ where: { email } });
   if (existingByEmail) {
-    // 既存アカウント(役割問わず)は自動昇格させず、必ず連携API(login_email)経由の
+    // このメールが今まさに作ろうとしている代理店ログインアカウントそのもの(同一subの
+    // 初回SSOが同時に処理された場合の競合)なら、衝突ではなく先に完了した方を返す。
+    if (existingByEmail.role === 'agency' && existingByEmail.agencyId === agency.id) {
+      return existingByEmail;
+    }
+    // それ以外(役割問わず別アカウント)は自動昇格させず、必ず連携API(login_email)経由の
     // 明示的な紐付けを要求する。SSOトークンのメールクレームだけを根拠に既存アカウントの
     // 権限を変更しない(未承認の権限昇格を避けるための保守的なデフォルト)。
     throw new HttpError(409, 'agency_not_linked', 'このメールアドレスは既に別のアカウントで使用されています');
   }
 
   const actorName = stringClaim(payload, 'actor_name') ?? agency.name;
-  return prisma.user.create({
-    data: {
-      name: actorName,
-      email,
-      // SSO経由のみでログインする想定のため、パスワードは平文で扱わずランダム値をハッシュ化するのみ
-      // (仕様書v1.5 16章の原則を踏襲)。本人が通常ログインも使いたい場合はパスワード再設定から行う。
-      passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
-      role: 'agency',
-      agencyId: agency.id,
-    },
-  });
+  try {
+    return await prisma.user.create({
+      data: {
+        name: actorName,
+        email,
+        // SSO経由のみでログインする想定のため、パスワードは平文で扱わずランダム値をハッシュ化するのみ
+        // (仕様書v1.5 16章の原則を踏襲)。本人が通常ログインも使いたい場合はパスワード再設定から行う。
+        passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
+        role: 'agency',
+        agencyId: agency.id,
+      },
+    });
+  } catch (e) {
+    // 同一メールでの初回SSOが二重タブ等で競合した場合、片方はemailのユニーク制約に
+    // 引っかかる。500にせず、先に作成された方を取得して処理を続行する。
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      const created = await prisma.user.findUnique({ where: { email } });
+      if (created) return created;
+    }
+    throw e;
+  }
 }
 
 export async function verifyAndConsumeAgencySsoToken(token: string): Promise<AgencySsoLoginResult> {

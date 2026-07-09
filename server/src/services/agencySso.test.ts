@@ -175,6 +175,47 @@ describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書
     expect(user?.agencyId).toBeNull();
   });
 
+  it('同一subの新規SSOトークンが同時に処理されても代理店・アカウントは1件だけ作成され、両方ログイン成功する(競合状態)', async () => {
+    const issuer = `https://sso-test-${crypto.randomUUID()}.example.com`;
+    await setSetting('external_agency_system_base_url', issuer);
+    const kid = crypto.randomUUID();
+    const { publicKey, privateKey } = generateRsaKeyPair();
+    const now = Math.floor(Date.now() / 1000);
+    const sub = 'agency-sso-test-jit-race-code';
+    const email = 'agency-sso-test-jit-race@example.com';
+
+    function makeToken() {
+      return jwt.sign(
+        {
+          sub,
+          aud: AUDIENCE,
+          iat: now,
+          exp: now + 30,
+          jti: crypto.randomUUID(),
+          iss: issuer,
+          agency_name: 'JIT競合代理店',
+          actor_email: email,
+        },
+        privateKey,
+        { algorithm: 'RS256', keyid: kid, noTimestamp: true },
+      );
+    }
+
+    stubJwks(publicKey, kid);
+    const [resultA, resultB] = await Promise.all([
+      verifyAndConsumeAgencySsoToken(makeToken()),
+      verifyAndConsumeAgencySsoToken(makeToken()),
+    ]);
+
+    expect(resultA.userId).toBe(resultB.userId);
+
+    const agencies = await prisma.agency.findMany({ where: { externalId: sub } });
+    expect(agencies).toHaveLength(1);
+
+    const users = await prisma.user.findMany({ where: { email } });
+    expect(users).toHaveLength(1);
+  });
+
   it('代理店が停止中の場合はagency_inactiveになる', async () => {
     const inactiveAgency = await prisma.agency.create({
       data: {
