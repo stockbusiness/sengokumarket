@@ -9,7 +9,9 @@ export interface InfluencerInput {
 }
 
 export function buildReferralUrl(landingPath: string, code: string): string {
-  const appUrl = process.env.APP_URL ?? '';
+  // APP_URLの末尾にスラッシュが付いていても(例: "https://example.com/")、landingPathの
+  // 先頭スラッシュと重複して「//」にならないようにする。
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/+$/, '');
   const separator = landingPath.includes('?') ? '&' : '?';
   return `${appUrl}${landingPath}${separator}ref=${code}`;
 }
