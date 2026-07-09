@@ -11,6 +11,20 @@ export async function createStripeCheckoutSession(order: Order, items: OrderItem
   const appUrl = process.env.APP_URL;
   if (!appUrl) throw new Error('APP_URL is not set');
 
+  // 仕様書外の拡張(クーポン機能): 各商品の単価はスナップショット原則により変更せず、
+  // Stripeの1回限りCouponで割引を別枠として適用する(discounts配列)。
+  let discounts: { coupon: string }[] | undefined;
+  if (order.couponDiscountAmount > 0) {
+    const stripeCoupon = await stripe.coupons.create({
+      amount_off: order.couponDiscountAmount,
+      currency: 'jpy',
+      duration: 'once',
+      max_redemptions: 1,
+      name: order.couponCode ?? 'クーポン割引',
+    });
+    discounts = [{ coupon: stripeCoupon.id }];
+  }
+
   return stripe.checkout.sessions.create({
     mode: 'payment',
     customer_email: order.customerEmail,
@@ -29,6 +43,7 @@ export async function createStripeCheckoutSession(order: Order, items: OrderItem
         },
       },
     })),
+    discounts,
     payment_intent_data: {
       metadata: { order_id: order.id },
     },
@@ -36,6 +51,7 @@ export async function createStripeCheckoutSession(order: Order, items: OrderItem
       order_id: order.id,
       user_id: order.userId ?? '',
       referral_code: order.referralCode ?? '',
+      coupon_code: order.couponCode ?? '',
     },
   });
 }

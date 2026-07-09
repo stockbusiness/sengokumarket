@@ -32,11 +32,47 @@ router.get('/referral-links/landing-options', async (_req, res) => {
   res.json({ options: products.map((p) => ({ path: `/products/${p.slug}`, label: p.name })) });
 });
 
+// 仕様書外の拡張(クーポン機能): 発行時に選択できる、この代理店が利用可能なクーポンの一覧。
+router.get('/coupons/available', async (req, res) => {
+  const agencyId = req.authUser!.agencyId!;
+  const now = new Date();
+
+  const coupons = await prisma.coupon.findMany({
+    where: {
+      deletedAt: null,
+      isActive: true,
+      OR: [{ startsAt: null }, { startsAt: { lte: now } }],
+      AND: [{ OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }],
+    },
+  });
+
+  const eligible = [];
+  for (const coupon of coupons) {
+    if (coupon.agencyScopeType === 'include') {
+      const entry = await prisma.couponAgency.findUnique({ where: { couponId_agencyId: { couponId: coupon.id, agencyId } } });
+      if (!entry) continue;
+    }
+    if (coupon.totalUsageLimit !== null && coupon.usedCount + coupon.reservedCount >= coupon.totalUsageLimit) continue;
+
+    eligible.push({
+      id: coupon.id,
+      code: coupon.code,
+      name: coupon.name,
+      discountType: coupon.discountType,
+      discountAmount: coupon.discountAmount,
+      discountPercentage: coupon.discountPercentage?.toNumber() ?? null,
+      expiresAt: coupon.expiresAt,
+    });
+  }
+
+  res.json({ coupons: eligible });
+});
+
 router.get('/referral-links', async (req, res) => {
   const agencyId = req.authUser!.agencyId!;
   const links = await prisma.referralLink.findMany({
     where: { agencyId },
-    include: { agency: true, influencer: true },
+    include: { agency: true, influencer: true, coupon: true },
     orderBy: { createdAt: 'desc' },
   });
 
@@ -46,6 +82,7 @@ router.get('/referral-links', async (req, res) => {
       code: link.code,
       url: buildReferralUrl(link.landingPath, link.code),
       influencerName: link.influencer?.name ?? null,
+      couponName: link.coupon?.name ?? null,
       resolvedCommissionRate: resolveCommissionRate(
         link.commissionRate?.toNumber() ?? null,
         link.influencer?.defaultCommissionRate?.toNumber(),
@@ -59,10 +96,17 @@ router.get('/referral-links', async (req, res) => {
 
 router.post('/referral-links', async (req, res) => {
   const agencyId = req.authUser!.agencyId!;
-  const { influencer, commission_rate: commissionRate, landing_path: landingPathRaw } = req.body ?? {};
+  const {
+    influencer,
+    commission_rate: commissionRate,
+    landing_path: landingPathRaw,
+    coupon_id: couponId,
+    coupon_auto_apply: couponAutoApplyRaw,
+  } = req.body ?? {};
 
   const influencerInput = influencer as InfluencerInput | null | undefined;
   const landingPath = isNonEmptyString(landingPathRaw) ? landingPathRaw : '/products/council-nft';
+  const couponAutoApply = couponAutoApplyRaw !== false;
 
   if (
     commissionRate !== null &&
@@ -80,11 +124,26 @@ router.post('/referral-links', async (req, res) => {
     }
   }
 
+  // 仕様書外の拡張(クーポン機能): この代理店が実際に利用可能なクーポンかをサーバー側で検証する
+  // (クライアントの一覧表示を信用しない。仕様書2.3)。
+  let validatedCouponId: string | null = null;
+  if (isNonEmptyString(couponId)) {
+    const coupon = await prisma.coupon.findUnique({ where: { id: couponId } });
+    if (!coupon || coupon.deletedAt || !coupon.isActive) {
+      return sendError(res, 404, 'COUPON_NOT_FOUND', 'クーポンが見つかりません');
+    }
+    if (coupon.agencyScopeType === 'include') {
+      const entry = await prisma.couponAgency.findUnique({ where: { couponId_agencyId: { couponId: coupon.id, agencyId } } });
+      if (!entry) return sendError(res, 403, 'COUPON_NOT_ELIGIBLE', 'この代理店はこのクーポンを利用できません');
+    }
+    validatedCouponId = coupon.id;
+  }
+
   const agency = await prisma.agency.findUnique({ where: { id: agencyId } });
   if (!agency) return sendError(res, 404, 'AGENCY_NOT_FOUND', '代理店が見つかりません');
 
   const { referralLink, influencerRecord } = await prisma.$transaction((tx) =>
-    createReferralLinkForAgency(tx, agencyId, influencerInput, commissionRate ?? null, landingPath),
+    createReferralLinkForAgency(tx, agencyId, influencerInput, commissionRate ?? null, landingPath, validatedCouponId, couponAutoApply),
   );
 
   const resolvedRate = resolveCommissionRate(
@@ -99,6 +158,7 @@ router.post('/referral-links', async (req, res) => {
       code: referralLink.code,
       url: buildReferralUrl(referralLink.landingPath, referralLink.code),
       influencerName: influencerRecord?.name ?? null,
+      couponId: referralLink.couponId,
       resolvedCommissionRate: resolvedRate,
       status: referralLink.status,
     },

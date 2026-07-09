@@ -346,6 +346,37 @@
   margin: 4px 0;
 }
 
+/* 仕様書外の拡張: クーポン機能 */
+.checkout-coupon-input {
+  display: flex;
+  gap: 8px;
+}
+
+.checkout-coupon-input input {
+  flex: 1;
+}
+
+.checkout-coupon-applied {
+  background: var(--bg);
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkout-price-summary {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.checkout-price-summary p {
+  margin: 4px 0;
+}
+
 /* ==================== マイページ ==================== */
 
 .mypage section {

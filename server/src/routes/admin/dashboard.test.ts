@@ -19,6 +19,7 @@ describe('管理API: ダッシュボード月別売上推移(仕様書外の拡�
       data: {
         orderNumber: `SG-TREND-${Math.random().toString(36).slice(2)}`,
         totalAmount,
+        originalAmount: totalAmount,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         paidAt,

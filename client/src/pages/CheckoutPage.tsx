@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '../context/CartContext';
 import { getStoredReferralCode } from '../lib/referral';
-import { ApiError, createCheckoutSession, fetchCheckoutConfig, resolveReferralCode } from '../lib/api';
+import { ApiError, createCheckoutSession, fetchCheckoutConfig, resolveReferralCode, validateCoupon, type CouponValidationResult } from '../lib/api';
 
 type PaymentMethod = 'stripe' | 'bank_transfer';
 
@@ -24,6 +24,12 @@ export default function CheckoutPage() {
   const [customerAddress, setCustomerAddress] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [referrerName, setReferrerName] = useState<string | null>(null);
+  const [autoApplyCouponCode, setAutoApplyCouponCode] = useState<string | null>(null);
+  const [manualCouponCode, setManualCouponCode] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponValidationResult | null>(null);
+  const [couponSource, setCouponSource] = useState<'auto' | 'manual' | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponChecking, setCouponChecking] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('stripe');
   const [bankTransferAvailable, setBankTransferAvailable] = useState(false);
@@ -46,20 +52,83 @@ export default function CheckoutPage() {
   useEffect(() => {
     if (!referralCode) {
       setReferrerName(null);
+      setAutoApplyCouponCode(null);
       return;
     }
     let cancelled = false;
     resolveReferralCode(referralCode)
       .then((data) => {
-        if (!cancelled) setReferrerName(data.found ? data.referrerName ?? null : null);
+        if (cancelled) return;
+        setReferrerName(data.found ? data.referrerName ?? null : null);
+        setAutoApplyCouponCode(data.found ? data.autoApplyCouponCode ?? null : null);
       })
       .catch(() => {
-        if (!cancelled) setReferrerName(null);
+        if (!cancelled) {
+          setReferrerName(null);
+          setAutoApplyCouponCode(null);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [referralCode]);
+
+  // 仕様書外の拡張(クーポン機能): 紹介URLに自動適用クーポンが設定されている場合、
+  // 購入画面を開いた時点でプレビューを表示する(仕様書8.1)。
+  useEffect(() => {
+    if (!autoApplyCouponCode || items.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    validateCoupon(
+      autoApplyCouponCode,
+      referralCode || null,
+      items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+    )
+      .then((data) => {
+        if (!cancelled && data.valid) {
+          setAppliedCoupon(data);
+          setCouponSource('auto');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoApplyCouponCode]);
+
+  async function handleApplyCoupon() {
+    if (!manualCouponCode.trim()) return;
+    setCouponChecking(true);
+    setCouponError(null);
+    try {
+      const data = await validateCoupon(
+        manualCouponCode.trim(),
+        referralCode || null,
+        items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
+      );
+      if (data.valid) {
+        setAppliedCoupon(data);
+        setCouponSource('manual');
+      } else {
+        setCouponError(data.message ?? 'クーポンを適用できませんでした');
+      }
+    } catch (e) {
+      setCouponError(e instanceof Error ? e.message : 'クーポンを適用できませんでした');
+    } finally {
+      setCouponChecking(false);
+    }
+  }
+
+  // 手入力で適用したクーポンのみ削除できる。購入URLに固定された自動適用クーポンは
+  // 購入者側では解除できない(仕様書8.5)。
+  function handleRemoveCoupon() {
+    setAppliedCoupon(null);
+    setCouponSource(null);
+    setManualCouponCode('');
+    setCouponError(null);
+  }
 
   if (items.length === 0 && !result && !bankTransferResult) {
     return <p>カートが空です。</p>;
@@ -81,6 +150,9 @@ export default function CheckoutPage() {
         customerPostalCode,
         customerAddress,
         referralCode: referralCode || null,
+        // 自動適用クーポンはサーバー側の紹介リンク解決に任せる(失敗時は購入を止めず通常価格で継続)。
+        // ここで送るのは購入者が自分でコードを入力・適用した場合のみ(失敗時は購入を中断させる)。
+        couponCode: couponSource === 'manual' ? (appliedCoupon?.coupon?.code ?? null) : null,
         agreedToTerms,
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
         paymentMethod,
@@ -181,6 +253,34 @@ export default function CheckoutPage() {
       </label>
       {referrerName && <p>紹介元: {referrerName}</p>}
 
+      {appliedCoupon?.valid && (
+        <div className="checkout-coupon-applied">
+          <p>
+            クーポンが適用されました。
+            <br />
+            {appliedCoupon.coupon?.name}
+          </p>
+          {couponSource === 'manual' && (
+            <button type="button" className="btn-small" onClick={handleRemoveCoupon}>
+              クーポンを削除する
+            </button>
+          )}
+        </div>
+      )}
+
+      {!appliedCoupon?.valid && !autoApplyCouponCode && (
+        <label>
+          クーポンコード(任意)
+          <div className="checkout-coupon-input">
+            <input type="text" value={manualCouponCode} onChange={(e) => setManualCouponCode(e.target.value)} />
+            <button type="button" className="btn-secondary" onClick={handleApplyCoupon} disabled={couponChecking || !manualCouponCode.trim()}>
+              {couponChecking ? '確認中...' : '適用する'}
+            </button>
+          </div>
+        </label>
+      )}
+      {couponError && <p className="checkout-error">{couponError}</p>}
+
       <fieldset className="checkout-payment-method">
         <legend>お支払い方法</legend>
         <label>
@@ -217,7 +317,17 @@ export default function CheckoutPage() {
 
       {error && <p className="checkout-error">{error}</p>}
 
-      <p>合計金額: {totalAmount.toLocaleString()}円(税込)</p>
+      {appliedCoupon?.valid && appliedCoupon.pricing ? (
+        <div className="checkout-price-summary">
+          <p>商品価格: {appliedCoupon.pricing.originalAmount.toLocaleString()}円(税込)</p>
+          <p>
+            {appliedCoupon.coupon?.name}: -{appliedCoupon.pricing.discountAmount.toLocaleString()}円
+          </p>
+          <p>お支払い金額: {appliedCoupon.pricing.finalAmount.toLocaleString()}円(税込)</p>
+        </div>
+      ) : (
+        <p>合計金額: {totalAmount.toLocaleString()}円(税込)</p>
+      )}
 
       <button type="submit" className="btn-primary" disabled={submitting}>
         {submitting ? '送信中...' : '購入を確定する'}

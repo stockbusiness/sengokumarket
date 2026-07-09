@@ -2,6 +2,7 @@ import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { getSetting, setSetting } from './settings';
 import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
+import { cancelCouponUsage } from './coupon';
 
 // 仕様書外の拡張: 銀行振込(手動確認型)決済。
 // Stripeとは異なり決済の即時確認手段がないため、注文は「振込待ち」のpending状態で作成し、
@@ -85,6 +86,8 @@ export async function expireOverdueBankTransferOrders(): Promise<{ expiredCount:
           data: { reservedStock: { decrement: item.quantity } },
         });
       }
+
+      await cancelCouponUsage(tx, id, 'expired');
     });
     expiredCount += 1;
   }

@@ -1,6 +1,7 @@
 import type { Order, OrderItem, Prisma } from '@prisma/client';
 import { createPasswordResetToken } from './passwordReset';
 import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
+import { confirmCouponUsage } from './coupon';
 
 type Tx = Prisma.TransactionClient;
 
@@ -69,6 +70,9 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
 
   await createNftIssuesForOrder(tx, order.id, order.userId);
   await createCommissionForOrder(tx, order);
+  // 仕様書外の拡張(クーポン機能): reserved→usedへの確定。Stripe・銀行振込どちらの
+  // 決済手段でもこの関数を通るため、ここに1箇所追加するだけで両方に対応できる。
+  await confirmCouponUsage(tx, order.id);
 
   return { order, items: orderItems };
 }

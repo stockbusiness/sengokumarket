@@ -8,11 +8,21 @@ import { BANK_TRANSFER_EXPIRY_DAYS, getBankTransferConfig, isBankTransferAvailab
 import { sendBankTransferInstructionsEmail } from '../services/mailTemplates';
 import { prisma } from '../lib/prisma';
 import { requireReferralOrAuth } from '../middleware/referralAccess';
+import { AUTH_COOKIE_NAME } from '../lib/authCookie';
+import { verifyAuthToken } from '../services/jwt';
+import { resolveReferral } from '../services/referral';
+import { validateCoupon } from '../services/coupon';
 
 const router = Router();
 
 // 在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ(仕様書外の拡張)。
 const createSessionLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
+// クーポンコード総当たり対策(仕様書16.2)。
+const couponValidateLimiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
+}
 
 // チェックアウト画面が決済手段の選択肢を出し分けるための公開設定(仕様書外の拡張)。
 router.get('/checkout/config', async (_req, res) => {
@@ -78,6 +88,74 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
     }
     console.error(e);
     sendError(res, 500, 'STRIPE_SESSION_FAILED', 'Stripe決済セッションの作成に失敗しました');
+  }
+});
+
+// 仕様書外の拡張(クーポン機能): 購入前のプレビュー用。実際の予約は行わず、検証と割引額計算のみ行う。
+// 最終的な正としての検証はcreate-session側(reserveCouponUsage)で改めて行う。
+router.post('/checkout/coupons/validate', requireReferralOrAuth, couponValidateLimiter, async (req, res) => {
+  const { couponCode, referralCode, items: rawItems } = req.body ?? {};
+
+  if (!isNonEmptyString(couponCode)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'クーポンコードを入力してください');
+  }
+  if (!Array.isArray(rawItems) || rawItems.length === 0) {
+    return res.json({ valid: false, message: 'カートが空です' });
+  }
+
+  const items = rawItems as unknown[];
+  for (const raw of items) {
+    const item = raw as Record<string, unknown>;
+    if (!isNonEmptyString(item?.variantId) || !Number.isInteger(item.quantity) || (item.quantity as number) < 1) {
+      return res.json({ valid: false, message: 'カートの内容が不正です' });
+    }
+  }
+
+  const token = req.cookies?.[AUTH_COOKIE_NAME];
+  const authPayload = typeof token === 'string' ? verifyAuthToken(token) : null;
+  const userId = authPayload?.sub ?? null;
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const variantIds = items.map((raw) => (raw as Record<string, unknown>).variantId as string);
+      const variants = await tx.productVariant.findMany({ where: { id: { in: variantIds } } });
+      const variantById = new Map(variants.map((v) => [v.id, v]));
+
+      const eligibilityItems = items.map((raw) => {
+        const item = raw as Record<string, unknown>;
+        const variant = variantById.get(item.variantId as string);
+        if (!variant) throw new HttpError(404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
+        return { productId: variant.productId, subtotal: variant.price * (item.quantity as number) };
+      });
+
+      const referral = await resolveReferral(tx, isNonEmptyString(referralCode) ? referralCode : null);
+
+      return validateCoupon(tx, {
+        code: couponCode.trim().toUpperCase(),
+        userId,
+        agencyId: referral.agencyId,
+        items: eligibilityItems,
+      });
+    });
+
+    res.json({
+      valid: true,
+      coupon: {
+        name: result.coupon.name,
+        code: result.coupon.code,
+        discountType: result.coupon.discountType,
+      },
+      pricing: {
+        originalAmount: result.originalAmount,
+        discountAmount: result.discountAmount,
+        finalAmount: result.finalAmount,
+      },
+    });
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return res.json({ valid: false, message: e.message });
+    }
+    throw e;
   }
 });
 

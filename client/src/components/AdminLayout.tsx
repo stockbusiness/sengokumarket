@@ -19,6 +19,7 @@ import {
   IconBadge,
   IconUser,
   IconWallet,
+  IconYen,
 } from './icons';
 import type { ComponentType, SVGProps } from 'react';
 
@@ -49,6 +50,7 @@ const NAV_GROUPS: {
     heading: '紹介・代理店',
     items: [
       { to: '/admin/referral-links', label: '紹介リンク発行', icon: IconLink },
+      { to: '/admin/coupons', label: 'クーポン管理', icon: IconYen },
       { to: '/admin/referrals', label: '代理店・紹介成果', icon: IconChart, badgeKey: 'alerts' },
       { to: '/admin/agencies', label: '代理店一覧', icon: IconBuilding },
     ],

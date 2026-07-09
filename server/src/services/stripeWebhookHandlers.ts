@@ -3,6 +3,7 @@ import { prisma } from '../lib/prisma';
 import { findOrderForEvent } from './orderLookup';
 import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
 import { sendCartAbandonedEmail } from './mailTemplates';
+import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -79,6 +80,8 @@ export async function handleCheckoutSessionExpired(event: Stripe.Event) {
       });
     }
 
+    await cancelCouponUsage(tx, order.id, 'expired');
+
     return { order: updatedOrder, items: orderItems };
   });
 
@@ -147,6 +150,10 @@ export async function handleChargeRefunded(event: Stripe.Event) {
       where: { orderId: order.id, status: { in: ['wallet_required', 'ready_to_issue'] } },
       data: { status: 'cancelled' },
     });
+
+    // 仕様書外の拡張(クーポン機能): 全額返金時、クーポン設定のrestoreOnCancelに従って
+    // 再利用可能へ戻す(一部返金では呼ばない。仕様書12章)。
+    await restoreCouponUsageOnFullRefund(tx, order.id);
 
     const commission = await tx.commission.findUnique({ where: { orderId: order.id } });
     if (commission) {

@@ -82,6 +82,7 @@ describe('マイページAPI', () => {
         orderNumber: `SG-TEST-${Math.random().toString(36).slice(2)}`,
         userId: ownerId,
         totalAmount: 15000,
+        originalAmount: 15000,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         customerName: 'テスト',

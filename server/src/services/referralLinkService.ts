@@ -26,12 +26,16 @@ export function resolveCommissionRate(
 
 // 指定した代理店に紐づくインフルエンサー(新規 or 既存選択)と紹介リンクを作成する。
 // admin用・代理店ポータル用の両方から共通で利用する。
+// 仕様書外の拡張(クーポン機能): 紹介リンクの編集・削除機能は作らない方針(CLAUDE.md)のため、
+// クーポンの紐づけは発行時のみ指定できる。
 export async function createReferralLinkForAgency(
   tx: Tx,
   agencyId: string,
   influencerInput: InfluencerInput | null | undefined,
   commissionRate: number | null,
   landingPath: string,
+  couponId: string | null = null,
+  couponAutoApply = true,
 ) {
   let influencerId: string | null = null;
   let influencerRecord = null;
@@ -49,7 +53,7 @@ export async function createReferralLinkForAgency(
 
   const linkCode = await generateReferralLinkCode(tx);
   const referralLink = await tx.referralLink.create({
-    data: { code: linkCode, agencyId, influencerId, commissionRate, landingPath },
+    data: { code: linkCode, agencyId, influencerId, commissionRate, landingPath, couponId, couponAutoApply },
   });
 
   return { referralLink, influencerRecord };

@@ -38,6 +38,7 @@ const AdminNftIssuesPage = lazyWithReload(() => import('./pages/admin/AdminNftIs
 const AdminWalletMissingPage = lazyWithReload(() => import('./pages/admin/AdminWalletMissingPage'));
 const AdminNoticesPage = lazyWithReload(() => import('./pages/admin/AdminNoticesPage'));
 const AdminReferralLinksPage = lazyWithReload(() => import('./pages/admin/AdminReferralLinksPage'));
+const AdminCouponsPage = lazyWithReload(() => import('./pages/admin/AdminCouponsPage'));
 const AdminReferralsPage = lazyWithReload(() => import('./pages/admin/AdminReferralsPage'));
 const AdminAgenciesPage = lazyWithReload(() => import('./pages/admin/AdminAgenciesPage'));
 const AdminSettingsPage = lazyWithReload(() => import('./pages/admin/AdminSettingsPage'));
@@ -212,6 +213,7 @@ function App() {
           <Route path="wallet-missing" element={<AdminWalletMissingPage />} />
           <Route path="notices" element={<AdminNoticesPage />} />
           <Route path="referral-links" element={<AdminReferralLinksPage />} />
+          <Route path="coupons" element={<AdminCouponsPage />} />
           <Route path="referrals" element={<AdminReferralsPage />} />
           <Route path="agencies" element={<AdminAgenciesPage />} />
           <Route path="settings" element={<AdminSettingsPage />} />

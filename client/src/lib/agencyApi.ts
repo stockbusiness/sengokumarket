@@ -27,6 +27,7 @@ export interface AgencyReferralLink {
   code: string;
   url: string;
   influencerName: string | null;
+  couponName: string | null;
   resolvedCommissionRate: number;
   status: string;
   createdAt: string;
@@ -44,10 +45,26 @@ export function fetchAgencyLandingOptions() {
   return agencyFetch<{ options: { path: string; label: string }[] }>('/referral-links/landing-options');
 }
 
+// 仕様書外の拡張(クーポン機能): この代理店が発行時に選択できるクーポン一覧。
+export interface AgencyAvailableCoupon {
+  id: string;
+  code: string;
+  name: string;
+  discountType: 'fixed' | 'percentage';
+  discountAmount: number | null;
+  discountPercentage: number | null;
+  expiresAt: string | null;
+}
+
+export function fetchAgencyAvailableCoupons() {
+  return agencyFetch<{ coupons: AgencyAvailableCoupon[] }>('/coupons/available');
+}
+
 export interface CreateAgencyReferralLinkPayload {
   influencer: { id: string } | { new_name: string } | null;
   commission_rate: number | null;
   landing_path: string;
+  coupon_id?: string | null;
 }
 
 export function createAgencyReferralLink(payload: CreateAgencyReferralLinkPayload) {

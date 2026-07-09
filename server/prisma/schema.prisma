@@ -89,6 +89,7 @@ model User {
   passwordResetTokens PasswordResetToken[]
   noticeReads         NoticeRead[]
   agency              Agency?               @relation(fields: [agencyId], references: [id])
+  couponEntries       CouponCustomer[]
 
   @@map("users")
 }
@@ -120,9 +121,10 @@ model Product {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  variants   ProductVariant[]
-  orderItems OrderItem[]
-  nftIssues  NftIssue[]
+  variants      ProductVariant[]
+  orderItems    OrderItem[]
+  nftIssues     NftIssue[]
+  couponEntries CouponProduct[]
 
   @@map("products")
 }
@@ -181,13 +183,21 @@ model Order {
   // 仕様書外の拡張: この注文でゲスト用アカウントを新規作成したかどうか。
   // 決済完了時にパスワード設定メールを送るべきか判定するために使う(仕様書v1.5 4.9)。
   guestAccountCreated   Boolean   @default(false) @map("guest_account_created")
+  // 仕様書外の拡張(クーポン機能): totalAmountは既存通り「実際に決済する金額」のまま維持し、
+  // originalAmountに割引前金額、couponDiscountAmountに割引額をスナップショットする。
+  // クーポン未使用時もoriginalAmount=totalAmount・couponDiscountAmount=0として保存する。
+  couponId              String?   @map("coupon_id") @db.Uuid
+  couponCode            String?   @map("coupon_code")
+  couponDiscountAmount  Int       @default(0) @map("coupon_discount_amount")
+  originalAmount        Int       @map("original_amount")
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  user       User?       @relation(fields: [userId], references: [id])
-  orderItems OrderItem[]
-  nftIssues  NftIssue[]
-  commission Commission?
+  user        User?        @relation(fields: [userId], references: [id])
+  orderItems  OrderItem[]
+  nftIssues   NftIssue[]
+  commission  Commission?
+  couponUsage CouponUsage?
 
   @@index([paymentStatus])
   @@index([paidAt])
@@ -326,6 +336,7 @@ model Agency {
   influencers   Influencer[]
   referralLinks ReferralLink[]
   commissions   Commission[]
+  couponEntries CouponAgency[]
 
   @@map("agencies")
 }
@@ -371,11 +382,16 @@ model ReferralLink {
   commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 2)
   landingPath    String   @default("/") @map("landing_path")
   status         String   @default("active") // active | inactive
+  // 仕様書外の拡張(クーポン機能): 紹介リンクの編集・削除機能は作らない方針(CLAUDE.md)のため、
+  // クーポンの設定は発行時のみ可能とする(後から付け替える専用APIは用意しない)。
+  couponId       String?  @map("coupon_id") @db.Uuid
+  couponAutoApply Boolean @default(true) @map("coupon_auto_apply")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   agency     Agency?     @relation(fields: [agencyId], references: [id])
   influencer Influencer? @relation(fields: [influencerId], references: [id])
+  coupon     Coupon?     @relation(fields: [couponId], references: [id])
 
   // agency_id / influencer_id 両方NULLは不可(アプリ側バリデーションで担保。仕様書6.13参照)
   @@map("referral_links")
@@ -403,4 +419,123 @@ model Commission {
 
   @@index([status])
   @@map("commissions")
+}
+
+// 仕様書外の拡張: クーポン機能(sengoku_nft_cart_coupon_implementation_spec)。
+// 既存の紹介・報酬・注文フローとは独立した追加機能として実装する。
+model Coupon {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        String   @unique
+  name        String
+  description String?
+
+  discountType       String   @map("discount_type") // fixed | percentage
+  // 金額はINTEGER(円)。discountTypeがfixedの時のみ使用(CLAUDE.md: 浮動小数点で金額計算しない)。
+  discountAmount     Int?     @map("discount_amount")
+  // 割合はDecimal(既存のcommissionRate等と同じ扱い)。discountTypeがpercentageの時のみ使用。
+  discountPercentage Decimal? @map("discount_percentage") @db.Decimal(5, 2)
+  maximumDiscountAmount Int?  @map("maximum_discount_amount")
+  minimumOrderAmount    Int?  @map("minimum_order_amount")
+
+  startsAt  DateTime? @map("starts_at")
+  expiresAt DateTime? @map("expires_at")
+
+  totalUsageLimit       Int? @map("total_usage_limit")
+  perCustomerUsageLimit Int  @default(1) @map("per_customer_usage_limit")
+  usedCount             Int  @default(0) @map("used_count")
+  // 在庫のreservedStockと同じ考え方: 決済完了前の予約分を別カウントし、
+  // 総利用回数の上限を同時実行下でも超過させない。
+  reservedCount         Int  @default(0) @map("reserved_count")
+
+  // all | include | exclude (coupon_productsで対象/除外商品を指定)
+  productScopeType String @default("all") @map("product_scope_type")
+  // all | include (coupon_agenciesで対象代理店を指定)
+  agencyScopeType  String @default("all") @map("agency_scope_type")
+  // all | include | new_customer (coupon_customersで対象顧客を指定)。
+  // event_participant / gacha_result は将来のガチャシステム連携用に予約した値(今回は未実装)。
+  customerScopeType String @default("all") @map("customer_scope_type")
+
+  stackable       Boolean @default(false)
+  isActive        Boolean @default(true) @map("is_active")
+  restoreOnCancel Boolean @default(true) @map("restore_on_cancel")
+
+  createdByAdminId String?   @map("created_by_admin_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  products      CouponProduct[]
+  agencies      CouponAgency[]
+  customers     CouponCustomer[]
+  usages        CouponUsage[]
+  referralLinks ReferralLink[]
+
+  @@map("coupons")
+}
+
+model CouponProduct {
+  id           String   @id @default(uuid()) @db.Uuid
+  couponId     String   @map("coupon_id") @db.Uuid
+  productId    String   @map("product_id") @db.Uuid
+  relationType String   @default("include") @map("relation_type") // include | exclude
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  coupon  Coupon  @relation(fields: [couponId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([couponId, productId])
+  @@map("coupon_products")
+}
+
+model CouponAgency {
+  id        String   @id @default(uuid()) @db.Uuid
+  couponId  String   @map("coupon_id") @db.Uuid
+  agencyId  String   @map("agency_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+  agency Agency @relation(fields: [agencyId], references: [id])
+
+  @@unique([couponId, agencyId])
+  @@map("coupon_agencies")
+}
+
+model CouponCustomer {
+  id        String   @id @default(uuid()) @db.Uuid
+  couponId  String   @map("coupon_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([couponId, userId])
+  @@map("coupon_customers")
+}
+
+model CouponUsage {
+  id       String  @id @default(uuid()) @db.Uuid
+  couponId String  @map("coupon_id") @db.Uuid
+  userId   String? @map("user_id") @db.Uuid
+  agencyId String? @map("agency_id") @db.Uuid
+  orderId  String? @unique @map("order_id") @db.Uuid
+
+  originalAmount Int @map("original_amount")
+  discountAmount Int @map("discount_amount")
+  finalAmount    Int @map("final_amount")
+
+  status      String    @default("reserved") // reserved | used | cancelled | expired
+  reservedAt  DateTime? @map("reserved_at")
+  usedAt      DateTime? @map("used_at")
+  cancelledAt DateTime? @map("cancelled_at")
+  expiresAt   DateTime? @map("expires_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  coupon Coupon @relation(fields: [couponId], references: [id])
+  order  Order? @relation(fields: [orderId], references: [id])
+
+  @@index([status])
+  @@map("coupon_usages")
 }

@@ -20,6 +20,7 @@ describe('管理API: 代理店・紹介成果管理', () => {
       data: {
         orderNumber: `SG-REFADMIN-${Date.now()}`,
         totalAmount: 20000,
+        originalAmount: 20000,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         paidAt: new Date('2026-06-15T00:00:00Z'),

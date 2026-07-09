@@ -22,6 +22,7 @@ describe('管理API: 注文管理', () => {
       data: {
         orderNumber: `SG-ADMINTEST-${Date.now()}`,
         totalAmount: 10000,
+        originalAmount: 10000,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         customerName: 'テスト',
@@ -72,6 +73,7 @@ describe('管理API: 注文管理', () => {
         data: {
           orderNumber: `SG-BANKTRANSFERTEST-${Date.now()}`,
           totalAmount: 10000,
+          originalAmount: 10000,
           paymentStatus: 'pending',
           orderStatus: 'pending',
           paymentMethod: 'bank_transfer',
@@ -120,6 +122,7 @@ describe('管理API: 注文管理', () => {
         data: {
           orderNumber: `SG-BANKTRANSFERTEST-PAID-${Date.now()}`,
           totalAmount: 10000,
+          originalAmount: 10000,
           paymentStatus: 'paid',
           orderStatus: 'paid',
           paymentMethod: 'bank_transfer',
@@ -144,6 +147,7 @@ describe('管理API: 注文管理', () => {
         data: {
           orderNumber: `SG-BANKTRANSFERTEST-STRIPE-${Date.now()}`,
           totalAmount: 10000,
+          originalAmount: 10000,
           paymentStatus: 'pending',
           orderStatus: 'pending',
           paymentMethod: 'stripe',

@@ -30,6 +30,7 @@ describe('管理API: NFT発行管理', () => {
       data: {
         orderNumber: `SG-NFTADMIN-${Date.now()}`,
         totalAmount: 10000,
+        originalAmount: 10000,
         paymentStatus: 'paid',
         orderStatus: 'paid',
         customerName: 'テスト',

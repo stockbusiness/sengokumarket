@@ -6,6 +6,7 @@ import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
 import { resolveReferral, resolveReferralByAttribution } from './referral';
 import { isValidEmail } from '../lib/validation';
+import { cancelCouponUsage, reserveCouponUsage } from './coupon';
 
 export interface CheckoutItemInput {
   variantId: string;
@@ -19,6 +20,9 @@ export interface CreatePendingOrderInput {
   customerPostalCode: string;
   customerAddress: string;
   referralCode?: string | null;
+  // 仕様書外の拡張(クーポン機能): 購入者が手入力したクーポンコード。指定が無い場合、
+  // 紹介リンクにcoupon_auto_apply=trueで設定されたクーポンがあればそちらを自動適用する。
+  couponCode?: string | null;
   agreedToTerms: boolean;
   items: CheckoutItemInput[];
   paymentMethod?: 'stripe' | 'bank_transfer';
@@ -65,6 +69,7 @@ export function validateCreatePendingOrderInput(body: unknown): CreatePendingOrd
     customerPostalCode: (b.customerPostalCode as string).trim(),
     customerAddress: (b.customerAddress as string).trim(),
     referralCode: isNonEmptyString(b.referralCode) ? (b.referralCode as string).trim() : null,
+    couponCode: isNonEmptyString(b.couponCode) ? (b.couponCode as string).trim().toUpperCase() : null,
     agreedToTerms: true,
     items,
     paymentMethod,
@@ -172,16 +177,17 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
     const orderNumber = await generateOrderNumber(tx);
     const now = new Date();
 
-    const totalAmount = input.items.reduce((sum, item) => {
+    const originalAmount = input.items.reduce((sum, item) => {
       const row = rowByVariantId.get(item.variantId)!;
       return sum + row.price * item.quantity;
     }, 0);
 
-    const order = await tx.order.create({
+    let order = await tx.order.create({
       data: {
         orderNumber,
         userId: user.id,
-        totalAmount,
+        totalAmount: originalAmount,
+        originalAmount,
         paymentStatus: 'pending',
         orderStatus: 'pending',
         paymentMethod: input.paymentMethod ?? 'stripe',
@@ -222,6 +228,38 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
 
     const items = await tx.orderItem.findMany({ where: { orderId: order.id } });
 
+    // 仕様書外の拡張(クーポン機能): 手入力クーポンが指定されていればそれを優先し、
+    // なければ紹介リンクに設定された自動適用クーポンを使う。
+    const isManualCoupon = Boolean(input.couponCode);
+    const effectiveCouponCode = input.couponCode ?? (referral.couponAutoApply ? referral.couponCode : null);
+
+    if (effectiveCouponCode) {
+      const reserve = () =>
+        reserveCouponUsage(tx, {
+          code: effectiveCouponCode,
+          userId: user!.id,
+          agencyId: referral.agencyId,
+          items: items.map((i) => ({ productId: i.productId, subtotal: i.subtotal })),
+          orderId: order.id,
+        });
+
+      // 手入力クーポンの検証失敗は購入者に見えるエラーとして中断する。自動適用クーポンの
+      // 検証失敗(運用上の設定不備等)は購入自体を止めず、通常価格で購入を継続させる。
+      const pricing = isManualCoupon ? await reserve() : await reserve().catch(() => null);
+
+      if (pricing) {
+        order = await tx.order.update({
+          where: { id: order.id },
+          data: {
+            totalAmount: pricing.finalAmount,
+            couponDiscountAmount: pricing.discountAmount,
+            couponId: pricing.coupon.id,
+            couponCode: pricing.coupon.code,
+          },
+        });
+      }
+    }
+
     return { order, items };
   });
 }
@@ -242,6 +280,7 @@ export async function cancelOrderReservation(orderId: string): Promise<void> {
       });
     }
 
+    await cancelCouponUsage(tx, orderId);
     await tx.order.update({ where: { id: orderId }, data: { paymentStatus: 'failed' } });
   });
 }

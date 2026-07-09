@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   createAgencyReferralLink,
+  fetchAgencyAvailableCoupons,
   fetchAgencyInfluencers,
   fetchAgencyLandingOptions,
   fetchAgencyReferralLinks,
+  type AgencyAvailableCoupon,
   type AgencyReferralLink,
 } from '../../lib/agencyApi';
 import StatusBadge from '../../components/StatusBadge';
@@ -11,6 +13,11 @@ import QrCodeImage from '../../components/QrCodeImage';
 
 const NEW_INFLUENCER = '__new__';
 const NONE_INFLUENCER = '__none__';
+const NONE_COUPON = '__none__';
+
+function formatCouponDiscount(coupon: AgencyAvailableCoupon): string {
+  return coupon.discountType === 'fixed' ? `${coupon.discountAmount?.toLocaleString()}円OFF` : `${coupon.discountPercentage}%OFF`;
+}
 
 function lineShareUrl(url: string): string {
   return `https://social-plugins.line.me/lineit/share?url=${encodeURIComponent(url)}`;
@@ -19,6 +26,7 @@ function lineShareUrl(url: string): string {
 export default function AgencyReferralLinksPage() {
   const [influencers, setInfluencers] = useState<{ id: string; name: string }[]>([]);
   const [landingOptions, setLandingOptions] = useState<{ path: string; label: string }[]>([]);
+  const [coupons, setCoupons] = useState<AgencyAvailableCoupon[]>([]);
   const [links, setLinks] = useState<AgencyReferralLink[] | null>(null);
   const [autoCreating, setAutoCreating] = useState(false);
 
@@ -27,6 +35,7 @@ export default function AgencyReferralLinksPage() {
   const [newInfluencerName, setNewInfluencerName] = useState('');
   const [commissionRate, setCommissionRate] = useState('');
   const [landingPath, setLandingPath] = useState('/products/council-nft');
+  const [couponSelection, setCouponSelection] = useState(NONE_COUPON);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<AgencyReferralLink | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
@@ -42,6 +51,7 @@ export default function AgencyReferralLinksPage() {
   useEffect(() => {
     fetchAgencyInfluencers().then((d) => setInfluencers(d.influencers));
     fetchAgencyLandingOptions().then((d) => setLandingOptions(d.options));
+    fetchAgencyAvailableCoupons().then((d) => setCoupons(d.coupons));
 
     // 初めて代理店ポータルを開いた場合、複雑な設定なしで使える紹介URLを自動で1つ発行しておく。
     // StrictModeの二重実行でも1回しか発行されないようrefでガードする。
@@ -72,6 +82,7 @@ export default function AgencyReferralLinksPage() {
               : { id: influencerSelection },
         commission_rate: commissionRate ? Number(commissionRate) : null,
         landing_path: landingPath,
+        coupon_id: couponSelection === NONE_COUPON ? null : couponSelection,
       });
       setCreated(result.referralLink);
       loadLinks();
@@ -155,6 +166,20 @@ export default function AgencyReferralLinksPage() {
             </select>
           </label>
 
+          {coupons.length > 0 && (
+            <label>
+              適用クーポン(任意)
+              <select value={couponSelection} onChange={(e) => setCouponSelection(e.target.value)}>
+                <option value={NONE_COUPON}>なし</option>
+                {coupons.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} {formatCouponDiscount(c)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+
           {error && <p className="checkout-error">{error}</p>}
 
           <button type="submit" className="btn-primary">
@@ -187,6 +212,7 @@ export default function AgencyReferralLinksPage() {
                   </button>
                   <div>
                     インフルエンサー: {link.influencerName ?? '-'} / 報酬率: {link.resolvedCommissionRate}%
+                    {link.couponName && ` / クーポン: ${link.couponName}`}
                   </div>
                 </li>
               ))}

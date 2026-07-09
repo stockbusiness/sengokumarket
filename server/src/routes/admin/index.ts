@@ -16,6 +16,7 @@ import settingsRouter from './settings';
 import bankTransferSettingsRouter from './bankTransferSettings';
 import importProductsRouter from './importProducts';
 import legalRouter from './legal';
+import couponsRouter from './coupons';
 
 const router = Router();
 
@@ -41,5 +42,6 @@ router.use(settingsRouter);
 router.use(bankTransferSettingsRouter);
 router.use(importProductsRouter);
 router.use(legalRouter);
+router.use(couponsRouter);
 
 export default router;

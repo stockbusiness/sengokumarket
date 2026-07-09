@@ -74,7 +74,9 @@ export function fetchProduct(idOrSlug: string) {
 }
 
 export function resolveReferralCode(code: string) {
-  return apiFetch<{ found: boolean; referrerName?: string | null }>(`/referrals/resolve?code=${encodeURIComponent(code)}`);
+  return apiFetch<{ found: boolean; referrerName?: string | null; autoApplyCouponCode?: string | null }>(
+    `/referrals/resolve?code=${encodeURIComponent(code)}`,
+  );
 }
 
 export interface CreateCheckoutSessionPayload {
@@ -84,6 +86,7 @@ export interface CreateCheckoutSessionPayload {
   customerPostalCode: string;
   customerAddress: string;
   referralCode: string | null;
+  couponCode?: string | null;
   agreedToTerms: boolean;
   items: { variantId: string; quantity: number }[];
   paymentMethod: 'stripe' | 'bank_transfer';
@@ -99,6 +102,22 @@ export function createCheckoutSession(payload: CreateCheckoutSessionPayload) {
     bankTransferInfo?: string;
     bankTransferExpiryDays?: number;
   }>('/checkout/create-session', payload);
+}
+
+// 仕様書外の拡張(クーポン機能): 購入前のプレビュー。実際の予約はcreate-session側で行う。
+export interface CouponValidationResult {
+  valid: boolean;
+  message?: string;
+  coupon?: { name: string; code: string; discountType: 'fixed' | 'percentage' };
+  pricing?: { originalAmount: number; discountAmount: number; finalAmount: number };
+}
+
+export function validateCoupon(
+  couponCode: string,
+  referralCode: string | null,
+  items: { variantId: string; quantity: number }[],
+) {
+  return apiPost<CouponValidationResult>('/checkout/coupons/validate', { couponCode, referralCode, items });
 }
 
 export function fetchCheckoutConfig() {

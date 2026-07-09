@@ -10,6 +10,9 @@ export interface ResolvedReferral {
   influencerId: string | null;
   referralLinkId: string | null;
   commissionRate: number;
+  // 仕様書外の拡張(クーポン機能): 紹介リンクに設定されたクーポン(発行時のみ設定可能。7章参照)。
+  couponCode: string | null;
+  couponAutoApply: boolean;
 }
 
 // 報酬率解決の優先順位(仕様書v1.5 6.13): referral_links.commission_rate → influencers.default → agencies.default → 0
@@ -22,13 +25,15 @@ export async function resolveReferral(tx: Tx, code: string | null | undefined): 
     influencerId: null,
     referralLinkId: null,
     commissionRate: 0,
+    couponCode: null,
+    couponAutoApply: false,
   };
 
   if (!code) return empty;
 
   const link = await tx.referralLink.findFirst({
     where: { code, status: 'active' },
-    include: { agency: true, influencer: true },
+    include: { agency: true, influencer: true, coupon: true },
   });
 
   if (!link) return empty;
@@ -43,6 +48,8 @@ export async function resolveReferral(tx: Tx, code: string | null | undefined): 
     influencerId: link.influencerId,
     referralLinkId: link.id,
     commissionRate,
+    couponCode: link.coupon?.code ?? null,
+    couponAutoApply: link.couponAutoApply,
   };
 }
 
@@ -60,7 +67,7 @@ export async function resolveReferralByAttribution(tx: Tx, attribution: StoredAt
   const link = attribution.referralLinkId
     ? await tx.referralLink.findUnique({
         where: { id: attribution.referralLinkId },
-        include: { agency: true, influencer: true },
+        include: { agency: true, influencer: true, coupon: true },
       })
     : null;
 
@@ -78,5 +85,7 @@ export async function resolveReferralByAttribution(tx: Tx, attribution: StoredAt
     influencerId: attribution.influencerId,
     referralLinkId: attribution.referralLinkId,
     commissionRate,
+    couponCode: link?.coupon?.code ?? null,
+    couponAutoApply: link?.couponAutoApply ?? false,
   };
 }
