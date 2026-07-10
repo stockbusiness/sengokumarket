@@ -38,6 +38,13 @@ router.get('/products', async (_req, res) => {
   res.json({ products });
 });
 
+// 仕様書外の拡張: 商品編集ページ用に単体取得。
+router.get('/products/:id', async (req, res) => {
+  const product = await prisma.product.findUnique({ where: { id: req.params.id }, include: { variants: true } });
+  if (!product) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
+  res.json({ product });
+});
+
 router.post('/products', async (req, res) => {
   const { name, slug, description, category, itemType, basePrice, status, images, variants } = req.body ?? {};
 

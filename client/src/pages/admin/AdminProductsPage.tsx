@@ -1,72 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import {
-  createAdminProduct,
-  deleteAdminProduct,
-  deleteAdminProductVariant,
-  fetchAdminProducts,
-  updateAdminProduct,
-  uploadAdminProductImage,
-  type AdminProduct,
-} from '../../lib/adminApi';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { deleteAdminProduct, fetchAdminProducts, type AdminProduct } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 
-const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
-const STATUSES = ['draft', 'published', 'archived'];
-// 仕様書外の拡張: 価格入力を税込/税別のどちらでも受け付けられるようにする。
-// 保存される金額(basePrice/variant.price)は常に実際の決済金額(税込)であり、
-// この変換はあくまで入力時の利便性のためのもの(仕様書v1.5 コーディング規約「金額は
-// すべてINTEGER(円)」を維持し、税別入力時は税込金額に変換してから送信する)。
-const TAX_RATE = 0.1;
-type PriceMode = 'included' | 'excluded';
-
-function toTaxIncluded(amount: number, mode: PriceMode): number {
-  return mode === 'excluded' ? Math.floor(amount * (1 + TAX_RATE)) : amount;
-}
-
-// 税込価格から税別価格の目安を逆算する(モード切替時に入力欄の表示を作り直すためだけに使う。
-// 保存処理では使わない)。
-function toTaxExcludedEstimate(amount: number): number {
-  return Math.round(amount / (1 + TAX_RATE));
-}
-
 type StatusMessage = { type: 'success' | 'error'; text: string };
-interface VariantRow {
-  name: string;
-  stock: number;
-}
-const DEFAULT_VARIANT_ROWS: VariantRow[] = [{ name: '通常', stock: 0 }];
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [name, setName] = useState('');
-  const [slug, setSlug] = useState('');
-  const [description, setDescription] = useState('');
-  const [category, setCategory] = useState('');
-  const [itemType, setItemType] = useState('nft');
-  const [basePrice, setBasePrice] = useState(0);
-  const [priceMode, setPriceMode] = useState<PriceMode>('included');
-  const [rowPriceMode, setRowPriceMode] = useState<Record<string, PriceMode>>({});
-  const [variantRows, setVariantRows] = useState<VariantRow[]>(DEFAULT_VARIANT_ROWS);
-  const [imagesText, setImagesText] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [uploadingNew, setUploadingNew] = useState(false);
-  const [uploadingRowId, setUploadingRowId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
-  const imagesTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
-  const priceInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
-  // モード切替時に自動で書き換えた表示値を覚えておき、そこから実際に編集されていなければ
-  // (=単に選択欄を切り替えてフォーカスが外れただけなら)保存自体をスキップする。
-  const priceAutoSetValueRefs = useRef<Record<string, string>>({});
-  const [newVariantByProduct, setNewVariantByProduct] = useState<Record<string, VariantRow>>({});
-
-  function parseImagesText(text: string): string[] {
-    return text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
-  }
+  const location = useLocation();
+  const navigate = useNavigate();
 
   function load() {
     fetchAdminProducts().then((d) => setProducts(d.products));
@@ -74,350 +18,60 @@ export default function AdminProductsPage() {
 
   useEffect(load, []);
 
-  // 保存の成否がその場で分かるよう、一定時間で自動的に消える通知を出す
-  // (これまでインライン編集の保存はサイレントで、失敗しても何も表示されなかった)。
-  function notify(type: StatusMessage['type'], text: string) {
-    setStatusMessage({ type, text });
-    setTimeout(() => setStatusMessage((cur) => (cur?.text === text ? null : cur)), 4000);
-  }
-
-  function addVariantRow() {
-    setVariantRows((prev) => [...prev, { name: '', stock: 0 }]);
-  }
-
-  function removeVariantRow(index: number) {
-    setVariantRows((prev) => prev.filter((_, i) => i !== index));
-  }
-
-  function updateVariantRow(index: number, field: keyof VariantRow, value: string | number) {
-    setVariantRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
-  }
-
-  async function handleCreate(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-
-    const validVariants = variantRows.filter((v) => v.name.trim());
-    if (validVariants.length === 0) {
-      setError('バリエーションを1つ以上入力してください(在庫が無いと購入できません)');
-      return;
+  // 新規作成・編集ページからの遷移時に、そちら側での保存結果をここで表示する。
+  useEffect(() => {
+    const state = location.state as { message?: string } | null;
+    if (state?.message) {
+      setStatusMessage({ type: 'success', text: state.message });
+      navigate(location.pathname, { replace: true, state: null });
+      const timer = setTimeout(() => setStatusMessage(null), 4000);
+      return () => clearTimeout(timer);
     }
-
-    try {
-      const finalPrice = toTaxIncluded(basePrice, priceMode);
-      await createAdminProduct({
-        name,
-        slug,
-        description: description.trim() || null,
-        category,
-        itemType,
-        basePrice: finalPrice,
-        status: 'draft',
-        images: parseImagesText(imagesText),
-        variants: validVariants.map((v) => ({ name: v.name.trim(), price: finalPrice, stock: v.stock })),
-      });
-      setName('');
-      setSlug('');
-      setDescription('');
-      setCategory('');
-      setBasePrice(0);
-      setPriceMode('included');
-      setVariantRows(DEFAULT_VARIANT_ROWS);
-      setImagesText('');
-      setShowForm(false);
-      notify('success', `「${name}」を作成しました`);
-      load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '作成に失敗しました');
-    }
-  }
-
-  async function handleUploadForNewProduct(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setUploadingNew(true);
-    try {
-      for (const file of Array.from(files)) {
-        const { url } = await uploadAdminProductImage(file);
-        setImagesText((prev) => (prev.trim() ? `${prev}\n${url}` : url));
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '画像のアップロードに失敗しました');
-    } finally {
-      setUploadingNew(false);
-    }
-  }
-
-  async function updateStatus(product: AdminProduct, status: string) {
-    try {
-      await updateAdminProduct(product.id, { status });
-      notify('success', `「${product.name}」のステータスを更新しました`);
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : 'ステータスの更新に失敗しました');
-    }
-  }
-
-  async function updateField(
-    product: AdminProduct,
-    field: 'name' | 'category' | 'itemType' | 'basePrice' | 'description',
-    value: string | number | null,
-  ) {
-    try {
-      await updateAdminProduct(product.id, { [field]: value });
-      notify('success', `「${product.name}」を更新しました`);
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : '更新に失敗しました');
-    }
-  }
+  }, [location, navigate]);
 
   async function handleDelete(product: AdminProduct) {
     if (!window.confirm(`「${product.name}」を削除します。よろしいですか？(元に戻せません)`)) return;
     try {
       await deleteAdminProduct(product.id);
-      notify('success', `「${product.name}」を削除しました`);
+      setStatusMessage({ type: 'success', text: `「${product.name}」を削除しました` });
       load();
     } catch (e) {
-      notify('error', e instanceof Error ? e.message : '削除に失敗しました');
+      setStatusMessage({ type: 'error', text: e instanceof Error ? e.message : '削除に失敗しました' });
     }
   }
 
-  async function updateStock(product: AdminProduct, variantId: string, variantName: string, stock: number) {
-    try {
-      await updateAdminProduct(product.id, { variants: [{ id: variantId, stock }] });
-      notify('success', `「${product.name}」の${variantName}の在庫数を更新しました`);
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : '在庫数の更新に失敗しました');
-    }
-  }
-
-  async function updateImages(product: AdminProduct, text: string) {
-    try {
-      await updateAdminProduct(product.id, { images: parseImagesText(text) });
-      notify('success', `「${product.name}」の商品画像を更新しました`);
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : '商品画像の更新に失敗しました');
-    }
-  }
-
-  async function handleAddVariant(product: AdminProduct) {
-    const draft = newVariantByProduct[product.id];
-    if (!draft || !draft.name.trim()) {
-      notify('error', 'バリエーション名を入力してください');
-      return;
-    }
-    try {
-      await updateAdminProduct(product.id, { variants: [{ name: draft.name.trim(), price: product.basePrice, stock: draft.stock }] });
-      notify('success', `「${product.name}」に「${draft.name.trim()}」を追加しました`);
-      setNewVariantByProduct((prev) => ({ ...prev, [product.id]: { name: '', stock: 0 } }));
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : 'バリエーションの追加に失敗しました');
-    }
-  }
-
-  async function handleDeleteVariant(product: AdminProduct, variantId: string, variantName: string) {
-    if (!window.confirm(`「${product.name}」の「${variantName}」を削除します。よろしいですか？`)) return;
-    try {
-      await deleteAdminProductVariant(product.id, variantId);
-      notify('success', `「${product.name}」の「${variantName}」を削除しました`);
-      load();
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : 'バリエーションの削除に失敗しました');
-    }
-  }
-
-  async function handleUploadForRow(product: AdminProduct, files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setUploadingRowId(product.id);
-    try {
-      const textarea = imagesTextareaRefs.current[product.id];
-      let current = textarea?.value ?? product.images.join('\n');
-      for (const file of Array.from(files)) {
-        const { url } = await uploadAdminProductImage(file);
-        current = current.trim() ? `${current}\n${url}` : url;
-      }
-      if (textarea) textarea.value = current;
-      await updateImages(product, current);
-    } catch (e) {
-      notify('error', e instanceof Error ? e.message : '画像のアップロードに失敗しました');
-    } finally {
-      setUploadingRowId(null);
-    }
+  function stockSummary(product: AdminProduct): string {
+    if (product.variants.length === 0) return 'バリエーション無し';
+    return product.variants.map((v) => `${v.name}:${v.stock}`).join(' / ');
   }
 
   return (
     <div>
       <h1>商品管理</h1>
-      <button
-        type="button"
-        className={showForm ? 'btn-secondary btn-small' : 'btn-primary btn-small'}
-        onClick={() => setShowForm((v) => !v)}
-      >
-        {showForm ? 'キャンセル' : '新規作成'}
-      </button>
+      <Link to="/admin/products/new" className="btn-primary btn-small">
+        新規登録
+      </Link>
 
-      {showForm && (
-        <form onSubmit={handleCreate} className="admin-form-card admin-form-card--wide">
-          <div className="admin-form-section">
-            <h2 className="admin-form-section__title">基本情報</h2>
-            <label>
-              商品名
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
-            </label>
-            <label>
-              商品説明(商品ページに表示されます。改行もそのまま反映されます)
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                rows={4}
-                placeholder="商品の魅力や特典の内容などを入力してください"
-              />
-            </label>
-            <label>
-              slug(商品ページのURLに使われます。半角英数とハイフンのみ)
-              <input type="text" value={slug} onChange={(e) => setSlug(e.target.value)} required />
-            </label>
-            <label>
-              カテゴリ
-              <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} required />
-            </label>
-            <label>
-              商品タイプ
-              <select value={itemType} onChange={(e) => setItemType(e.target.value)}>
-                {ITEM_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="admin-form-section">
-            <h2 className="admin-form-section__title">価格(消費税10%)</h2>
-            <label>
-              価格
-              <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
-            </label>
-            <div className="admin-tax-mode">
-              <label>
-                <input
-                  type="radio"
-                  name="price-mode-new"
-                  value="included"
-                  checked={priceMode === 'included'}
-                  onChange={() => setPriceMode('included')}
-                />
-                税込価格として入力
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="price-mode-new"
-                  value="excluded"
-                  checked={priceMode === 'excluded'}
-                  onChange={() => setPriceMode('excluded')}
-                />
-                税別価格として入力
-              </label>
-              {priceMode === 'excluded' && (
-                <span className="admin-tax-mode__preview">
-                  → 税込 {toTaxIncluded(basePrice, 'excluded').toLocaleString()}円で登録されます
-                </span>
-              )}
-            </div>
-          </div>
-
-          <div className="admin-form-section">
-            <h2 className="admin-form-section__title">バリエーション・在庫</h2>
-            <p className="admin-form-section__hint">
-              色・サイズ等の選択肢ごとに、名前と在庫数(個数)を入力してください。ここで在庫数を設定しないと購入できません。
-            </p>
-            {variantRows.map((row, index) => (
-              <div className="admin-variant-row" key={index}>
-                <label className="admin-variant-row__name">
-                  バリエーション名
-                  <input
-                    type="text"
-                    value={row.name}
-                    placeholder="例: 通常、RED、Black"
-                    onChange={(e) => updateVariantRow(index, 'name', e.target.value)}
-                  />
-                </label>
-                <label className="admin-variant-row__stock">
-                  在庫数
-                  <input
-                    type="number"
-                    value={row.stock}
-                    min={0}
-                    onChange={(e) => updateVariantRow(index, 'stock', Number(e.target.value))}
-                  />
-                </label>
-                {variantRows.length > 1 && (
-                  <button type="button" className="btn-secondary btn-small" onClick={() => removeVariantRow(index)}>
-                    削除
-                  </button>
-                )}
-              </div>
-            ))}
-            <button type="button" className="btn-secondary btn-small" onClick={addVariantRow}>
-              + バリエーションを追加
-            </button>
-          </div>
-
-          <div className="admin-form-section">
-            <h2 className="admin-form-section__title">商品画像</h2>
-            <label>
-              画像を選択してアップロード(先頭が一覧・共有時のサムネイルになります)
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp,image/gif"
-                multiple
-                disabled={uploadingNew}
-                onChange={(e) => handleUploadForNewProduct(e.target.files)}
-              />
-            </label>
-            {uploadingNew && <p>アップロード中です...</p>}
-            <label>
-              商品画像URL(アップロード済みの画像が自動で入ります。外部URLを直接指定することもできます)
-              <textarea
-                value={imagesText}
-                onChange={(e) => setImagesText(e.target.value)}
-                rows={3}
-                placeholder={'https://example.com/image1.jpg\nhttps://example.com/image2.jpg'}
-              />
-            </label>
-          </div>
-
-          {error && <p className="checkout-error">{error}</p>}
-          <button type="submit" className="btn-primary">
-            作成する
-          </button>
-        </form>
+      {statusMessage && (
+        <p className={statusMessage.type === 'error' ? 'checkout-error' : 'admin-status-success'}>{statusMessage.text}</p>
       )}
-
-      {error && !showForm && <p className="checkout-error">{error}</p>}
-      {statusMessage && <p className={statusMessage.type === 'error' ? 'checkout-error' : 'admin-status-success'}>{statusMessage.text}</p>}
 
       {products.length === 0 ? (
         <div className="admin-table-card">
-          <EmptyState message="まだ商品がありません" actionLabel="新規作成" onAction={() => setShowForm(true)} />
+          <EmptyState message="まだ商品がありません" actionLabel="新規登録" onAction={() => navigate('/admin/products/new')} />
         </div>
       ) : (
         <div className="admin-table-card">
           <table>
             <thead>
               <tr>
+                <th>商品画像</th>
                 <th>商品名</th>
                 <th>slug</th>
                 <th>タイプ</th>
                 <th>価格</th>
                 <th>ステータス</th>
                 <th>バリエーション/在庫</th>
-                <th>商品画像</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -425,150 +79,30 @@ export default function AdminProductsPage() {
               {products.map((p) => (
                 <tr key={p.id}>
                   <td>
-                    <input
-                      type="text"
-                      className="admin-inline-input--text"
-                      defaultValue={p.name}
-                      onBlur={(e) => e.target.value.trim() && e.target.value !== p.name && updateField(p, 'name', e.target.value.trim())}
-                    />
-                    <textarea
-                      className="admin-inline-textarea"
-                      defaultValue={p.description ?? ''}
-                      rows={2}
-                      placeholder="商品説明"
-                      onBlur={(e) => {
-                        const value = e.target.value.trim();
-                        if (value !== (p.description ?? '')) updateField(p, 'description', value || null);
-                      }}
-                    />
+                    {p.images[0] ? (
+                      <img src={p.images[0]} alt={p.name} className="admin-product-thumbnail" />
+                    ) : (
+                      <span className="admin-product-thumbnail admin-product-thumbnail--empty" />
+                    )}
                   </td>
+                  <td>{p.name}</td>
                   <td>{p.slug}</td>
+                  <td>{p.itemType}</td>
+                  <td>{p.basePrice.toLocaleString()}円</td>
                   <td>
-                    <select value={p.itemType} onChange={(e) => updateField(p, 'itemType', e.target.value)}>
-                      {ITEM_TYPES.map((t) => (
-                        <option key={t} value={t}>
-                          {t}
-                        </option>
-                      ))}
-                    </select>
+                    <StatusBadge status={p.status} />
                   </td>
                   <td>
-                    <input
-                      type="number"
-                      className="admin-inline-input"
-                      ref={(el) => {
-                        priceInputRefs.current[p.id] = el;
-                      }}
-                      defaultValue={p.basePrice}
-                      onBlur={(e) => {
-                        // モード切替時に自動で入れた値のまま(実際には編集していない)なら何もしない。
-                        if (e.target.value === priceAutoSetValueRefs.current[p.id]) return;
-                        const entered = Number(e.target.value);
-                        const finalPrice = toTaxIncluded(entered, rowPriceMode[p.id] ?? 'included');
-                        if (finalPrice !== p.basePrice) updateField(p, 'basePrice', finalPrice);
-                      }}
-                    />
-                    円
-                    <select
-                      className="admin-tax-mode__select"
-                      value={rowPriceMode[p.id] ?? 'included'}
-                      onChange={(e) => {
-                        const mode = e.target.value as PriceMode;
-                        setRowPriceMode((prev) => ({ ...prev, [p.id]: mode }));
-                        // モード切替だけで金額が変わらないよう、表示中の数値をモードに合わせて
-                        // 作り直す(税込表示中の数値をそのまま税別として送信してしまう事故を防ぐ)。
-                        // ここで入れた値のまま編集されずにblurした場合は保存自体をスキップする。
-                        const autoValue = String(mode === 'excluded' ? toTaxExcludedEstimate(p.basePrice) : p.basePrice);
-                        priceAutoSetValueRefs.current[p.id] = autoValue;
-                        const input = priceInputRefs.current[p.id];
-                        if (input) input.value = autoValue;
-                      }}
-                    >
-                      <option value="included">税込入力</option>
-                      <option value="excluded">税別入力</option>
-                    </select>
+                    {p.variants.length === 0 ? (
+                      <span className="checkout-error">バリエーションが無く購入できません</span>
+                    ) : (
+                      stockSummary(p)
+                    )}
                   </td>
                   <td>
-                    <StatusBadge status={p.status} />{' '}
-                    <select value={p.status} onChange={(e) => updateStatus(p, e.target.value)}>
-                      {STATUSES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    {p.variants.length === 0 && <p className="checkout-error">バリエーションが無く購入できません</p>}
-                    {p.variants.map((v) => (
-                      <div key={v.id}>
-                        {v.name}:
-                        <input
-                          type="number"
-                          className="admin-inline-input"
-                          defaultValue={v.stock}
-                          onBlur={(e) => updateStock(p, v.id, v.name, Number(e.target.value))}
-                        />
-                        <button
-                          type="button"
-                          className="btn-secondary btn-small"
-                          onClick={() => handleDeleteVariant(p, v.id, v.name)}
-                        >
-                          削除
-                        </button>
-                      </div>
-                    ))}
-                    <div className="admin-variant-row">
-                      <input
-                        type="text"
-                        className="admin-inline-input--text"
-                        placeholder="バリエーション名"
-                        value={newVariantByProduct[p.id]?.name ?? ''}
-                        onChange={(e) =>
-                          setNewVariantByProduct((prev) => ({
-                            ...prev,
-                            [p.id]: { name: e.target.value, stock: prev[p.id]?.stock ?? 0 },
-                          }))
-                        }
-                      />
-                      <input
-                        type="number"
-                        className="admin-inline-input"
-                        placeholder="在庫"
-                        value={newVariantByProduct[p.id]?.stock ?? 0}
-                        onChange={(e) =>
-                          setNewVariantByProduct((prev) => ({
-                            ...prev,
-                            [p.id]: { name: prev[p.id]?.name ?? '', stock: Number(e.target.value) },
-                          }))
-                        }
-                      />
-                      <button type="button" className="btn-secondary btn-small" onClick={() => handleAddVariant(p)}>
-                        追加
-                      </button>
-                    </div>
-                  </td>
-                  <td>
-                    <input
-                      type="file"
-                      accept="image/png,image/jpeg,image/webp,image/gif"
-                      multiple
-                      disabled={uploadingRowId === p.id}
-                      onChange={(e) => handleUploadForRow(p, e.target.files)}
-                    />
-                    {uploadingRowId === p.id && <p>アップロード中...</p>}
-                    <textarea
-                      ref={(el) => {
-                        imagesTextareaRefs.current[p.id] = el;
-                      }}
-                      className="admin-inline-textarea"
-                      defaultValue={p.images.join('\n')}
-                      rows={2}
-                      onBlur={(e) => updateImages(p, e.target.value)}
-                      placeholder="画像URL(1行に1つ)"
-                    />
-                  </td>
-                  <td>
+                    <Link to={`/admin/products/${p.id}/edit`} className="btn-secondary btn-small">
+                      編集
+                    </Link>{' '}
                     <button type="button" className="btn-secondary btn-small" onClick={() => handleDelete(p)}>
                       削除
                     </button>

@@ -33,6 +33,8 @@ const MyProfilePage = lazyWithReload(() => import('./pages/MyProfilePage'));
 const ReceiptPage = lazyWithReload(() => import('./pages/ReceiptPage'));
 const AdminDashboardPage = lazyWithReload(() => import('./pages/admin/AdminDashboardPage'));
 const AdminProductsPage = lazyWithReload(() => import('./pages/admin/AdminProductsPage'));
+const AdminProductCreatePage = lazyWithReload(() => import('./pages/admin/AdminProductCreatePage'));
+const AdminProductEditPage = lazyWithReload(() => import('./pages/admin/AdminProductEditPage'));
 const AdminImportProductsPage = lazyWithReload(() => import('./pages/admin/AdminImportProductsPage'));
 const AdminOrdersPage = lazyWithReload(() => import('./pages/admin/AdminOrdersPage'));
 const AdminNftIssuesPage = lazyWithReload(() => import('./pages/admin/AdminNftIssuesPage'));
@@ -208,6 +210,8 @@ function App() {
         >
           <Route index element={<AdminDashboardPage />} />
           <Route path="products" element={<AdminProductsPage />} />
+          <Route path="products/new" element={<AdminProductCreatePage />} />
+          <Route path="products/:id/edit" element={<AdminProductEditPage />} />
           <Route path="import-products" element={<AdminImportProductsPage />} />
           <Route path="orders" element={<AdminOrdersPage />} />
           <Route path="nft-issues" element={<AdminNftIssuesPage />} />

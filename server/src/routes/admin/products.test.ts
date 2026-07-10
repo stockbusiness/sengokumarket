@@ -53,6 +53,22 @@ describe('管理API: 商品管理', () => {
     expect(res.body.error.code).toBe('SLUG_ALREADY_EXISTS');
   });
 
+  it('商品を単体取得できる(編集ページ用)', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
+    const res = await agent.get(`/api/admin/products/${product.id}`).set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(200);
+    expect(res.body.product.id).toBe(product.id);
+    expect(res.body.product.variants).toHaveLength(1);
+  });
+
+  it('存在しない商品の単体取得は404を返す', async () => {
+    const res = await agent
+      .get('/api/admin/products/00000000-0000-0000-0000-000000000000')
+      .set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('PRODUCT_NOT_FOUND');
+  });
+
   it('公開ステータスと在庫を更新できる', async () => {
     const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
 

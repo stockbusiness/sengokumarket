@@ -77,6 +77,10 @@ export function fetchAdminProducts() {
   return adminFetch<{ products: AdminProduct[] }>('/products');
 }
 
+export function fetchAdminProduct(id: string) {
+  return adminFetch<{ product: AdminProduct }>(`/products/${id}`);
+}
+
 type ProductPayload = Partial<Omit<AdminProduct, 'variants'>> & { variants?: Partial<AdminProductVariant>[] };
 
 export function createAdminProduct(payload: ProductPayload) {

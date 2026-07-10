@@ -934,6 +934,20 @@
   outline-offset: 1px;
 }
 
+/* 商品一覧のサムネイル画像(商品管理・仕様書外の拡張) */
+.admin-product-thumbnail {
+  display: block;
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.admin-product-thumbnail--empty {
+  background: var(--bg);
+}
+
 .admin-kpi-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
