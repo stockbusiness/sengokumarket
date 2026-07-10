@@ -168,7 +168,7 @@ export default function AdminProductsPage() {
                   <td>
                     <input
                       type="text"
-                      className="admin-inline-input"
+                      className="admin-inline-input--text"
                       defaultValue={p.name}
                       onBlur={(e) => e.target.value.trim() && e.target.value !== p.name && updateField(p, 'name', e.target.value.trim())}
                     />

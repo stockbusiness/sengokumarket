@@ -670,11 +670,14 @@
   background: var(--bg-elevated);
 }
 
-/* テーブル/一覧をカードとして囲み、データが少なくても余白だけが伸びないようにする */
+/* テーブル/一覧をカードとして囲み、データが少なくても余白だけが伸びないようにする。
+   列数が多い表(商品管理等)が画面幅を超えても右側の列が切れて操作不能にならないよう、
+   縦方向(角丸)はhidden、横方向はスクロールできるようにする。 */
 .admin-table-card {
   border: 1px solid var(--border);
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: var(--bg-elevated);
   box-shadow: var(--shadow);
   margin: 16px 0;
@@ -743,6 +746,20 @@
 }
 
 .admin-inline-input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* テーブルセル内の文字列入力欄(商品名など)。上のadmin-inline-inputより幅を広く取る */
+.admin-inline-input--text {
+  width: 12em;
+  padding: 4px 8px;
+  min-height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.admin-inline-input--text:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
