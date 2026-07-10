@@ -95,4 +95,21 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     expect(res.status).toBe(200);
     expect(res.body.adminUser.role).toBe('admin');
   });
+
+  it('管理者はスタッフアカウントを作成でき、パスワード設定メールが送られる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const email = `admin-users-test-staff-${Date.now()}@example.com`;
+
+    const res = await agent
+      .post('/api/admin/admin-users')
+      .set('Origin', TEST_ORIGIN)
+      .send({ name: 'スタッフ太郎', email, role: 'staff' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.adminUser.role).toBe('staff');
+    expect(sendAdminAccountSetupEmail).toHaveBeenCalledWith(email, 'スタッフ太郎', expect.any(String), 'スタッフ');
+
+    const list = await agent.get('/api/admin/admin-users');
+    expect(list.body.adminUsers.some((u: { email: string }) => u.email === email)).toBe(true);
+  });
 });

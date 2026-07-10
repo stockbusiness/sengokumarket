@@ -5,6 +5,7 @@ import { lazyWithReload } from './lib/lazyWithReload';
 import { useAuth } from './context/AuthContext';
 import RequireAuth from './components/RequireAuth';
 import RequireAdmin from './components/RequireAdmin';
+import RequireFullAdmin from './components/RequireFullAdmin';
 import AdminLayout from './components/AdminLayout';
 import RequireAgency from './components/RequireAgency';
 import AgencyLayout from './components/AgencyLayout';
@@ -212,14 +213,70 @@ function App() {
           <Route path="nft-issues" element={<AdminNftIssuesPage />} />
           <Route path="wallet-missing" element={<AdminWalletMissingPage />} />
           <Route path="notices" element={<AdminNoticesPage />} />
-          <Route path="referral-links" element={<AdminReferralLinksPage />} />
-          <Route path="coupons" element={<AdminCouponsPage />} />
-          <Route path="referrals" element={<AdminReferralsPage />} />
-          <Route path="agencies" element={<AdminAgenciesPage />} />
-          <Route path="settings" element={<AdminSettingsPage />} />
-          <Route path="legal" element={<AdminLegalPage />} />
-          <Route path="audit-logs" element={<AdminAuditLogsPage />} />
-          <Route path="admin-users" element={<AdminUsersPage />} />
+          <Route
+            path="referral-links"
+            element={
+              <RequireFullAdmin>
+                <AdminReferralLinksPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="coupons"
+            element={
+              <RequireFullAdmin>
+                <AdminCouponsPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="referrals"
+            element={
+              <RequireFullAdmin>
+                <AdminReferralsPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="agencies"
+            element={
+              <RequireFullAdmin>
+                <AdminAgenciesPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="settings"
+            element={
+              <RequireFullAdmin>
+                <AdminSettingsPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="legal"
+            element={
+              <RequireFullAdmin>
+                <AdminLegalPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="audit-logs"
+            element={
+              <RequireFullAdmin>
+                <AdminAuditLogsPage />
+              </RequireFullAdmin>
+            }
+          />
+          <Route
+            path="admin-users"
+            element={
+              <RequireFullAdmin>
+                <AdminUsersPage />
+              </RequireFullAdmin>
+            }
+          />
         </Route>
         <Route path="/agency/sso" element={<AgencySsoCallbackPage />} />
         <Route

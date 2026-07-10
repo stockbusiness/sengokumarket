@@ -28,7 +28,7 @@ type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
 const NAV_GROUPS: {
   heading: string;
-  items: { to: string; label: string; icon: IconType; end?: boolean; badgeKey?: BadgeKey; muted?: boolean }[];
+  items: { to: string; label: string; icon: IconType; end?: boolean; badgeKey?: BadgeKey; muted?: boolean; staffHidden?: boolean }[];
 }[] = [
   { heading: '概要', items: [{ to: '/admin', label: 'ダッシュボード', icon: IconGrid, end: true }] },
   {
@@ -47,22 +47,23 @@ const NAV_GROUPS: {
     ],
   },
   {
+    // 仕様書外の拡張: スタッフ(staff)は紹介・代理店関連の機能を一切利用できない。
     heading: '紹介・代理店',
     items: [
-      { to: '/admin/referral-links', label: '紹介リンク発行', icon: IconLink },
-      { to: '/admin/coupons', label: 'クーポン管理', icon: IconYen },
-      { to: '/admin/referrals', label: '代理店・紹介成果', icon: IconChart, badgeKey: 'alerts' },
-      { to: '/admin/agencies', label: '代理店一覧', icon: IconBuilding },
+      { to: '/admin/referral-links', label: '紹介リンク発行', icon: IconLink, staffHidden: true },
+      { to: '/admin/coupons', label: 'クーポン管理', icon: IconYen, staffHidden: true },
+      { to: '/admin/referrals', label: '代理店・紹介成果', icon: IconChart, badgeKey: 'alerts', staffHidden: true },
+      { to: '/admin/agencies', label: '代理店一覧', icon: IconBuilding, staffHidden: true },
     ],
   },
   {
     heading: 'その他',
     items: [
       { to: '/admin/notices', label: 'お知らせ管理', icon: IconMegaphone },
-      { to: '/admin/legal', label: '法務ページ編集', icon: IconDocument, muted: true },
-      { to: '/admin/settings', label: '決済・メール設定', icon: IconGear, muted: true },
-      { to: '/admin/audit-logs', label: '監査ログ', icon: IconHistory, muted: true },
-      { to: '/admin/admin-users', label: '管理者アカウント', icon: IconUser, muted: true },
+      { to: '/admin/legal', label: '法務ページ編集', icon: IconDocument, muted: true, staffHidden: true },
+      { to: '/admin/settings', label: '決済・メール設定', icon: IconGear, muted: true, staffHidden: true },
+      { to: '/admin/audit-logs', label: '監査ログ', icon: IconHistory, muted: true, staffHidden: true },
+      { to: '/admin/admin-users', label: '管理者アカウント', icon: IconUser, muted: true, staffHidden: true },
     ],
   },
 ];
@@ -80,11 +81,16 @@ export default function AdminLayout() {
   }, []);
 
   const badgeCounts: Record<BadgeKey, number> = { walletMissing: walletMissingCount, alerts: alertCount };
+  const isStaff = user?.role === 'staff';
+  const visibleNavGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => !(isStaff && item.staffHidden)),
+  })).filter((group) => group.items.length > 0);
 
   return (
     <div className="admin-layout">
       <nav className="admin-nav">
-        {NAV_GROUPS.map((group) => (
+        {visibleNavGroups.map((group) => (
           <div className="admin-nav__group" key={group.heading}>
             <div className="admin-nav__heading">{group.heading}</div>
             {group.items.map((item) => {
@@ -126,6 +132,11 @@ export default function AdminLayout() {
         <div className="admin-content">
           {user?.role === 'admin_viewer' && (
             <div className="admin-viewer-banner">閲覧専用アカウントでログイン中です。登録・変更・削除操作はできません。</div>
+          )}
+          {isStaff && (
+            <div className="admin-viewer-banner">
+              スタッフアカウントでログイン中です。商品・注文・NFT発行・お知らせ以外の機能は利用できません。
+            </div>
           )}
           <Outlet />
         </div>

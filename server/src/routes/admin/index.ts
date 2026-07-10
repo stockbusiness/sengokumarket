@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requireAdmin, restrictAdminViewerToReadOnly } from '../../middleware/auth';
+import { requireAdmin, restrictAdminViewerToReadOnly, forbidStaff } from '../../middleware/auth';
 import { auditLog } from '../../middleware/auditLog';
 import auditLogsRouter from './auditLogs';
 import adminUsersRouter from './adminUsers';
@@ -27,20 +27,24 @@ router.use(auditLog);
 // 閲覧専用アカウント(admin_viewer)はGET以外を一括で拒否する(仕様書外の拡張)。
 router.use(restrictAdminViewerToReadOnly);
 
-router.use(auditLogsRouter);
-router.use(adminUsersRouter);
+// スタッフ(staff)も利用できる日次業務系(仕様書外の拡張)。
 router.use(dashboardRouter);
 router.use(productsRouter);
+router.use(importProductsRouter);
 router.use(ordersRouter);
 router.use(nftIssuesRouter);
 router.use(walletMissingRouter);
 router.use(noticesRouter);
+
+// ここから先はスタッフには公開しない(管理者・閲覧専用管理者のみ)。
+router.use(forbidStaff);
+router.use(auditLogsRouter);
+router.use(adminUsersRouter);
 router.use(agenciesRouter);
 router.use(referralLinksRouter);
 router.use(referralsRouter);
 router.use(settingsRouter);
 router.use(bankTransferSettingsRouter);
-router.use(importProductsRouter);
 router.use(legalRouter);
 router.use(couponsRouter);
 

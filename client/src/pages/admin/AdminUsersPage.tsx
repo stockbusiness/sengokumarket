@@ -3,7 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { createAdminUser, fetchAdminUsers, updateAdminUserRole, type AdminUser } from '../../lib/adminApi';
 import EmptyState from '../../components/EmptyState';
 
-const ROLE_LABEL: Record<AdminUser['role'], string> = { admin: '管理者', admin_viewer: '閲覧専用管理者' };
+const ROLE_LABEL: Record<AdminUser['role'], string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
 
 export default function AdminUsersPage() {
   const { user } = useAuth();
@@ -55,8 +55,9 @@ export default function AdminUsersPage() {
     <div>
       <h1>管理者アカウント</h1>
       <p>
-        管理者には「管理者(登録・変更が可能)」と「閲覧専用管理者(閲覧のみ)」の2種類があります。
-        閲覧専用管理者は管理画面の全ての情報を確認できますが、登録・変更・削除操作はできません。
+        管理者アカウントには3種類あります。「管理者」は全機能の登録・変更が可能、「閲覧専用管理者」は全機能を閲覧のみできます。
+        「スタッフ」は商品・注文・NFT発行・お知らせ等の日次業務のみ操作でき、この画面や決済/メール設定・監査ログ・紹介リンク発行・
+        クーポン管理・代理店関連の機能は利用できません。
       </p>
 
       {isFullAdmin && (
@@ -73,6 +74,7 @@ export default function AdminUsersPage() {
             権限
             <select value={role} onChange={(e) => setRole(e.target.value as AdminUser['role'])}>
               <option value="admin_viewer">閲覧専用管理者</option>
+              <option value="staff">スタッフ</option>
               <option value="admin">管理者</option>
             </select>
           </label>
@@ -107,6 +109,7 @@ export default function AdminUsersPage() {
                     {isFullAdmin && u.id !== user?.id ? (
                       <select value={u.role} onChange={(e) => handleRoleChange(u, e.target.value as AdminUser['role'])}>
                         <option value="admin_viewer">閲覧専用管理者</option>
+                        <option value="staff">スタッフ</option>
                         <option value="admin">管理者</option>
                       </select>
                     ) : (

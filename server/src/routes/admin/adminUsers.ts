@@ -9,16 +9,16 @@ import { sendAdminAccountSetupEmail } from '../../services/mailTemplates';
 
 const router = Router();
 
-const ADMIN_ROLES = ['admin', 'admin_viewer'] as const;
+const ADMIN_ROLES = ['admin', 'admin_viewer', 'staff'] as const;
 type AdminRole = (typeof ADMIN_ROLES)[number];
 
-const ROLE_LABEL: Record<AdminRole, string> = { admin: '管理者', admin_viewer: '閲覧専用管理者' };
+const ROLE_LABEL: Record<AdminRole, string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
-// 仕様書外の拡張: 管理者アカウントの一覧・追加・権限変更(admin/admin_viewerの2段階)。
+// 仕様書外の拡張: 管理者アカウントの一覧・追加・権限変更(admin/admin_viewer/staffの3段階)。
 router.get('/admin-users', async (_req, res) => {
   const users = await prisma.user.findMany({
     where: { role: { in: [...ADMIN_ROLES] } },
@@ -38,7 +38,7 @@ router.post('/admin-users', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', 'メールアドレスを正しく入力してください');
   }
   if (!ADMIN_ROLES.includes(role)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', '権限は管理者または閲覧専用管理者を指定してください');
+    return sendError(res, 400, 'VALIDATION_ERROR', '権限は管理者・閲覧専用管理者・スタッフのいずれかを指定してください');
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -66,7 +66,7 @@ router.post('/admin-users', async (req, res) => {
 router.put('/admin-users/:id/role', async (req, res) => {
   const { role } = req.body ?? {};
   if (!ADMIN_ROLES.includes(role)) {
-    return sendError(res, 400, 'VALIDATION_ERROR', '権限は管理者または閲覧専用管理者を指定してください');
+    return sendError(res, 400, 'VALIDATION_ERROR', '権限は管理者・閲覧専用管理者・スタッフのいずれかを指定してください');
   }
 
   const target = await prisma.user.findUnique({ where: { id: req.params.id } });
