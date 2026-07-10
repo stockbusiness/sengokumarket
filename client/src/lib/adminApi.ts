@@ -435,6 +435,14 @@ export function updateAdminUserRole(id: string, role: AdminUser['role']) {
   return adminSend<{ adminUser: AdminUser }>('PUT', `/admin-users/${id}/role`, { role });
 }
 
+export function resendAdminUserSetupEmail(id: string) {
+  return adminSend<{ success: true }>('POST', `/admin-users/${id}/resend-setup-email`);
+}
+
+export function deleteAdminUser(id: string) {
+  return adminSend<{ success: true }>('DELETE', `/admin-users/${id}`);
+}
+
 // --- クーポン管理(仕様書外の拡張) ---
 export interface AdminCoupon {
   id: string;

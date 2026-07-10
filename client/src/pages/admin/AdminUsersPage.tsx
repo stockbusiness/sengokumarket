@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { createAdminUser, fetchAdminUsers, updateAdminUserRole, type AdminUser } from '../../lib/adminApi';
+import {
+  createAdminUser,
+  deleteAdminUser,
+  fetchAdminUsers,
+  resendAdminUserSetupEmail,
+  updateAdminUserRole,
+  type AdminUser,
+} from '../../lib/adminApi';
 import EmptyState from '../../components/EmptyState';
 
 const ROLE_LABEL: Record<AdminUser['role'], string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
@@ -16,6 +23,7 @@ export default function AdminUsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
 
   function load() {
     fetchAdminUsers().then((d) => setAdminUsers(d.adminUsers));
@@ -48,6 +56,37 @@ export default function AdminUsersPage() {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '権限の変更に失敗しました');
+    }
+  }
+
+  async function handleResend(target: AdminUser) {
+    setError(null);
+    setMessage(null);
+    setPendingUserId(target.id);
+    try {
+      await resendAdminUserSetupEmail(target.id);
+      setMessage(`${target.name}さんにパスワード設定メールを再送しました。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'メールの再送に失敗しました');
+    } finally {
+      setPendingUserId(null);
+    }
+  }
+
+  async function handleDelete(target: AdminUser) {
+    if (!window.confirm(`${target.name}さん(${target.email})のアカウントを削除します。よろしいですか？`)) return;
+
+    setError(null);
+    setMessage(null);
+    setPendingUserId(target.id);
+    try {
+      await deleteAdminUser(target.id);
+      setMessage(`${target.name}さんのアカウントを削除しました。`);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '削除に失敗しました');
+    } finally {
+      setPendingUserId(null);
     }
   }
 
@@ -98,6 +137,7 @@ export default function AdminUsersPage() {
                 <th>氏名</th>
                 <th>メールアドレス</th>
                 <th>権限</th>
+                {isFullAdmin && <th>操作</th>}
               </tr>
             </thead>
             <tbody>
@@ -116,6 +156,28 @@ export default function AdminUsersPage() {
                       ROLE_LABEL[u.role]
                     )}
                   </td>
+                  {isFullAdmin && (
+                    <td>
+                      <button
+                        type="button"
+                        className="btn-secondary btn-small"
+                        disabled={pendingUserId === u.id}
+                        onClick={() => handleResend(u)}
+                      >
+                        設定メール再送
+                      </button>{' '}
+                      {u.id !== user?.id && (
+                        <button
+                          type="button"
+                          className="btn-secondary btn-small"
+                          disabled={pendingUserId === u.id}
+                          onClick={() => handleDelete(u)}
+                        >
+                          削除
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

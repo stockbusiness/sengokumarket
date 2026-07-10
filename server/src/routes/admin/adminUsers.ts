@@ -84,4 +84,38 @@ router.put('/admin-users/:id/role', async (req, res) => {
   res.json({ adminUser: { id: updated.id, name: updated.name, email: updated.email, role: updated.role, createdAt: updated.createdAt } });
 });
 
+// 仕様書外の拡張: メール未達等でパスワード設定リンクが届いていない場合に、
+// 新しいトークンを発行して設定メールを再送する。
+router.post('/admin-users/:id/resend-setup-email', async (req, res) => {
+  const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!target || !ADMIN_ROLES.includes(target.role as AdminRole)) {
+    return sendError(res, 404, 'ADMIN_USER_NOT_FOUND', '管理者アカウントが見つかりません');
+  }
+
+  const token = await createPasswordResetToken(target.id);
+  await sendAdminAccountSetupEmail(target.email, target.name, token, ROLE_LABEL[target.role as AdminRole]);
+
+  res.json({ success: true });
+});
+
+router.delete('/admin-users/:id', async (req, res) => {
+  const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!target || !ADMIN_ROLES.includes(target.role as AdminRole)) {
+    return sendError(res, 404, 'ADMIN_USER_NOT_FOUND', '管理者アカウントが見つかりません');
+  }
+
+  if (target.id === req.authUser!.id) {
+    return sendError(res, 400, 'CANNOT_DELETE_SELF', '自分自身のアカウントは削除できません。別の管理者に依頼してください');
+  }
+
+  // password_reset_tokens/notice_readsはUserへの物理FKがあるため、削除前に関連行を消す。
+  await prisma.$transaction(async (tx) => {
+    await tx.passwordResetToken.deleteMany({ where: { userId: target.id } });
+    await tx.noticeRead.deleteMany({ where: { userId: target.id } });
+    await tx.user.delete({ where: { id: target.id } });
+  });
+
+  res.json({ success: true });
+});
+
 export default router;

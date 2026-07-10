@@ -112,4 +112,54 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     const list = await agent.get('/api/admin/admin-users');
     expect(list.body.adminUsers.some((u: { email: string }) => u.email === email)).toBe(true);
   });
+
+  it('パスワード設定メールを再送できる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const { userId: viewerUserId } = await createViewerAgent('再送対象太郎');
+
+    sendAdminAccountSetupEmail.mockClear();
+    const res = await agent.post(`/api/admin/admin-users/${viewerUserId}/resend-setup-email`).set('Origin', TEST_ORIGIN).send({});
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(sendAdminAccountSetupEmail).toHaveBeenCalledWith(expect.any(String), '再送対象太郎', expect.any(String), '閲覧専用管理者');
+  });
+
+  it('存在しないアカウントへの再送は404になる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .post('/api/admin/admin-users/00000000-0000-0000-0000-000000000000/resend-setup-email')
+      .set('Origin', TEST_ORIGIN)
+      .send({});
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('ADMIN_USER_NOT_FOUND');
+  });
+
+  it('自分自身のアカウントは削除できない', async () => {
+    const { agent, userId } = await createAdminAgent(app);
+    const res = await agent.delete(`/api/admin/admin-users/${userId}`).set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('CANNOT_DELETE_SELF');
+  });
+
+  it('管理者は他の管理者アカウントを削除でき、一覧から消える', async () => {
+    const { agent } = await createAdminAgent(app);
+    const { userId: viewerUserId } = await createViewerAgent('削除対象太郎');
+
+    const res = await agent.delete(`/api/admin/admin-users/${viewerUserId}`).set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const found = await prisma.user.findUnique({ where: { id: viewerUserId } });
+    expect(found).toBeNull();
+  });
+
+  it('閲覧専用アカウントは削除操作も403になる', async () => {
+    const { agent: viewerAgent } = await createViewerAgent('削除権限確認太郎');
+    const { userId: targetId } = await createViewerAgent('削除される側太郎');
+
+    const res = await viewerAgent.delete(`/api/admin/admin-users/${targetId}`).set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('READONLY_ADMIN');
+  });
 });
