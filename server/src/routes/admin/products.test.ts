@@ -1,8 +1,14 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
+
+const put = vi.fn(async (pathname: string) => ({ url: `https://example-blob.vercel-storage.com/${pathname}` }));
+
+vi.mock('@vercel/blob', () => ({
+  put: (...args: [string, unknown, unknown]) => put(...args),
+}));
 
 const app = createApp();
 
@@ -82,6 +88,58 @@ describe('管理API: 商品管理', () => {
 
     const found = await prisma.product.findUnique({ where: { id: productId } });
     expect(found).toBeNull();
+  });
+
+  describe('商品画像アップロード(仕様書外の拡張・Vercel Blob)', () => {
+    const originalToken = process.env.BLOB_READ_WRITE_TOKEN;
+
+    beforeEach(() => {
+      process.env.BLOB_READ_WRITE_TOKEN = 'test-token';
+      put.mockClear();
+    });
+
+    afterEach(() => {
+      process.env.BLOB_READ_WRITE_TOKEN = originalToken;
+    });
+
+    it('対応形式の画像をアップロードするとURLが返る', async () => {
+      const res = await agent
+        .post('/api/admin/products/upload-image')
+        .set('Origin', TEST_ORIGIN)
+        .attach('image', Buffer.from('fake-image-bytes'), { filename: 'test.png', contentType: 'image/png' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.url).toContain('products/');
+      expect(put).toHaveBeenCalledTimes(1);
+    });
+
+    it('ファイルが無い場合は400を返す', async () => {
+      const res = await agent.post('/api/admin/products/upload-image').set('Origin', TEST_ORIGIN);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('対応していない形式は400を返す', async () => {
+      const res = await agent
+        .post('/api/admin/products/upload-image')
+        .set('Origin', TEST_ORIGIN)
+        .attach('image', Buffer.from('not-an-image'), { filename: 'test.txt', contentType: 'text/plain' });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('BLOB_READ_WRITE_TOKEN未設定の場合は503を返す', async () => {
+      delete process.env.BLOB_READ_WRITE_TOKEN;
+
+      const res = await agent
+        .post('/api/admin/products/upload-image')
+        .set('Origin', TEST_ORIGIN)
+        .attach('image', Buffer.from('fake-image-bytes'), { filename: 'test.png', contentType: 'image/png' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error.code).toBe('BLOB_NOT_CONFIGURED');
+    });
   });
 
   it('注文実績がある商品は削除できない(PRODUCT_HAS_ORDERS)', async () => {

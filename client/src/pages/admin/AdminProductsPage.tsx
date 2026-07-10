@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createAdminProduct,
   deleteAdminProduct,
   fetchAdminProducts,
   updateAdminProduct,
+  uploadAdminProductImage,
   type AdminProduct,
 } from '../../lib/adminApi';
 import StatusBadge from '../../components/StatusBadge';
@@ -11,6 +12,8 @@ import EmptyState from '../../components/EmptyState';
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 const STATUSES = ['draft', 'published', 'archived'];
+
+type StatusMessage = { type: 'success' | 'error'; text: string };
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -22,6 +25,10 @@ export default function AdminProductsPage() {
   const [basePrice, setBasePrice] = useState(0);
   const [imagesText, setImagesText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [uploadingNew, setUploadingNew] = useState(false);
+  const [uploadingRowId, setUploadingRowId] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
+  const imagesTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
 
   function parseImagesText(text: string): string[] {
     return text
@@ -35,6 +42,13 @@ export default function AdminProductsPage() {
   }
 
   useEffect(load, []);
+
+  // 保存の成否がその場で分かるよう、一定時間で自動的に消える通知を出す
+  // (これまでインライン編集の保存はサイレントで、失敗しても何も表示されなかった)。
+  function notify(type: StatusMessage['type'], text: string) {
+    setStatusMessage({ type, text });
+    setTimeout(() => setStatusMessage((cur) => (cur?.text === text ? null : cur)), 4000);
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -53,37 +67,89 @@ export default function AdminProductsPage() {
     }
   }
 
+  async function handleUploadForNewProduct(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploadingNew(true);
+    try {
+      for (const file of Array.from(files)) {
+        const { url } = await uploadAdminProductImage(file);
+        setImagesText((prev) => (prev.trim() ? `${prev}\n${url}` : url));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '画像のアップロードに失敗しました');
+    } finally {
+      setUploadingNew(false);
+    }
+  }
+
   async function updateStatus(product: AdminProduct, status: string) {
-    await updateAdminProduct(product.id, { status });
-    load();
+    try {
+      await updateAdminProduct(product.id, { status });
+      notify('success', `「${product.name}」のステータスを更新しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : 'ステータスの更新に失敗しました');
+    }
   }
 
   async function updateField(product: AdminProduct, field: 'name' | 'category' | 'itemType' | 'basePrice', value: string | number) {
-    await updateAdminProduct(product.id, { [field]: value });
-    load();
+    try {
+      await updateAdminProduct(product.id, { [field]: value });
+      notify('success', `「${product.name}」を更新しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '更新に失敗しました');
+    }
   }
 
   async function handleDelete(product: AdminProduct) {
     if (!window.confirm(`「${product.name}」を削除します。よろしいですか？(元に戻せません)`)) return;
-    setError(null);
     try {
       await deleteAdminProduct(product.id);
+      notify('success', `「${product.name}」を削除しました`);
       load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : '削除に失敗しました');
+      notify('error', e instanceof Error ? e.message : '削除に失敗しました');
     }
   }
 
-  async function updateStock(product: AdminProduct, variantId: string, stock: number) {
-    await updateAdminProduct(product.id, {
-      variants: [{ id: variantId, stock }],
-    });
-    load();
+  async function updateStock(product: AdminProduct, variantId: string, variantName: string, stock: number) {
+    try {
+      await updateAdminProduct(product.id, { variants: [{ id: variantId, stock }] });
+      notify('success', `「${product.name}」の${variantName}の在庫数を更新しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '在庫数の更新に失敗しました');
+    }
   }
 
   async function updateImages(product: AdminProduct, text: string) {
-    await updateAdminProduct(product.id, { images: parseImagesText(text) });
-    load();
+    try {
+      await updateAdminProduct(product.id, { images: parseImagesText(text) });
+      notify('success', `「${product.name}」の商品画像を更新しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '商品画像の更新に失敗しました');
+    }
+  }
+
+  async function handleUploadForRow(product: AdminProduct, files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploadingRowId(product.id);
+    try {
+      const textarea = imagesTextareaRefs.current[product.id];
+      let current = textarea?.value ?? product.images.join('\n');
+      for (const file of Array.from(files)) {
+        const { url } = await uploadAdminProductImage(file);
+        current = current.trim() ? `${current}\n${url}` : url;
+      }
+      if (textarea) textarea.value = current;
+      await updateImages(product, current);
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '画像のアップロードに失敗しました');
+    } finally {
+      setUploadingRowId(null);
+    }
   }
 
   return (
@@ -126,7 +192,18 @@ export default function AdminProductsPage() {
             <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
           </label>
           <label>
-            商品画像(画像URLを1行に1つずつ入力。先頭が一覧・共有時のサムネイルになります)
+            商品画像を選択してアップロード(先頭が一覧・共有時のサムネイルになります)
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              disabled={uploadingNew}
+              onChange={(e) => handleUploadForNewProduct(e.target.files)}
+            />
+          </label>
+          {uploadingNew && <p>アップロード中です...</p>}
+          <label>
+            商品画像URL(アップロード済みの画像が自動で入ります。外部URLを直接指定することもできます)
             <textarea
               value={imagesText}
               onChange={(e) => setImagesText(e.target.value)}
@@ -142,6 +219,7 @@ export default function AdminProductsPage() {
       )}
 
       {error && !showForm && <p className="checkout-error">{error}</p>}
+      {statusMessage && <p className={statusMessage.type === 'error' ? 'checkout-error' : 'admin-status-success'}>{statusMessage.text}</p>}
 
       {products.length === 0 ? (
         <div className="admin-table-card">
@@ -210,13 +288,24 @@ export default function AdminProductsPage() {
                           type="number"
                           className="admin-inline-input"
                           defaultValue={v.stock}
-                          onBlur={(e) => updateStock(p, v.id, Number(e.target.value))}
+                          onBlur={(e) => updateStock(p, v.id, v.name, Number(e.target.value))}
                         />
                       </div>
                     ))}
                   </td>
                   <td>
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      multiple
+                      disabled={uploadingRowId === p.id}
+                      onChange={(e) => handleUploadForRow(p, e.target.files)}
+                    />
+                    {uploadingRowId === p.id && <p>アップロード中...</p>}
                     <textarea
+                      ref={(el) => {
+                        imagesTextareaRefs.current[p.id] = el;
+                      }}
                       className="admin-inline-textarea"
                       defaultValue={p.images.join('\n')}
                       rows={2}

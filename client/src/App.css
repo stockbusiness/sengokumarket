@@ -316,6 +316,13 @@
   font-weight: 500;
 }
 
+/* インライン編集の保存結果を一時的に知らせる通知(商品管理等)。保存の成否が
+   これまで画面上に一切出ていなかったための追加(仕様書外の拡張)。 */
+.admin-status-success {
+  color: var(--success);
+  font-weight: 500;
+}
+
 .checkout-payment-method {
   border: 1px solid var(--border);
   border-radius: 8px;

@@ -1,4 +1,7 @@
+import crypto from 'crypto';
 import { Router } from 'express';
+import multer from 'multer';
+import { put } from '@vercel/blob';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 
@@ -6,6 +9,16 @@ const router = Router();
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 const STATUSES = ['draft', 'published', 'archived'];
+
+// 仕様書外の拡張: 商品画像アップロード。Vercelのサーバーレス実行環境はローカルディスクが
+// 永続化されないため、ディスクに書かず(memoryStorage)Vercel Blobへ直接アップロードする。
+const ALLOWED_IMAGE_TYPES: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/gif': 'gif',
+};
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -118,6 +131,39 @@ router.put('/products/:id', async (req, res) => {
 
   const product = await prisma.product.findUnique({ where: { id }, include: { variants: true } });
   res.json({ product });
+});
+
+router.post('/products/upload-image', (req, res, next) => {
+  upload.single('image')(req, res, (err) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return sendError(res, 400, 'VALIDATION_ERROR', '画像ファイルは5MB以下にしてください');
+    }
+    if (err) return next(err);
+
+    void (async () => {
+      if (!req.file) {
+        return sendError(res, 400, 'VALIDATION_ERROR', '画像ファイルを選択してください');
+      }
+      const ext = ALLOWED_IMAGE_TYPES[req.file.mimetype];
+      if (!ext) {
+        return sendError(res, 400, 'VALIDATION_ERROR', '対応していない画像形式です(jpeg/png/webp/gifのみ)');
+      }
+      if (!process.env.BLOB_READ_WRITE_TOKEN) {
+        return sendError(res, 503, 'BLOB_NOT_CONFIGURED', '画像アップロード機能が未設定です');
+      }
+
+      try {
+        const blob = await put(`products/${crypto.randomUUID()}.${ext}`, req.file.buffer, {
+          access: 'public',
+          contentType: req.file.mimetype,
+        });
+        res.status(201).json({ url: blob.url });
+      } catch (e) {
+        console.error('product image upload failed', e);
+        sendError(res, 500, 'UPLOAD_FAILED', '画像のアップロードに失敗しました');
+      }
+    })();
+  });
 });
 
 // 仕様書外の拡張: 注文実績(order_items/nft_issues)がある商品は、スナップショット原則を

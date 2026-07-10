@@ -91,6 +91,19 @@ export function deleteAdminProduct(id: string) {
   return adminSend<{ success: true }>('DELETE', `/products/${id}`);
 }
 
+// 画像ファイルはJSONで送れないため、adminSendとは別にmultipart/form-dataで送信する。
+export async function uploadAdminProductImage(file: File): Promise<{ url: string }> {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const res = await fetch('/api/admin/products/upload-image', { method: 'POST', body: formData });
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new ApiError(res.status, body?.error?.code, body?.error?.message ?? `アップロードに失敗しました(${res.status})`);
+  }
+  return body;
+}
+
 // --- Orders ---
 export interface AdminOrder {
   id: string;
