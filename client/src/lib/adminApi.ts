@@ -91,6 +91,10 @@ export function deleteAdminProduct(id: string) {
   return adminSend<{ success: true }>('DELETE', `/products/${id}`);
 }
 
+export function deleteAdminProductVariant(productId: string, variantId: string) {
+  return adminSend<{ product: AdminProduct }>('DELETE', `/products/${productId}/variants/${variantId}`);
+}
+
 // 画像ファイルはJSONで送れないため、adminSendとは別にmultipart/form-dataで送信する。
 export async function uploadAdminProductImage(file: File): Promise<{ url: string }> {
   const formData = new FormData();

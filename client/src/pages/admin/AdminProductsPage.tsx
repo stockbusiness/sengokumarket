@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createAdminProduct,
   deleteAdminProduct,
+  deleteAdminProductVariant,
   fetchAdminProducts,
   updateAdminProduct,
   uploadAdminProductImage,
@@ -207,6 +208,17 @@ export default function AdminProductsPage() {
       load();
     } catch (e) {
       notify('error', e instanceof Error ? e.message : 'バリエーションの追加に失敗しました');
+    }
+  }
+
+  async function handleDeleteVariant(product: AdminProduct, variantId: string, variantName: string) {
+    if (!window.confirm(`「${product.name}」の「${variantName}」を削除します。よろしいですか？`)) return;
+    try {
+      await deleteAdminProductVariant(product.id, variantId);
+      notify('success', `「${product.name}」の「${variantName}」を削除しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : 'バリエーションの削除に失敗しました');
     }
   }
 
@@ -471,6 +483,13 @@ export default function AdminProductsPage() {
                           defaultValue={v.stock}
                           onBlur={(e) => updateStock(p, v.id, v.name, Number(e.target.value))}
                         />
+                        <button
+                          type="button"
+                          className="btn-secondary btn-small"
+                          onClick={() => handleDeleteVariant(p, v.id, v.name)}
+                        >
+                          削除
+                        </button>
                       </div>
                     ))}
                     <div className="admin-variant-row">

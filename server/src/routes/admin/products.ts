@@ -133,6 +133,27 @@ router.put('/products/:id', async (req, res) => {
   res.json({ product });
 });
 
+// 仕様書外の拡張: 誤って追加したバリエーション(名前の付け間違い等)を削除できるようにする。
+// 注文実績(order_items/nft_issues)があるバリエーションは削除させない。
+router.delete('/products/:productId/variants/:variantId', async (req, res) => {
+  const { productId, variantId } = req.params;
+
+  const variant = await prisma.productVariant.findUnique({ where: { id: variantId } });
+  if (!variant || variant.productId !== productId) {
+    return sendError(res, 404, 'VARIANT_NOT_FOUND', 'バリエーションが見つかりません');
+  }
+
+  const orderItemCount = await prisma.orderItem.count({ where: { variantId } });
+  if (orderItemCount > 0) {
+    return sendError(res, 409, 'VARIANT_HAS_ORDERS', 'このバリエーションは注文実績があるため削除できません');
+  }
+
+  await prisma.productVariant.delete({ where: { id: variantId } });
+
+  const product = await prisma.product.findUnique({ where: { id: productId }, include: { variants: true } });
+  res.json({ product });
+});
+
 router.post('/products/upload-image', (req, res, next) => {
   upload.single('image')(req, res, (err) => {
     if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {

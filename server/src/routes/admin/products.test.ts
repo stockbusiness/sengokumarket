@@ -4,7 +4,7 @@ import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 
-const put = vi.fn(async (pathname: string) => ({ url: `https://example-blob.vercel-storage.com/${pathname}` }));
+const put = vi.fn(async (pathname: string, ..._rest: unknown[]) => ({ url: `https://example-blob.vercel-storage.com/${pathname}` }));
 
 vi.mock('@vercel/blob', () => ({
   put: (...args: [string, unknown, unknown]) => put(...args),
@@ -139,6 +139,99 @@ describe('管理API: 商品管理', () => {
 
       expect(res.status).toBe(503);
       expect(res.body.error.code).toBe('BLOB_NOT_CONFIGURED');
+    });
+  });
+
+  describe('バリエーション削除(仕様書外の拡張)', () => {
+    it('注文実績が無いバリエーションは削除できる', async () => {
+      const createRes = await agent
+        .post('/api/admin/products')
+        .set('Origin', TEST_ORIGIN)
+        .send({
+          name: 'バリエーション削除テスト',
+          slug: `${slug}-variant-deletable`,
+          category: 'テスト',
+          itemType: 'nft',
+          basePrice: 1000,
+          variants: [{ name: '間違えて追加した行', price: 1000, stock: 0 }],
+        });
+      const productId = createRes.body.product.id;
+      const variantId = createRes.body.product.variants[0].id;
+
+      const res = await agent.delete(`/api/admin/products/${productId}/variants/${variantId}`).set('Origin', TEST_ORIGIN);
+      expect(res.status).toBe(200);
+      expect(res.body.product.variants).toHaveLength(0);
+
+      await prisma.product.delete({ where: { id: productId } });
+    });
+
+    it('存在しないバリエーションの削除は404を返す', async () => {
+      const product = await prisma.product.findUniqueOrThrow({ where: { slug } });
+      const res = await agent
+        .delete(`/api/admin/products/${product.id}/variants/00000000-0000-0000-0000-000000000000`)
+        .set('Origin', TEST_ORIGIN);
+      expect(res.status).toBe(404);
+      expect(res.body.error.code).toBe('VARIANT_NOT_FOUND');
+    });
+
+    it('注文実績があるバリエーションは削除できない(VARIANT_HAS_ORDERS)', async () => {
+      const createRes = await agent
+        .post('/api/admin/products')
+        .set('Origin', TEST_ORIGIN)
+        .send({
+          name: 'バリエーション削除禁止テスト',
+          slug: `${slug}-variant-blocked`,
+          category: 'テスト',
+          itemType: 'nft',
+          basePrice: 1000,
+          variants: [{ name: '注文済み', price: 1000, stock: 5 }],
+        });
+      const product = createRes.body.product;
+      const variant = product.variants[0];
+
+      const user = await prisma.user.create({
+        data: {
+          name: 'admin-test バリエーション注文者',
+          email: `admin-test-variant-orderer-${Date.now()}@example.com`,
+          passwordHash: 'unused',
+        },
+      });
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `admin-test-variant-order-${Date.now()}`,
+          user: { connect: { id: user.id } },
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          totalAmount: 1000,
+          originalAmount: 1000,
+          customerName: '注文者',
+          customerEmail: user.email,
+          termsAgreedAt: new Date(),
+          termsVersion: '1',
+          orderItems: {
+            create: {
+              productId: product.id,
+              variantId: variant.id,
+              productName: product.name,
+              variantName: variant.name,
+              itemType: product.itemType,
+              quantity: 1,
+              unitPrice: 1000,
+              subtotal: 1000,
+            },
+          },
+        },
+      });
+
+      const res = await agent.delete(`/api/admin/products/${product.id}/variants/${variant.id}`).set('Origin', TEST_ORIGIN);
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('VARIANT_HAS_ORDERS');
+
+      await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.productVariant.deleteMany({ where: { productId: product.id } });
+      await prisma.product.delete({ where: { id: product.id } });
     });
   });
 
