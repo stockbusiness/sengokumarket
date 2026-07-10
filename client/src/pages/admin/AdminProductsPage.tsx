@@ -30,6 +30,11 @@ function toTaxExcludedEstimate(amount: number): number {
 }
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
+interface VariantRow {
+  name: string;
+  stock: number;
+}
+const DEFAULT_VARIANT_ROWS: VariantRow[] = [{ name: '通常', stock: 0 }];
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -41,6 +46,7 @@ export default function AdminProductsPage() {
   const [basePrice, setBasePrice] = useState(0);
   const [priceMode, setPriceMode] = useState<PriceMode>('included');
   const [rowPriceMode, setRowPriceMode] = useState<Record<string, PriceMode>>({});
+  const [variantRows, setVariantRows] = useState<VariantRow[]>(DEFAULT_VARIANT_ROWS);
   const [imagesText, setImagesText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [uploadingNew, setUploadingNew] = useState(false);
@@ -51,6 +57,7 @@ export default function AdminProductsPage() {
   // モード切替時に自動で書き換えた表示値を覚えておき、そこから実際に編集されていなければ
   // (=単に選択欄を切り替えてフォーカスが外れただけなら)保存自体をスキップする。
   const priceAutoSetValueRefs = useRef<Record<string, string>>({});
+  const [newVariantByProduct, setNewVariantByProduct] = useState<Record<string, VariantRow>>({});
 
   function parseImagesText(text: string): string[] {
     return text
@@ -72,26 +79,49 @@ export default function AdminProductsPage() {
     setTimeout(() => setStatusMessage((cur) => (cur?.text === text ? null : cur)), 4000);
   }
 
+  function addVariantRow() {
+    setVariantRows((prev) => [...prev, { name: '', stock: 0 }]);
+  }
+
+  function removeVariantRow(index: number) {
+    setVariantRows((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function updateVariantRow(index: number, field: keyof VariantRow, value: string | number) {
+    setVariantRows((prev) => prev.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
+  }
+
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    const validVariants = variantRows.filter((v) => v.name.trim());
+    if (validVariants.length === 0) {
+      setError('バリエーションを1つ以上入力してください(在庫が無いと購入できません)');
+      return;
+    }
+
     try {
+      const finalPrice = toTaxIncluded(basePrice, priceMode);
       await createAdminProduct({
         name,
         slug,
         category,
         itemType,
-        basePrice: toTaxIncluded(basePrice, priceMode),
+        basePrice: finalPrice,
         status: 'draft',
         images: parseImagesText(imagesText),
+        variants: validVariants.map((v) => ({ name: v.name.trim(), price: finalPrice, stock: v.stock })),
       });
       setName('');
       setSlug('');
       setCategory('');
       setBasePrice(0);
       setPriceMode('included');
+      setVariantRows(DEFAULT_VARIANT_ROWS);
       setImagesText('');
       setShowForm(false);
+      notify('success', `「${name}」を作成しました`);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : '作成に失敗しました');
@@ -164,6 +194,22 @@ export default function AdminProductsPage() {
     }
   }
 
+  async function handleAddVariant(product: AdminProduct) {
+    const draft = newVariantByProduct[product.id];
+    if (!draft || !draft.name.trim()) {
+      notify('error', 'バリエーション名を入力してください');
+      return;
+    }
+    try {
+      await updateAdminProduct(product.id, { variants: [{ name: draft.name.trim(), price: product.basePrice, stock: draft.stock }] });
+      notify('success', `「${product.name}」に「${draft.name.trim()}」を追加しました`);
+      setNewVariantByProduct((prev) => ({ ...prev, [product.id]: { name: '', stock: 0 } }));
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : 'バリエーションの追加に失敗しました');
+    }
+  }
+
   async function handleUploadForRow(product: AdminProduct, files: FileList | null) {
     if (!files || files.length === 0) return;
     setUploadingRowId(product.id);
@@ -195,80 +241,129 @@ export default function AdminProductsPage() {
       </button>
 
       {showForm && (
-        <form onSubmit={handleCreate} className="admin-form-card">
-          <label>
-            商品名
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
-          </label>
-          <label>
-            slug
-            <input type="text" value={slug} onChange={(e) => setSlug(e.target.value)} required />
-          </label>
-          <label>
-            カテゴリ
-            <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} required />
-          </label>
-          <label>
-            商品タイプ
-            <select value={itemType} onChange={(e) => setItemType(e.target.value)}>
-              {ITEM_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            価格(消費税10%)
-            <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
-          </label>
-          <div className="admin-tax-mode">
+        <form onSubmit={handleCreate} className="admin-form-card admin-form-card--wide">
+          <div className="admin-form-section">
+            <h2 className="admin-form-section__title">基本情報</h2>
             <label>
-              <input
-                type="radio"
-                name="price-mode-new"
-                value="included"
-                checked={priceMode === 'included'}
-                onChange={() => setPriceMode('included')}
-              />
-              税込価格として入力
+              商品名
+              <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
             </label>
             <label>
-              <input
-                type="radio"
-                name="price-mode-new"
-                value="excluded"
-                checked={priceMode === 'excluded'}
-                onChange={() => setPriceMode('excluded')}
-              />
-              税別価格として入力
+              slug(商品ページのURLに使われます。半角英数とハイフンのみ)
+              <input type="text" value={slug} onChange={(e) => setSlug(e.target.value)} required />
             </label>
-            {priceMode === 'excluded' && (
-              <span className="admin-tax-mode__preview">
-                → 税込 {toTaxIncluded(basePrice, 'excluded').toLocaleString()}円で登録されます
-              </span>
-            )}
+            <label>
+              カテゴリ
+              <input type="text" value={category} onChange={(e) => setCategory(e.target.value)} required />
+            </label>
+            <label>
+              商品タイプ
+              <select value={itemType} onChange={(e) => setItemType(e.target.value)}>
+                {ITEM_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <label>
-            商品画像を選択してアップロード(先頭が一覧・共有時のサムネイルになります)
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              disabled={uploadingNew}
-              onChange={(e) => handleUploadForNewProduct(e.target.files)}
-            />
-          </label>
-          {uploadingNew && <p>アップロード中です...</p>}
-          <label>
-            商品画像URL(アップロード済みの画像が自動で入ります。外部URLを直接指定することもできます)
-            <textarea
-              value={imagesText}
-              onChange={(e) => setImagesText(e.target.value)}
-              rows={3}
-              placeholder={'https://example.com/image1.jpg\nhttps://example.com/image2.jpg'}
-            />
-          </label>
+
+          <div className="admin-form-section">
+            <h2 className="admin-form-section__title">価格(消費税10%)</h2>
+            <label>
+              価格
+              <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
+            </label>
+            <div className="admin-tax-mode">
+              <label>
+                <input
+                  type="radio"
+                  name="price-mode-new"
+                  value="included"
+                  checked={priceMode === 'included'}
+                  onChange={() => setPriceMode('included')}
+                />
+                税込価格として入力
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="price-mode-new"
+                  value="excluded"
+                  checked={priceMode === 'excluded'}
+                  onChange={() => setPriceMode('excluded')}
+                />
+                税別価格として入力
+              </label>
+              {priceMode === 'excluded' && (
+                <span className="admin-tax-mode__preview">
+                  → 税込 {toTaxIncluded(basePrice, 'excluded').toLocaleString()}円で登録されます
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="admin-form-section">
+            <h2 className="admin-form-section__title">バリエーション・在庫</h2>
+            <p className="admin-form-section__hint">
+              色・サイズ等の選択肢ごとに、名前と在庫数(個数)を入力してください。ここで在庫数を設定しないと購入できません。
+            </p>
+            {variantRows.map((row, index) => (
+              <div className="admin-variant-row" key={index}>
+                <label className="admin-variant-row__name">
+                  バリエーション名
+                  <input
+                    type="text"
+                    value={row.name}
+                    placeholder="例: 通常、RED、Black"
+                    onChange={(e) => updateVariantRow(index, 'name', e.target.value)}
+                  />
+                </label>
+                <label className="admin-variant-row__stock">
+                  在庫数
+                  <input
+                    type="number"
+                    value={row.stock}
+                    min={0}
+                    onChange={(e) => updateVariantRow(index, 'stock', Number(e.target.value))}
+                  />
+                </label>
+                {variantRows.length > 1 && (
+                  <button type="button" className="btn-secondary btn-small" onClick={() => removeVariantRow(index)}>
+                    削除
+                  </button>
+                )}
+              </div>
+            ))}
+            <button type="button" className="btn-secondary btn-small" onClick={addVariantRow}>
+              + バリエーションを追加
+            </button>
+          </div>
+
+          <div className="admin-form-section">
+            <h2 className="admin-form-section__title">商品画像</h2>
+            <label>
+              画像を選択してアップロード(先頭が一覧・共有時のサムネイルになります)
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                multiple
+                disabled={uploadingNew}
+                onChange={(e) => handleUploadForNewProduct(e.target.files)}
+              />
+            </label>
+            {uploadingNew && <p>アップロード中です...</p>}
+            <label>
+              商品画像URL(アップロード済みの画像が自動で入ります。外部URLを直接指定することもできます)
+              <textarea
+                value={imagesText}
+                onChange={(e) => setImagesText(e.target.value)}
+                rows={3}
+                placeholder={'https://example.com/image1.jpg\nhttps://example.com/image2.jpg'}
+              />
+            </label>
+          </div>
+
           {error && <p className="checkout-error">{error}</p>}
           <button type="submit" className="btn-primary">
             作成する
@@ -366,6 +461,7 @@ export default function AdminProductsPage() {
                     </select>
                   </td>
                   <td>
+                    {p.variants.length === 0 && <p className="checkout-error">バリエーションが無く購入できません</p>}
                     {p.variants.map((v) => (
                       <div key={v.id}>
                         {v.name}:
@@ -377,6 +473,35 @@ export default function AdminProductsPage() {
                         />
                       </div>
                     ))}
+                    <div className="admin-variant-row">
+                      <input
+                        type="text"
+                        className="admin-inline-input--text"
+                        placeholder="バリエーション名"
+                        value={newVariantByProduct[p.id]?.name ?? ''}
+                        onChange={(e) =>
+                          setNewVariantByProduct((prev) => ({
+                            ...prev,
+                            [p.id]: { name: e.target.value, stock: prev[p.id]?.stock ?? 0 },
+                          }))
+                        }
+                      />
+                      <input
+                        type="number"
+                        className="admin-inline-input"
+                        placeholder="在庫"
+                        value={newVariantByProduct[p.id]?.stock ?? 0}
+                        onChange={(e) =>
+                          setNewVariantByProduct((prev) => ({
+                            ...prev,
+                            [p.id]: { name: prev[p.id]?.name ?? '', stock: Number(e.target.value) },
+                          }))
+                        }
+                      />
+                      <button type="button" className="btn-secondary btn-small" onClick={() => handleAddVariant(p)}>
+                        追加
+                      </button>
+                    </div>
                   </td>
                   <td>
                     <input

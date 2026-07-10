@@ -1073,7 +1073,47 @@
 }
 
 .admin-form-card--wide {
-  max-width: none;
+  max-width: 640px;
+}
+
+/* 商品登録フォーム等、項目数が多いフォームを見出し付きのセクションに分けて
+   読みやすくする(仕様書外の拡張。40代以上にもわかりやすいUI方針)。 */
+.admin-form-section {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.admin-form-section:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.admin-form-section__title {
+  font-size: 1em;
+  color: var(--text-h);
+  margin: 0 0 12px;
+}
+
+.admin-form-section__hint {
+  color: var(--text-muted);
+  font-size: 0.9em;
+  margin: -4px 0 12px;
+}
+
+.admin-variant-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.admin-variant-row__name {
+  flex: 2 1 200px;
+}
+
+.admin-variant-row__stock {
+  flex: 1 1 100px;
 }
 
 .referral-links-form label,
