@@ -42,6 +42,7 @@ export default function AdminProductsPage() {
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
+  const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [itemType, setItemType] = useState('nft');
   const [basePrice, setBasePrice] = useState(0);
@@ -107,6 +108,7 @@ export default function AdminProductsPage() {
       await createAdminProduct({
         name,
         slug,
+        description: description.trim() || null,
         category,
         itemType,
         basePrice: finalPrice,
@@ -116,6 +118,7 @@ export default function AdminProductsPage() {
       });
       setName('');
       setSlug('');
+      setDescription('');
       setCategory('');
       setBasePrice(0);
       setPriceMode('included');
@@ -154,7 +157,11 @@ export default function AdminProductsPage() {
     }
   }
 
-  async function updateField(product: AdminProduct, field: 'name' | 'category' | 'itemType' | 'basePrice', value: string | number) {
+  async function updateField(
+    product: AdminProduct,
+    field: 'name' | 'category' | 'itemType' | 'basePrice' | 'description',
+    value: string | number | null,
+  ) {
     try {
       await updateAdminProduct(product.id, { [field]: value });
       notify('success', `「${product.name}」を更新しました`);
@@ -259,6 +266,15 @@ export default function AdminProductsPage() {
             <label>
               商品名
               <input type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+            </label>
+            <label>
+              商品説明(商品ページに表示されます。改行もそのまま反映されます)
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                rows={4}
+                placeholder="商品の魅力や特典の内容などを入力してください"
+              />
             </label>
             <label>
               slug(商品ページのURLに使われます。半角英数とハイフンのみ)
@@ -414,6 +430,16 @@ export default function AdminProductsPage() {
                       className="admin-inline-input--text"
                       defaultValue={p.name}
                       onBlur={(e) => e.target.value.trim() && e.target.value !== p.name && updateField(p, 'name', e.target.value.trim())}
+                    />
+                    <textarea
+                      className="admin-inline-textarea"
+                      defaultValue={p.description ?? ''}
+                      rows={2}
+                      placeholder="商品説明"
+                      onBlur={(e) => {
+                        const value = e.target.value.trim();
+                        if (value !== (p.description ?? '')) updateField(p, 'description', value || null);
+                      }}
                     />
                   </td>
                   <td>{p.slug}</td>
