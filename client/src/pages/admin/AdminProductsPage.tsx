@@ -12,6 +12,22 @@ import EmptyState from '../../components/EmptyState';
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 const STATUSES = ['draft', 'published', 'archived'];
+// 仕様書外の拡張: 価格入力を税込/税別のどちらでも受け付けられるようにする。
+// 保存される金額(basePrice/variant.price)は常に実際の決済金額(税込)であり、
+// この変換はあくまで入力時の利便性のためのもの(仕様書v1.5 コーディング規約「金額は
+// すべてINTEGER(円)」を維持し、税別入力時は税込金額に変換してから送信する)。
+const TAX_RATE = 0.1;
+type PriceMode = 'included' | 'excluded';
+
+function toTaxIncluded(amount: number, mode: PriceMode): number {
+  return mode === 'excluded' ? Math.floor(amount * (1 + TAX_RATE)) : amount;
+}
+
+// 税込価格から税別価格の目安を逆算する(モード切替時に入力欄の表示を作り直すためだけに使う。
+// 保存処理では使わない)。
+function toTaxExcludedEstimate(amount: number): number {
+  return Math.round(amount / (1 + TAX_RATE));
+}
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
 
@@ -23,12 +39,18 @@ export default function AdminProductsPage() {
   const [category, setCategory] = useState('');
   const [itemType, setItemType] = useState('nft');
   const [basePrice, setBasePrice] = useState(0);
+  const [priceMode, setPriceMode] = useState<PriceMode>('included');
+  const [rowPriceMode, setRowPriceMode] = useState<Record<string, PriceMode>>({});
   const [imagesText, setImagesText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [uploadingNew, setUploadingNew] = useState(false);
   const [uploadingRowId, setUploadingRowId] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
   const imagesTextareaRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const priceInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  // モード切替時に自動で書き換えた表示値を覚えておき、そこから実際に編集されていなければ
+  // (=単に選択欄を切り替えてフォーカスが外れただけなら)保存自体をスキップする。
+  const priceAutoSetValueRefs = useRef<Record<string, string>>({});
 
   function parseImagesText(text: string): string[] {
     return text
@@ -54,11 +76,20 @@ export default function AdminProductsPage() {
     e.preventDefault();
     setError(null);
     try {
-      await createAdminProduct({ name, slug, category, itemType, basePrice, status: 'draft', images: parseImagesText(imagesText) });
+      await createAdminProduct({
+        name,
+        slug,
+        category,
+        itemType,
+        basePrice: toTaxIncluded(basePrice, priceMode),
+        status: 'draft',
+        images: parseImagesText(imagesText),
+      });
       setName('');
       setSlug('');
       setCategory('');
       setBasePrice(0);
+      setPriceMode('included');
       setImagesText('');
       setShowForm(false);
       load();
@@ -188,9 +219,36 @@ export default function AdminProductsPage() {
             </select>
           </label>
           <label>
-            価格
+            価格(消費税10%)
             <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
           </label>
+          <div className="admin-tax-mode">
+            <label>
+              <input
+                type="radio"
+                name="price-mode-new"
+                value="included"
+                checked={priceMode === 'included'}
+                onChange={() => setPriceMode('included')}
+              />
+              税込価格として入力
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="price-mode-new"
+                value="excluded"
+                checked={priceMode === 'excluded'}
+                onChange={() => setPriceMode('excluded')}
+              />
+              税別価格として入力
+            </label>
+            {priceMode === 'excluded' && (
+              <span className="admin-tax-mode__preview">
+                → 税込 {toTaxIncluded(basePrice, 'excluded').toLocaleString()}円で登録されます
+              </span>
+            )}
+          </div>
           <label>
             商品画像を選択してアップロード(先頭が一覧・共有時のサムネイルになります)
             <input
@@ -265,10 +323,37 @@ export default function AdminProductsPage() {
                     <input
                       type="number"
                       className="admin-inline-input"
+                      ref={(el) => {
+                        priceInputRefs.current[p.id] = el;
+                      }}
                       defaultValue={p.basePrice}
-                      onBlur={(e) => Number(e.target.value) !== p.basePrice && updateField(p, 'basePrice', Number(e.target.value))}
+                      onBlur={(e) => {
+                        // モード切替時に自動で入れた値のまま(実際には編集していない)なら何もしない。
+                        if (e.target.value === priceAutoSetValueRefs.current[p.id]) return;
+                        const entered = Number(e.target.value);
+                        const finalPrice = toTaxIncluded(entered, rowPriceMode[p.id] ?? 'included');
+                        if (finalPrice !== p.basePrice) updateField(p, 'basePrice', finalPrice);
+                      }}
                     />
                     円
+                    <select
+                      className="admin-tax-mode__select"
+                      value={rowPriceMode[p.id] ?? 'included'}
+                      onChange={(e) => {
+                        const mode = e.target.value as PriceMode;
+                        setRowPriceMode((prev) => ({ ...prev, [p.id]: mode }));
+                        // モード切替だけで金額が変わらないよう、表示中の数値をモードに合わせて
+                        // 作り直す(税込表示中の数値をそのまま税別として送信してしまう事故を防ぐ)。
+                        // ここで入れた値のまま編集されずにblurした場合は保存自体をスキップする。
+                        const autoValue = String(mode === 'excluded' ? toTaxExcludedEstimate(p.basePrice) : p.basePrice);
+                        priceAutoSetValueRefs.current[p.id] = autoValue;
+                        const input = priceInputRefs.current[p.id];
+                        if (input) input.value = autoValue;
+                      }}
+                    >
+                      <option value="included">税込入力</option>
+                      <option value="excluded">税別入力</option>
+                    </select>
                   </td>
                   <td>
                     <StatusBadge status={p.status} />{' '}

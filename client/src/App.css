@@ -323,6 +323,32 @@
   font-weight: 500;
 }
 
+/* 価格入力の税込/税別切り替え(商品管理・仕様書外の拡張) */
+.admin-tax-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9em;
+  margin: -8px 0 8px;
+}
+
+.admin-tax-mode label {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 4px !important;
+  font-weight: normal;
+}
+
+.admin-tax-mode__preview {
+  color: var(--text-muted);
+}
+
+.admin-tax-mode__select {
+  font-size: 0.85em;
+  margin-left: 4px;
+}
+
 .checkout-payment-method {
   border: 1px solid var(--border);
   border-radius: 8px;
