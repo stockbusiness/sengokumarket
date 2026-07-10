@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   createAdminProduct,
+  deleteAdminProduct,
   fetchAdminProducts,
   updateAdminProduct,
   type AdminProduct,
@@ -9,6 +10,7 @@ import StatusBadge from '../../components/StatusBadge';
 import EmptyState from '../../components/EmptyState';
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
+const STATUSES = ['draft', 'published', 'archived'];
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -51,10 +53,25 @@ export default function AdminProductsPage() {
     }
   }
 
-  async function toggleStatus(product: AdminProduct) {
-    const next = product.status === 'published' ? 'draft' : 'published';
-    await updateAdminProduct(product.id, { status: next });
+  async function updateStatus(product: AdminProduct, status: string) {
+    await updateAdminProduct(product.id, { status });
     load();
+  }
+
+  async function updateField(product: AdminProduct, field: 'name' | 'category' | 'itemType' | 'basePrice', value: string | number) {
+    await updateAdminProduct(product.id, { [field]: value });
+    load();
+  }
+
+  async function handleDelete(product: AdminProduct) {
+    if (!window.confirm(`「${product.name}」を削除します。よろしいですか？(元に戻せません)`)) return;
+    setError(null);
+    try {
+      await deleteAdminProduct(product.id);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '削除に失敗しました');
+    }
   }
 
   async function updateStock(product: AdminProduct, variantId: string, stock: number) {
@@ -124,6 +141,8 @@ export default function AdminProductsPage() {
         </form>
       )}
 
+      {error && !showForm && <p className="checkout-error">{error}</p>}
+
       {products.length === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="まだ商品がありません" actionLabel="新規作成" onAction={() => setShowForm(true)} />
@@ -140,20 +159,48 @@ export default function AdminProductsPage() {
                 <th>ステータス</th>
                 <th>バリエーション/在庫</th>
                 <th>商品画像</th>
+                <th>操作</th>
               </tr>
             </thead>
             <tbody>
               {products.map((p) => (
                 <tr key={p.id}>
-                  <td>{p.name}</td>
+                  <td>
+                    <input
+                      type="text"
+                      className="admin-inline-input"
+                      defaultValue={p.name}
+                      onBlur={(e) => e.target.value.trim() && e.target.value !== p.name && updateField(p, 'name', e.target.value.trim())}
+                    />
+                  </td>
                   <td>{p.slug}</td>
-                  <td>{p.itemType}</td>
-                  <td>{p.basePrice.toLocaleString()}円</td>
+                  <td>
+                    <select value={p.itemType} onChange={(e) => updateField(p, 'itemType', e.target.value)}>
+                      {ITEM_TYPES.map((t) => (
+                        <option key={t} value={t}>
+                          {t}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      className="admin-inline-input"
+                      defaultValue={p.basePrice}
+                      onBlur={(e) => Number(e.target.value) !== p.basePrice && updateField(p, 'basePrice', Number(e.target.value))}
+                    />
+                    円
+                  </td>
                   <td>
                     <StatusBadge status={p.status} />{' '}
-                    <button type="button" className="btn-secondary btn-small" onClick={() => toggleStatus(p)}>
-                      切替
-                    </button>
+                    <select value={p.status} onChange={(e) => updateStatus(p, e.target.value)}>
+                      {STATUSES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td>
                     {p.variants.map((v) => (
@@ -176,6 +223,11 @@ export default function AdminProductsPage() {
                       onBlur={(e) => updateImages(p, e.target.value)}
                       placeholder="画像URL(1行に1つ)"
                     />
+                  </td>
+                  <td>
+                    <button type="button" className="btn-secondary btn-small" onClick={() => handleDelete(p)}>
+                      削除
+                    </button>
                   </td>
                 </tr>
               ))}

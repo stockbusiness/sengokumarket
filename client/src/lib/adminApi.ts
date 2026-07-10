@@ -87,6 +87,10 @@ export function updateAdminProduct(id: string, payload: ProductPayload) {
   return adminSend<{ product: AdminProduct }>('PUT', `/products/${id}`, payload);
 }
 
+export function deleteAdminProduct(id: string) {
+  return adminSend<{ success: true }>('DELETE', `/products/${id}`);
+}
+
 // --- Orders ---
 export interface AdminOrder {
   id: string;

@@ -120,4 +120,31 @@ router.put('/products/:id', async (req, res) => {
   res.json({ product });
 });
 
+// 仕様書外の拡張: 注文実績(order_items/nft_issues)がある商品は、スナップショット原則を
+// 崩さないよう物理削除を許可しない(409。非公開・アーカイブでの運用を案内する)。
+router.delete('/products/:id', async (req, res) => {
+  const { id } = req.params;
+
+  const existing = await prisma.product.findUnique({ where: { id } });
+  if (!existing) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
+
+  const orderItemCount = await prisma.orderItem.count({ where: { productId: id } });
+  if (orderItemCount > 0) {
+    return sendError(
+      res,
+      409,
+      'PRODUCT_HAS_ORDERS',
+      'この商品は注文実績があるため削除できません。表示したくない場合はステータスを「archived」にしてください',
+    );
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.couponProduct.deleteMany({ where: { productId: id } });
+    await tx.productVariant.deleteMany({ where: { productId: id } });
+    await tx.product.delete({ where: { id } });
+  });
+
+  res.json({ success: true });
+});
+
 export default router;
