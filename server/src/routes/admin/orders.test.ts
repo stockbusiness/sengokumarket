@@ -54,6 +54,50 @@ describe('管理API: 注文管理', () => {
     expect(res.status).toBe(400);
   });
 
+  describe('説明責任者の後入力・修正(仕様書外の拡張)', () => {
+    it('説明責任者名を後から入力でき、紹介コード等の報酬関連フィールドは変更されない', async () => {
+      const { agent } = await createAdminAgent(app);
+
+      const res = await agent
+        .put(`/api/admin/orders/${orderId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ explainerName: `管理画面から入力した説明担当者-${Date.now()}` });
+
+      expect(res.status).toBe(200);
+      expect(res.body.order.explainerName).toContain('管理画面から入力した説明担当者');
+
+      const persisted = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+      expect(persisted.referralCode).toBe(originalReferralCode);
+      expect(persisted.agencyId).toBeNull();
+      expect(persisted.influencerId).toBeNull();
+      expect(Number(persisted.commissionRate)).toBe(0);
+    });
+
+    it('名簿と一致する説明責任者名を入力すると一致結果が反映され、一致しない名前に更新すると外れる', async () => {
+      const agency = await prisma.agency.create({ data: { name: `管理画面照合テスト代理店-${Date.now()}`, code: `ADMINEXPMATCH-${Date.now()}` } });
+      const { agent } = await createAdminAgent(app);
+
+      const matched = await agent.put(`/api/admin/orders/${orderId}`).set('Origin', TEST_ORIGIN).send({ explainerName: agency.name });
+      expect(matched.status).toBe(200);
+      expect(matched.body.order.explainerMatched).toBe(true);
+
+      const persistedMatched = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+      expect(persistedMatched.explainerAgencyId).toBe(agency.id);
+
+      const unmatched = await agent
+        .put(`/api/admin/orders/${orderId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ explainerName: `一致しない名前-${Date.now()}` });
+      expect(unmatched.status).toBe(200);
+      expect(unmatched.body.order.explainerMatched).toBe(false);
+
+      const persistedUnmatched = await prisma.order.findUniqueOrThrow({ where: { id: orderId } });
+      expect(persistedUnmatched.explainerAgencyId).toBeNull();
+
+      await prisma.agency.delete({ where: { id: agency.id } });
+    });
+  });
+
   describe('銀行振込の入金確認(仕様書外の拡張)', () => {
     it('銀行振込のpending注文を入金確認すると決済完了と同じ処理(在庫確定・報酬計算)が走る', async () => {
       const product = await prisma.product.create({

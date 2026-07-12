@@ -4,6 +4,7 @@ import { sendError } from '../../lib/apiError';
 import { buildCsv } from '../../lib/csv';
 import { HttpError } from '../../lib/httpError';
 import { confirmBankTransferPayment } from '../../services/bankTransfer';
+import { matchExplainerName } from '../../services/explainerMatch';
 
 const router = Router();
 
@@ -26,6 +27,11 @@ function serializeOrder(order: {
   commissionStatus: string;
   adminNote: string | null;
   createdAt: Date;
+  // 仕様書外の拡張: 代理店階層の紐付け記録(報酬計算には使わない)と説明責任者。
+  referralHierarchy: unknown;
+  explainerName: string | null;
+  explainerAgencyId: string | null;
+  explainerInfluencerId: string | null;
 }) {
   return {
     id: order.id,
@@ -44,6 +50,9 @@ function serializeOrder(order: {
     commissionStatus: order.commissionStatus,
     adminNote: order.adminNote,
     createdAt: order.createdAt,
+    referralHierarchy: order.referralHierarchy,
+    explainerName: order.explainerName,
+    explainerMatched: Boolean(order.explainerAgencyId || order.explainerInfluencerId),
   };
 }
 
@@ -103,18 +112,34 @@ router.get('/orders/export.csv', async (_req, res) => {
   res.send(csv);
 });
 
+// 説明責任者が名簿と一致している場合、表示用に一致先の名前・種別を解決する。
+async function resolveExplainerDisplay(order: { explainerAgencyId: string | null; explainerInfluencerId: string | null }) {
+  if (order.explainerAgencyId) {
+    const agency = await prisma.agency.findUnique({ where: { id: order.explainerAgencyId }, select: { name: true } });
+    return agency ? { type: 'agency' as const, name: agency.name } : null;
+  }
+  if (order.explainerInfluencerId) {
+    const influencer = await prisma.influencer.findUnique({ where: { id: order.explainerInfluencerId }, select: { name: true } });
+    return influencer ? { type: 'influencer' as const, name: influencer.name } : null;
+  }
+  return null;
+}
+
 router.get('/orders/:id', async (req, res) => {
   const order = await prisma.order.findUnique({
     where: { id: req.params.id },
     include: { orderItems: true, nftIssues: true },
   });
   if (!order) return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
-  res.json({ order });
+  const explainerMatch = await resolveExplainerDisplay(order);
+  res.json({ order: { ...order, explainerMatch } });
 });
 
-// 紹介コード(referral_code等)は変更不可。orderStatusとadmin_noteのみ更新する(仕様書v1.5 5.3 / 9.8)。
+// 紹介コード(referral_code等)は変更不可。orderStatus・admin_note・explainer_nameのみ更新する
+// (仕様書v1.5 5.3 / 9.8)。explainer_nameは紹介コードとは独立した「説明責任者記録」であり、
+// 報酬計算に使うagencyId/influencerId/referralLinkId/commissionRate等は一切変更しない。
 router.put('/orders/:id', async (req, res) => {
-  const { orderStatus, adminNote } = req.body ?? {};
+  const { orderStatus, adminNote, explainerName } = req.body ?? {};
 
   if (orderStatus !== undefined && !ORDER_STATUSES.includes(orderStatus)) {
     return sendError(res, 400, 'VALIDATION_ERROR', '注文ステータスが不正です');
@@ -123,11 +148,17 @@ router.put('/orders/:id', async (req, res) => {
   const existing = await prisma.order.findUnique({ where: { id: req.params.id } });
   if (!existing) return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
 
+  const explainerMatch =
+    typeof explainerName === 'string' ? await matchExplainerName(prisma, explainerName) : null;
+
   const updated = await prisma.order.update({
     where: { id: req.params.id },
     data: {
       orderStatus: orderStatus ?? undefined,
       adminNote: typeof adminNote === 'string' ? adminNote : undefined,
+      explainerName: typeof explainerName === 'string' ? explainerName.trim() || null : undefined,
+      explainerAgencyId: explainerMatch ? explainerMatch.agencyId : undefined,
+      explainerInfluencerId: explainerMatch ? explainerMatch.influencerId : undefined,
     },
   });
 

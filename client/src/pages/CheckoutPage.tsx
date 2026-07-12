@@ -26,6 +26,7 @@ export default function CheckoutPage() {
   const [customerAddress, setCustomerAddress] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [referrerName, setReferrerName] = useState<string | null>(null);
+  const [explainerName, setExplainerName] = useState('');
   const [autoApplyCouponCode, setAutoApplyCouponCode] = useState<string | null>(null);
   const [manualCouponCode, setManualCouponCode] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<CouponValidationResult | null>(null);
@@ -165,6 +166,7 @@ export default function CheckoutPage() {
         // 自動適用クーポンはサーバー側の紹介リンク解決に任せる(失敗時は購入を止めず通常価格で継続)。
         // ここで送るのは購入者が自分でコードを入力・適用した場合のみ(失敗時は購入を中断させる)。
         couponCode: couponSource === 'manual' ? (appliedCoupon?.coupon?.code ?? null) : null,
+        explainerName: explainerName.trim() || null,
         agreedToTerms,
         items: items.map((i) => ({ variantId: i.variantId, quantity: i.quantity })),
         paymentMethod,
@@ -264,6 +266,11 @@ export default function CheckoutPage() {
         <input type="text" value={referralCode} onChange={(e) => setReferralCode(e.target.value)} />
       </label>
       {referrerName && <p>紹介元: {referrerName}</p>}
+
+      <label>
+        説明担当者のお名前(任意)
+        <input type="text" value={explainerName} onChange={(e) => setExplainerName(e.target.value)} />
+      </label>
 
       {appliedCoupon?.valid && (
         <div className="checkout-coupon-applied">

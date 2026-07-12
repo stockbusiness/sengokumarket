@@ -87,6 +87,8 @@ export interface CreateCheckoutSessionPayload {
   customerAddress: string;
   referralCode: string | null;
   couponCode?: string | null;
+  // 仕様書外の拡張: 紹介コードの持ち主とは別に、購入者に商品を説明した担当者名(任意)。
+  explainerName?: string | null;
   agreedToTerms: boolean;
   items: { variantId: string; quantity: number }[];
   paymentMethod: 'stripe' | 'bank_transfer';

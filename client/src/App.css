@@ -1251,6 +1251,17 @@
   flex: 1 1 100px;
 }
 
+.admin-explainer-input {
+  width: 100%;
+  min-width: 140px;
+}
+
+.admin-explainer-status {
+  margin: 4px 0 0;
+  font-size: 0.85em;
+  color: var(--muted-text-color, #666);
+}
+
 .referral-links-form label,
 .admin-content form label,
 .admin-form-card label {

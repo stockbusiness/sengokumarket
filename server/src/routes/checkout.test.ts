@@ -317,6 +317,103 @@ describe('POST /api/checkout/create-session', () => {
       await prisma.agency.update({ where: { id: agencyId }, data: { defaultCommissionRate: 15 } });
     });
   });
+
+  describe('代理店階層の紐付け記録(仕様書外の拡張・報酬計算には影響しない)', () => {
+    let topAgencyId: string;
+
+    beforeAll(async () => {
+      const topAgency = await prisma.agency.create({
+        data: { name: '階層テストエージェント', code: `HIERTOP-${Date.now()}`, defaultCommissionRate: 5 },
+      });
+      topAgencyId = topAgency.id;
+      await prisma.agency.update({ where: { id: agencyId }, data: { parentAgencyId: topAgencyId } });
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+    });
+
+    afterAll(async () => {
+      await prisma.agency.update({ where: { id: agencyId }, data: { parentAgencyId: null } });
+      await prisma.agency.delete({ where: { id: topAgencyId } });
+    });
+
+    it('アドバイザー経由の紹介コードで購入すると、上位代理店(エージェント)まで紐付けがreferralHierarchyに記録される', async () => {
+      const referralLink = await prisma.referralLink.findFirstOrThrow({ where: { agencyId } });
+      const email = `hierarchy-checkout-test-${Date.now()}@example.com`;
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({
+          ...baseCustomer,
+          customerEmail: email,
+          referralCode: referralLink.code,
+          items: [{ variantId, quantity: 1 }],
+        });
+
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.referralHierarchy).toEqual([{ id: topAgencyId, name: '階層テストエージェント', code: expect.any(String), depth: 0 }]);
+      // 報酬計算には一切使わないため、直属の代理店の報酬率のみが反映される
+      expect(Number(order.commissionRate)).toBe(15);
+    });
+  });
+
+  describe('説明責任者名の記録(仕様書外の拡張・購入をブロックしない)', () => {
+    it('説明責任者名を入力しなくても注文は正常に完了する', async () => {
+      const email = `explainer-none-checkout-test-${Date.now()}@example.com`;
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, items: [{ variantId, quantity: 1 }] });
+
+      expect(res.status).toBe(201);
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.explainerName).toBeNull();
+      expect(order.explainerAgencyId).toBeNull();
+      expect(order.explainerInfluencerId).toBeNull();
+    });
+
+    it('名簿に存在しない説明責任者名を入力しても、名前だけ保存され購入は完了する', async () => {
+      const email = `explainer-unmatched-checkout-test-${Date.now()}@example.com`;
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+      const explainerName = `存在しない説明担当者-${Date.now()}`;
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, explainerName, items: [{ variantId, quantity: 1 }] });
+
+      expect(res.status).toBe(201);
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.explainerName).toBe(explainerName);
+      expect(order.explainerAgencyId).toBeNull();
+      expect(order.explainerInfluencerId).toBeNull();
+    });
+
+    it('名簿と一致する説明責任者名を入力すると、agencyIdが記録される(紹介コードのagencyIdとは独立)', async () => {
+      const email = `explainer-matched-checkout-test-${Date.now()}@example.com`;
+      await prisma.productVariant.update({ where: { id: variantId }, data: { reservedStock: 0 } });
+      const explainerAgencyName = `説明責任者一致テスト代理店-${Date.now()}`;
+      const agency = await prisma.agency.create({ data: { name: explainerAgencyName, code: `EXPMATCHAG-${Date.now()}` } });
+
+      const res = await request(app)
+        .post('/api/checkout/create-session')
+        .set('Origin', 'http://localhost:5173')
+        .set('Cookie', referralCookieHeader())
+        .send({ ...baseCustomer, customerEmail: email, explainerName: explainerAgencyName, items: [{ variantId, quantity: 1 }] });
+
+      expect(res.status).toBe(201);
+      const order = await prisma.order.findUniqueOrThrow({ where: { id: res.body.orderId } });
+      expect(order.explainerName).toBe(explainerAgencyName);
+      expect(order.explainerAgencyId).toBe(agency.id);
+      expect(order.explainerInfluencerId).toBeNull();
+
+      await prisma.agency.delete({ where: { id: agency.id } });
+    });
+  });
 });
 
 describe('銀行振込(手動確認型)決済(仕様書外の拡張)', () => {

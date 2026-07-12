@@ -130,13 +130,20 @@ export interface AdminOrder {
   commissionStatus: string;
   adminNote: string | null;
   createdAt: string;
+  // 仕様書外の拡張: 代理店階層の紐付け記録(報酬計算には使わない)と説明責任者。
+  referralHierarchy: { id: string; name: string; code: string; depth: number }[] | null;
+  explainerName: string | null;
+  explainerMatched: boolean;
 }
 
 export function fetchAdminOrders() {
   return adminFetch<{ orders: AdminOrder[] }>('/orders');
 }
 
-export function updateAdminOrder(id: string, payload: { orderStatus?: string; adminNote?: string }) {
+export function updateAdminOrder(
+  id: string,
+  payload: { orderStatus?: string; adminNote?: string; explainerName?: string },
+) {
   return adminSend<{ order: AdminOrder }>('PUT', `/orders/${id}`, payload);
 }
 

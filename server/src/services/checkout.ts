@@ -5,6 +5,7 @@ import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
 import { resolveReferral, resolveReferralByAttribution } from './referral';
+import { matchExplainerName } from './explainerMatch';
 import { isValidEmail } from '../lib/validation';
 import { cancelCouponUsage, reserveCouponUsage } from './coupon';
 
@@ -23,6 +24,8 @@ export interface CreatePendingOrderInput {
   // 仕様書外の拡張(クーポン機能): 購入者が手入力したクーポンコード。指定が無い場合、
   // 紹介リンクにcoupon_auto_apply=trueで設定されたクーポンがあればそちらを自動適用する。
   couponCode?: string | null;
+  // 仕様書外の拡張: 紹介コードの持ち主とは別に、購入者に商品を説明した担当者名(任意・自由入力)。
+  explainerName?: string | null;
   agreedToTerms: boolean;
   items: CheckoutItemInput[];
   paymentMethod?: 'stripe' | 'bank_transfer';
@@ -70,6 +73,7 @@ export function validateCreatePendingOrderInput(body: unknown): CreatePendingOrd
     customerAddress: (b.customerAddress as string).trim(),
     referralCode: isNonEmptyString(b.referralCode) ? (b.referralCode as string).trim() : null,
     couponCode: isNonEmptyString(b.couponCode) ? (b.couponCode as string).trim().toUpperCase() : null,
+    explainerName: isNonEmptyString(b.explainerName) ? (b.explainerName as string).trim() : null,
     agreedToTerms: true,
     items,
     paymentMethod,
@@ -182,6 +186,10 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       return sum + row.price * item.quantity;
     }, 0);
 
+    // 仕様書外の拡張: 紹介コードの持ち主とは別に、購入者に商品を説明した担当者名を記録する
+    // (報酬計算には使わない。名簿と一致すればIDも記録、一致しなくても購入は継続する)。
+    const explainerMatch = await matchExplainerName(tx, input.explainerName);
+
     let order = await tx.order.create({
       data: {
         orderNumber,
@@ -198,6 +206,10 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         influencerId: referral.influencerId,
         referralLinkId: referral.referralLinkId,
         commissionRate: referral.commissionRate,
+        referralHierarchy: referral.agencyHierarchy.length > 0 ? (referral.agencyHierarchy as never) : undefined,
+        explainerName: input.explainerName ?? null,
+        explainerAgencyId: explainerMatch.agencyId,
+        explainerInfluencerId: explainerMatch.influencerId,
         customerName: input.customerName,
         customerEmail: input.customerEmail,
         customerPhone: input.customerPhone,
