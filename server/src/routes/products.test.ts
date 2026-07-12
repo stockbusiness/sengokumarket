@@ -75,4 +75,27 @@ describe('公開API: 商品(紹介URL/ログイン必須のアクセス制御)',
     const res = await agent.get('/api/products');
     expect(res.status).toBe(200);
   });
+
+  describe('クエリパラメータrefによるフォールバック(仕様書外の拡張)', () => {
+    // Reactは子コンポーネントのエフェクトを親(App)より先に実行するため、紹介URLへ直接
+    // アクセスした際の最初の商品取得リクエストは、Cookie書き込みuseEffectより先に飛ぶことがある。
+    // その場合でもCookie無し・URLのrefクエリのみで通過できることを確認する(回帰防止)。
+    it('紹介Cookieが無くても?ref=があれば商品一覧を200で取得できる', async () => {
+      const res = await request(app).get('/api/products?ref=TEST-REF');
+      expect(res.status).toBe(200);
+      expect(Array.isArray(res.body.products)).toBe(true);
+    });
+
+    it('紹介Cookieが無くても?ref=があれば商品詳細を200で取得できる', async () => {
+      const res = await request(app).get(`/api/products/${productSlug}?ref=TEST-REF`);
+      expect(res.status).toBe(200);
+      expect(res.body.product.slug).toBe(productSlug);
+    });
+
+    it('refクエリが空文字の場合は403のまま', async () => {
+      const res = await request(app).get('/api/products?ref=');
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('REFERRAL_REQUIRED');
+    });
+  });
 });

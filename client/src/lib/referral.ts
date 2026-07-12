@@ -33,3 +33,12 @@ export function getStoredReferralCode(): string | null {
     return null;
   }
 }
+
+// Reactは子コンポーネントのエフェクトを親(App)より先に実行するため、App側の
+// captureReferralFromSearchがCookie/localStorageへ書き込む前に、子ページの初回データ取得が
+// 先に走ることがある。そのため、まだ何も保存されていない初回描画でもURLのref自体を
+// 直接見て判定できるようにする(仕様書外の拡張)。
+export function getEffectiveReferralCode(): string | null {
+  const fromQuery = new URLSearchParams(window.location.search).get('ref');
+  return fromQuery || getStoredReferralCode();
+}

@@ -1,3 +1,5 @@
+import { getEffectiveReferralCode } from './referral';
+
 export interface ProductVariant {
   id: string;
   name: string;
@@ -65,12 +67,23 @@ async function apiPut<T>(path: string, payload: unknown): Promise<T> {
   return body;
 }
 
+// App.tsxのCookie書き込みuseEffectより先に商品取得のリクエストが飛ぶことがあるため
+// (Reactは子コンポーネントのエフェクトを親より先に実行する)、Cookieがまだ無い初回リクエストでも
+// サーバー側のrequireReferralOrAuthを通過できるよう、URL/localStorageのref値をクエリに載せる
+// (仕様書外の拡張)。
+function withReferralQuery(path: string): string {
+  const code = getEffectiveReferralCode();
+  if (!code) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}ref=${encodeURIComponent(code)}`;
+}
+
 export function fetchProducts() {
-  return apiFetch<{ products: ProductSummary[] }>('/products');
+  return apiFetch<{ products: ProductSummary[] }>(withReferralQuery('/products'));
 }
 
 export function fetchProduct(idOrSlug: string) {
-  return apiFetch<{ product: ProductDetail }>(`/products/${encodeURIComponent(idOrSlug)}`);
+  return apiFetch<{ product: ProductDetail }>(withReferralQuery(`/products/${encodeURIComponent(idOrSlug)}`));
 }
 
 export function resolveReferralCode(code: string) {
