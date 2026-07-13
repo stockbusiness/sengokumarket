@@ -127,6 +127,20 @@ export async function sendAdminAccountSetupEmail(email: string, name: string, to
   await sendMail({ to: email, subject: '管理画面 アカウント設定のご案内', html });
 }
 
+// 仕様書外の拡張: admin/wallet-missing一覧からの、受取用ウォレット登録案内の再送メール。
+// 購入直後のsendPurchaseCompleteEmailと同じ案内文言・リンク先(要ログインのマイページ)を使う。
+export async function sendWalletReminderEmail(email: string, name: string, orderNumber: string): Promise<void> {
+  const walletUrl = `${appUrl()}/mypage/wallet`;
+
+  const html = `
+    <p>${name} 様</p>
+    <p>ご注文番号 ${orderNumber} のデジタル会員証の受け取りには、受取用ウォレットの登録が必要です。<br />
+    <a href="${walletUrl}">こちらから登録手続き</a>を行ってください。</p>
+  `;
+
+  await sendMail({ to: email, subject: '【ご案内】受取用ウォレットのご登録について', html });
+}
+
 export async function sendPasswordResetEmail(email: string, name: string, token: string): Promise<void> {
   const resetUrl = `${appUrl()}/password-reset/confirm?token=${token}`;
 

@@ -92,6 +92,7 @@ model User {
   couponEntries            CouponCustomer[]
   walletVerificationNonces WalletVerificationNonce[]
   walletChangeLogs         WalletChangeLog[]
+  walletReminderEmailsSent WalletReminderEmail[]
 
   @@map("users")
 }
@@ -310,8 +311,27 @@ model NftIssue {
   product   Product         @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
 
+  walletReminderEmails WalletReminderEmail[]
+
   @@index([status])
   @@map("nft_issues")
+}
+
+// 仕様書外の拡張: ウォレット未登録者一覧(admin/wallet-missing)から購入者へ送った登録案内
+// メールの送信記録。仕様書5.5の任意実装「最終案内メール送信日時」に対応する。
+// ウォレットアドレス自体の登録・変更は署名検証(personal_sign)が必須のままであり、
+// この記録はあくまで案内メールの送信履歴であって、ウォレットの登録・確認状態には影響しない。
+model WalletReminderEmail {
+  id         String   @id @default(uuid()) @db.Uuid
+  nftIssueId String   @map("nft_issue_id") @db.Uuid
+  sentBy     String   @map("sent_by") @db.Uuid
+  sentAt     DateTime @default(now()) @map("sent_at")
+
+  nftIssue   NftIssue @relation(fields: [nftIssueId], references: [id])
+  sentByUser User     @relation(fields: [sentBy], references: [id])
+
+  @@index([nftIssueId])
+  @@map("wallet_reminder_emails")
 }
 
 model Notice {
