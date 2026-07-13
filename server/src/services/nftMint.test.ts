@@ -19,12 +19,13 @@ describe('getMintProvider(仕様書外の拡張)', () => {
     expect(getMintProvider()).toBe(fakeMintProvider);
   });
 
-  it('NFT_MINT_PROVIDER=crossmintでcrossmintプロバイダーを返す(未実装だが呼び出すとエラーになる)', async () => {
+  it('NFT_MINT_PROVIDER=crossmintでcrossmintプロバイダーを返す(挙動の詳細はcrossmint.test.ts参照)', async () => {
     process.env.NFT_MINT_PROVIDER = 'crossmint';
     const provider = getMintProvider();
+    // 未設定環境(CROSSMINT_COLLECTION_ID等)で呼び出すとCROSSMINT_NOT_CONFIGUREDになることだけ確認する。
     await expect(
-      provider.submitMint({ toAddress: '0xabc', metadataUri: 'https://example.com/a.json', chain: 'polygon', idempotencyKey: 'x' }),
-    ).rejects.toMatchObject({ code: 'MINT_PROVIDER_NOT_IMPLEMENTED' });
+      provider.submitMint({ toAddress: '0xabc', metadataUri: 'https://example.com/a.json', chain: 'bsc', idempotencyKey: 'x' }),
+    ).rejects.toMatchObject({ code: 'CROSSMINT_NOT_CONFIGURED' });
   });
 
   it('未対応の値の場合は例外を投げる', () => {
