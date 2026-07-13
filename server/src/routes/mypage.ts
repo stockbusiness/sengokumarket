@@ -4,6 +4,7 @@ import { sendError } from '../lib/apiError';
 import { requireAuth } from '../middleware/auth';
 import { HttpError } from '../lib/httpError';
 import { pushAgencyCandidateToExternalSystem } from '../services/externalAgencySystem';
+import { createWalletVerificationChallenge, verifyAndRegisterWallet } from '../services/walletVerification';
 
 const router = Router();
 
@@ -154,39 +155,51 @@ router.post('/agency-application', async (req, res) => {
 
 router.get('/wallet', async (req, res) => {
   const wallet = await prisma.wallet.findUnique({ where: { userId: req.authUser!.id } });
-  res.json({ wallet: wallet ? { walletAddress: wallet.walletAddress, chain: wallet.chain } : null });
+  res.json({
+    wallet: wallet
+      ? { walletAddress: wallet.walletAddress, chain: wallet.chain, verified: wallet.verified, verifiedAt: wallet.verifiedAt }
+      : null,
+  });
 });
 
-// ウォレット登録・更新時にstatus=wallet_requiredのnft_issuesをready_to_issueへ一括更新し、
-// walletAddressをスナップショット保存する(仕様書v1.5 4.11)。issued/failedは変更しない。
-router.post('/wallet', async (req, res) => {
-  const { walletAddress, chain } = req.body ?? {};
+// 仕様書外の拡張: ウォレット所有確認(署名検証)のための使い捨て確認コードを発行する。
+// クライアントはこのメッセージをブラウザのウォレット拡張機能(personal_sign)で署名し、
+// POST /walletへ送る。
+router.post('/wallet/nonce', async (req, res) => {
+  const { walletAddress } = req.body ?? {};
 
   if (typeof walletAddress !== 'string' || !WALLET_ADDRESS_RE.test(walletAddress)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ウォレットアドレスの形式が正しくありません');
   }
-  if (chain !== undefined && chain !== 'polygon') {
-    return sendError(res, 400, 'VALIDATION_ERROR', '現在はPolygonのみ対応しています');
+
+  const challenge = await prisma.$transaction((tx) => createWalletVerificationChallenge(tx, req.authUser!.id, walletAddress));
+  res.json(challenge);
+});
+
+// ウォレット登録・更新は署名検証を通過した場合のみ確定する(仕様書外の拡張)。
+// 検証成功時、status=wallet_requiredのnft_issuesをready_to_issueへ一括更新し、
+// walletAddressをスナップショット保存する(仕様書v1.5 4.11)。issued/failedは変更しない。
+router.post('/wallet', async (req, res) => {
+  const { walletAddress, signature } = req.body ?? {};
+
+  if (typeof walletAddress !== 'string' || !WALLET_ADDRESS_RE.test(walletAddress)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'ウォレットアドレスの形式が正しくありません');
+  }
+  if (typeof signature !== 'string' || signature.trim().length === 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', '署名が見つかりません');
   }
 
   const userId = req.authUser!.id;
 
-  const wallet = await prisma.$transaction(async (tx) => {
-    const upserted = await tx.wallet.upsert({
-      where: { userId },
-      update: { walletAddress, chain: 'polygon' },
-      create: { userId, walletAddress, chain: 'polygon' },
+  try {
+    const wallet = await prisma.$transaction((tx) => verifyAndRegisterWallet(tx, { userId, walletAddress, signature }));
+    res.json({
+      wallet: { walletAddress: wallet.walletAddress, chain: wallet.chain, verified: wallet.verified, verifiedAt: wallet.verifiedAt },
     });
-
-    await tx.nftIssue.updateMany({
-      where: { userId, status: 'wallet_required' },
-      data: { status: 'ready_to_issue', walletAddress },
-    });
-
-    return upserted;
-  });
-
-  res.json({ wallet: { walletAddress: wallet.walletAddress, chain: wallet.chain } });
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
 });
 
 router.get('/notices', async (req, res) => {

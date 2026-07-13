@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
+import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 
@@ -16,6 +17,20 @@ vi.mock('../services/externalAgencySystem', () => ({
 const app = createApp();
 const ORIGIN = 'http://localhost:5173';
 const VALID_ADDRESS = '0x1234567890abcdef1234567890abcdef12345678';
+
+// ウォレット署名検証テスト用: 実際に署名できるテスト用アカウント。
+const walletAccount = privateKeyToAccount(generatePrivateKey());
+const otherWalletAccount = privateKeyToAccount(generatePrivateKey());
+
+async function requestNonceAndSign(
+  agent: ReturnType<typeof request.agent>,
+  walletAddress: string,
+  signer: typeof walletAccount = walletAccount,
+) {
+  const nonceRes = await agent.post('/api/mypage/wallet/nonce').set('Origin', ORIGIN).send({ walletAddress });
+  const signature = await signer.signMessage({ message: nonceRes.body.message });
+  return signature;
+}
 
 describe('マイページAPI', () => {
   let userId: string;
@@ -71,6 +86,8 @@ describe('マイページAPI', () => {
     await prisma.productVariant.deleteMany({ where: { productId } });
     await prisma.product.delete({ where: { id: productId } });
     await prisma.notice.deleteMany({ where: { title: { in: ['公開済みお知らせ', '下書きお知らせ'] } } });
+    await prisma.walletChangeLog.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
+    await prisma.walletVerificationNonce.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
     await prisma.wallet.deleteMany({ where: { userId: { in: [userId, otherUserId] } } });
     await prisma.user.deleteMany({ where: { id: { in: [userId, otherUserId] } } });
     await prisma.$disconnect();
@@ -198,40 +215,110 @@ describe('マイページAPI', () => {
   });
 
   it('不正な形式のウォレットアドレスは400を返す', async () => {
-    const res = await agent.post('/api/mypage/wallet').set('Origin', ORIGIN).send({ walletAddress: '0xshort' });
+    const res = await agent.post('/api/mypage/wallet').set('Origin', ORIGIN).send({ walletAddress: '0xshort', signature: '0xdead' });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('ウォレット登録でwallet_requiredのnft_issuesがready_to_issueに一括更新される(issued/failedは変更しない)', async () => {
-    const { nftIssue: issuedNft } = await createOrderWithNft(userId, 'issued');
-    const { nftIssue: failedNft } = await createOrderWithNft(userId, 'failed');
+  it('署名を伴わないウォレット登録は400を返す', async () => {
+    const res = await agent.post('/api/mypage/wallet').set('Origin', ORIGIN).send({ walletAddress: VALID_ADDRESS });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
 
-    const res = await agent
-      .post('/api/mypage/wallet')
-      .set('Origin', ORIGIN)
-      .send({ walletAddress: VALID_ADDRESS, chain: 'polygon' });
+  describe('ウォレット署名検証(仕様書外の拡張)', () => {
+    it('署名検証に成功すると verified=true で登録され、wallet_requiredのnft_issuesがready_to_issueに一括更新される(issued/failedは変更しない)', async () => {
+      const { nftIssue: issuedNft } = await createOrderWithNft(userId, 'issued');
+      const { nftIssue: failedNft } = await createOrderWithNft(userId, 'failed');
 
-    expect(res.status).toBe(200);
-    expect(res.body.wallet.walletAddress).toBe(VALID_ADDRESS);
+      const signature = await requestNonceAndSign(agent, walletAccount.address);
+      const res = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: walletAccount.address, signature });
 
-    const walletRes = await agent.get('/api/mypage/wallet');
-    expect(walletRes.body.wallet.walletAddress).toBe(VALID_ADDRESS);
+      expect(res.status).toBe(200);
+      expect(res.body.wallet.walletAddress).toBe(walletAccount.address);
+      expect(res.body.wallet.verified).toBe(true);
 
-    const updatedIssues = await prisma.nftIssue.findMany({ where: { userId } });
-    const previouslyWalletRequired = updatedIssues.filter(
-      (n) => n.id !== issuedNft.id && n.id !== failedNft.id,
-    );
-    expect(previouslyWalletRequired.every((n) => n.status === 'ready_to_issue' && n.walletAddress === VALID_ADDRESS)).toBe(
-      true,
-    );
+      const walletRes = await agent.get('/api/mypage/wallet');
+      expect(walletRes.body.wallet.walletAddress).toBe(walletAccount.address);
+      expect(walletRes.body.wallet.verified).toBe(true);
 
-    const issuedAfter = updatedIssues.find((n) => n.id === issuedNft.id)!;
-    const failedAfter = updatedIssues.find((n) => n.id === failedNft.id)!;
-    expect(issuedAfter.status).toBe('issued');
-    expect(issuedAfter.walletAddress).toBeNull();
-    expect(failedAfter.status).toBe('failed');
-    expect(failedAfter.walletAddress).toBeNull();
+      const updatedIssues = await prisma.nftIssue.findMany({ where: { userId } });
+      const previouslyWalletRequired = updatedIssues.filter((n) => n.id !== issuedNft.id && n.id !== failedNft.id);
+      expect(
+        previouslyWalletRequired.every((n) => n.status === 'ready_to_issue' && n.walletAddress === walletAccount.address),
+      ).toBe(true);
+
+      const issuedAfter = updatedIssues.find((n) => n.id === issuedNft.id)!;
+      const failedAfter = updatedIssues.find((n) => n.id === failedNft.id)!;
+      expect(issuedAfter.status).toBe('issued');
+      expect(issuedAfter.walletAddress).toBeNull();
+      expect(failedAfter.status).toBe('failed');
+      expect(failedAfter.walletAddress).toBeNull();
+
+      const changeLog = await prisma.walletChangeLog.findFirst({
+        where: { userId, newAddress: walletAccount.address },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(changeLog?.changedBy).toBe('self');
+      expect(changeLog?.verificationMethod).toBe('personal_sign');
+    });
+
+    it('確認コードを発行していないアドレスへの登録はNONCE_NOT_FOUNDで400を返す', async () => {
+      const bogusSignature = await otherWalletAccount.signMessage({ message: '無関係なメッセージ' });
+      const res = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: otherWalletAccount.address, signature: bogusSignature });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('NONCE_NOT_FOUND');
+    });
+
+    it('別アカウントの秘密鍵で署名した場合はINVALID_SIGNATUREで400を返し、登録されない', async () => {
+      const nonceRes = await agent.post('/api/mypage/wallet/nonce').set('Origin', ORIGIN).send({ walletAddress: walletAccount.address });
+      const wrongSignature = await otherWalletAccount.signMessage({ message: nonceRes.body.message });
+
+      const res = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: walletAccount.address, signature: wrongSignature });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('INVALID_SIGNATURE');
+    });
+
+    it('期限切れの確認コードでの登録はNONCE_EXPIREDで400を返す', async () => {
+      const nonceRes = await agent.post('/api/mypage/wallet/nonce').set('Origin', ORIGIN).send({ walletAddress: walletAccount.address });
+      await prisma.walletVerificationNonce.updateMany({
+        where: { userId, walletAddress: walletAccount.address, usedAt: null },
+        data: { expiresAt: new Date(Date.now() - 60_000) },
+      });
+      const signature = await walletAccount.signMessage({ message: nonceRes.body.message });
+
+      const res = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: walletAccount.address, signature });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('NONCE_EXPIRED');
+    });
+
+    it('一度使用した確認コード(署名)を再送信してもNONCE_NOT_FOUNDで拒否される(リプレイ防止)', async () => {
+      const signature = await requestNonceAndSign(agent, walletAccount.address);
+      const first = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: walletAccount.address, signature });
+      expect(first.status).toBe(200);
+
+      const replay = await agent
+        .post('/api/mypage/wallet')
+        .set('Origin', ORIGIN)
+        .send({ walletAddress: walletAccount.address, signature });
+      expect(replay.status).toBe(400);
+      expect(replay.body.error.code).toBe('NONCE_ALREADY_USED');
+    });
   });
 
   describe('代理店(インフルエンサー)申請(仕様書外の拡張)', () => {

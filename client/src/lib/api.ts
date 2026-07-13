@@ -188,6 +188,8 @@ export interface MyNotice {
 export interface MyWallet {
   walletAddress: string;
   chain: string;
+  verified: boolean;
+  verifiedAt: string | null;
 }
 
 export function fetchMyOrders() {
@@ -218,8 +220,14 @@ export function fetchMyWallet() {
   return apiFetch<{ wallet: MyWallet | null }>('/mypage/wallet');
 }
 
-export function updateMyWallet(walletAddress: string) {
-  return apiPost<{ wallet: MyWallet }>('/mypage/wallet', { walletAddress, chain: 'polygon' });
+// 仕様書外の拡張: ウォレット所有確認(署名検証)。まずnonceを発行してもらい、
+// ブラウザのウォレット拡張機能でそのメッセージに署名し、署名をサーバーへ送って登録する。
+export function requestWalletVerificationNonce(walletAddress: string) {
+  return apiPost<{ message: string; expiresAt: string }>('/mypage/wallet/nonce', { walletAddress });
+}
+
+export function registerVerifiedWallet(walletAddress: string, signature: string) {
+  return apiPost<{ wallet: MyWallet }>('/mypage/wallet', { walletAddress, signature });
 }
 
 export interface UpdateMyProfilePayload {

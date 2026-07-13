@@ -32,7 +32,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "resend": "^6.17.1",
-    "stripe": "^22.3.0"
+    "stripe": "^22.3.0",
+    "viem": "^2.55.1"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

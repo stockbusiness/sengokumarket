@@ -1,93 +1,119 @@
 import { useEffect, useState } from 'react';
-import { fetchMyWallet, updateMyWallet } from '../lib/api';
+import { fetchMyWallet, registerVerifiedWallet, requestWalletVerificationNonce, type MyWallet } from '../lib/api';
 
-const WALLET_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+// window.ethereumの型定義はこのページでのみ必要な最小限のものに留める(新規依存追加を避けるため)。
+interface InjectedProvider {
+  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
+}
+
+function getInjectedProvider(): InjectedProvider | null {
+  const ethereum = (window as unknown as { ethereum?: InjectedProvider }).ethereum;
+  return ethereum ?? null;
+}
 
 export default function WalletPage() {
-  const [currentAddress, setCurrentAddress] = useState<string | null>(null);
-  const [walletAddress, setWalletAddress] = useState('');
+  const [currentWallet, setCurrentWallet] = useState<MyWallet | null>(null);
+  const [connectedAddress, setConnectedAddress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [connecting, setConnecting] = useState(false);
+  const [signing, setSigning] = useState(false);
 
   useEffect(() => {
-    fetchMyWallet().then((d) => {
-      if (d.wallet) {
-        setCurrentAddress(d.wallet.walletAddress);
-        setWalletAddress(d.wallet.walletAddress);
-      }
-    });
+    fetchMyWallet().then((d) => setCurrentWallet(d.wallet));
   }, []);
 
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleConnect() {
     setError(null);
     setMessage(null);
-
-    if (!WALLET_ADDRESS_RE.test(walletAddress)) {
-      setError('ウォレットアドレスの形式が正しくありません(0xで始まる42文字)');
+    const provider = getInjectedProvider();
+    if (!provider) {
+      setError('対応するウォレット拡張機能が見つかりません(MetaMask等をブラウザにインストールしてください)');
       return;
     }
+    setConnecting(true);
+    try {
+      const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
+      if (!accounts?.[0]) throw new Error('ウォレットのアドレスを取得できませんでした');
+      setConnectedAddress(accounts[0]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'ウォレットへの接続に失敗しました');
+    } finally {
+      setConnecting(false);
+    }
+  }
 
-    if (currentAddress) {
+  function handleRegisterClick() {
+    setError(null);
+    setMessage(null);
+    if (!connectedAddress) return;
+
+    if (currentWallet && currentWallet.walletAddress.toLowerCase() !== connectedAddress.toLowerCase()) {
       setConfirming(true);
       return;
     }
-
-    void doSubmit();
+    void doSign();
   }
 
-  async function doSubmit() {
-    setSubmitting(true);
+  async function doSign() {
+    if (!connectedAddress) return;
+    const provider = getInjectedProvider();
+    if (!provider) {
+      setError('対応するウォレット拡張機能が見つかりません');
+      return;
+    }
+    setSigning(true);
     setConfirming(false);
     try {
-      const data = await updateMyWallet(walletAddress);
-      setCurrentAddress(data.wallet.walletAddress);
-      setMessage('受取用ウォレットを登録しました。');
+      const { message: challengeMessage } = await requestWalletVerificationNonce(connectedAddress);
+      const signature = (await provider.request({
+        method: 'personal_sign',
+        params: [challengeMessage, connectedAddress],
+      })) as string;
+      const data = await registerVerifiedWallet(connectedAddress, signature);
+      setCurrentWallet(data.wallet);
+      setConnectedAddress(null);
+      setMessage('受取用ウォレットを確認・登録しました。');
     } catch (e) {
-      setError(e instanceof Error ? e.message : '登録に失敗しました');
+      setError(e instanceof Error ? e.message : '署名または登録に失敗しました');
     } finally {
-      setSubmitting(false);
+      setSigning(false);
     }
   }
 
   return (
     <div className="checkout-page">
       <h1>受取用ウォレットの登録</h1>
-      <p>デジタル会員証(NFT)の受け取りに使用するウォレットアドレスを登録してください。</p>
+      <p>デジタル会員証(NFT)の受け取りに使用するウォレットを接続し、ご本人であることを確認(署名)してください。</p>
 
-      <form onSubmit={handleSubmit}>
-        <label>
-          チェーン種別
-          <select value="polygon" disabled>
-            <option value="polygon">Polygon</option>
-          </select>
-        </label>
+      {currentWallet && (
+        <p>
+          登録済みのウォレット: {currentWallet.walletAddress}
+          {currentWallet.verified ? '(確認済み)' : '(未確認)'}
+        </p>
+      )}
 
-        <label>
-          ウォレットアドレス
-          <input
-            type="text"
-            value={walletAddress}
-            onChange={(e) => setWalletAddress(e.target.value)}
-            placeholder="0xで始まる42文字のアドレス"
-            required
-          />
-        </label>
-
-        {error && <p className="checkout-error">{error}</p>}
-        {message && <p>{message}</p>}
-
-        <button type="submit" className="btn-primary" disabled={submitting}>
-          {submitting ? '登録中...' : currentAddress ? '更新する' : '登録する'}
+      {!connectedAddress ? (
+        <button type="button" className="btn-primary" onClick={() => void handleConnect()} disabled={connecting}>
+          {connecting ? '接続中...' : 'ウォレットに接続する'}
         </button>
-      </form>
+      ) : (
+        <div>
+          <p>接続中のアドレス: {connectedAddress}</p>
+          <button type="button" className="btn-primary" onClick={handleRegisterClick} disabled={signing}>
+            {signing ? '確認中...' : '署名して登録する'}
+          </button>
+        </div>
+      )}
+
+      {error && <p className="checkout-error">{error}</p>}
+      {message && <p>{message}</p>}
 
       {confirming && (
         <div className="wallet-confirm-modal">
           <p>ウォレットアドレスを更新します。発行済みのNFTには影響しません。よろしいですか?</p>
-          <button type="button" onClick={() => void doSubmit()}>
+          <button type="button" onClick={() => void doSign()}>
             更新する
           </button>
           <button type="button" onClick={() => setConfirming(false)}>
