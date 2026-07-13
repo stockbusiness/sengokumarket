@@ -11,6 +11,7 @@ const REDACTED_KEYS = new Set([
   'resend_api_key',
   'agency_api_key',
   'external_agency_system_api_key',
+  'nft_mint_api_key',
   'token',
 ]);
 
