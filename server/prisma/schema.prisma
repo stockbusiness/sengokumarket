@@ -83,28 +83,69 @@ model User {
   // 承認されるとroleがagencyに変わり、このフィールドはクリアされる。
   agencyApplicationSubmittedAt DateTime? @map("agency_application_submitted_at")
 
-  wallet              Wallet?
-  orders              Order[]
-  nftIssues           NftIssue[]
-  passwordResetTokens PasswordResetToken[]
-  noticeReads         NoticeRead[]
-  agency              Agency?               @relation(fields: [agencyId], references: [id])
-  couponEntries       CouponCustomer[]
+  wallet                   Wallet?
+  orders                   Order[]
+  nftIssues                NftIssue[]
+  passwordResetTokens      PasswordResetToken[]
+  noticeReads              NoticeRead[]
+  agency                   Agency?                   @relation(fields: [agencyId], references: [id])
+  couponEntries            CouponCustomer[]
+  walletVerificationNonces WalletVerificationNonce[]
+  walletChangeLogs         WalletChangeLog[]
 
   @@map("users")
 }
 
 model Wallet {
-  id            String   @id @default(uuid()) @db.Uuid
-  userId        String   @unique @map("user_id") @db.Uuid
-  walletAddress String   @map("wallet_address")
-  chain         String   @default("polygon")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @unique @map("user_id") @db.Uuid
+  walletAddress      String    @map("wallet_address")
+  chain              String    @default("polygon")
+  // 仕様書外の拡張: ウォレット所有確認(署名検証)。verified=trueになって初めて
+  // nft_issuesのwallet_required→ready_to_issue一括更新の対象になる。
+  verified           Boolean   @default(false)
+  verificationMethod String?   @map("verification_method") // personal_sign
+  verifiedAt         DateTime? @map("verified_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
   user User @relation(fields: [userId], references: [id])
 
   @@map("wallets")
+}
+
+// 仕様書外の拡張: ウォレット署名検証用の使い捨てnonce。password_reset_tokensと同型。
+// 発行時のアドレスと署名時のアドレスが一致することも検証する(すり替え防止)。
+model WalletVerificationNonce {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @map("user_id") @db.Uuid
+  walletAddress String    @map("wallet_address")
+  nonce         String    @unique
+  expiresAt     DateTime  @map("expires_at")
+  usedAt        DateTime? @map("used_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("wallet_verification_nonces")
+}
+
+// 仕様書外の拡張: ウォレットアドレスの変更履歴。admin_audit_logsは管理者操作専用で
+// before/after差分を持たないため、会員自身によるセルフサービス変更も含めて記録する
+// 専用テーブルとして分離する。
+model WalletChangeLog {
+  id                 String   @id @default(uuid()) @db.Uuid
+  userId             String   @map("user_id") @db.Uuid
+  previousAddress    String?  @map("previous_address")
+  newAddress         String   @map("new_address")
+  verificationMethod String   @map("verification_method")
+  changedBy          String   @map("changed_by") // self | admin
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@map("wallet_change_logs")
 }
 
 model Product {
@@ -238,21 +279,30 @@ model OrderItem {
 }
 
 model NftIssue {
-  id              String    @id @default(uuid()) @db.Uuid
-  orderId         String    @map("order_id") @db.Uuid
-  orderItemId     String    @map("order_item_id") @db.Uuid
-  userId          String?   @map("user_id") @db.Uuid
-  productId       String    @map("product_id") @db.Uuid
-  variantId       String?   @map("variant_id") @db.Uuid
-  walletAddress   String?   @map("wallet_address")
-  tokenId         String?   @map("token_id")
-  transactionHash String?   @map("transaction_hash")
-  chain           String    @default("polygon")
-  status          String    @default("wallet_required") // wallet_required | ready_to_issue | issued | failed | cancelled
-  issuedAt        DateTime? @map("issued_at")
-  adminNote       String?   @map("admin_note")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  id                String    @id @default(uuid()) @db.Uuid
+  orderId           String    @map("order_id") @db.Uuid
+  orderItemId       String    @map("order_item_id") @db.Uuid
+  userId            String?   @map("user_id") @db.Uuid
+  productId         String    @map("product_id") @db.Uuid
+  variantId         String?   @map("variant_id") @db.Uuid
+  walletAddress     String?   @map("wallet_address")
+  tokenId           String?   @map("token_id")
+  transactionHash   String?   @map("transaction_hash")
+  chain             String    @default("polygon")
+  status            String    @default("wallet_required") // wallet_required | ready_to_issue | processing | issued | failed | cancelled
+  issuedAt          DateTime? @map("issued_at")
+  adminNote         String?   @map("admin_note")
+  // 仕様書外の拡張: 外部Mint API連携(自動発行)用。cronがready_to_issueの行を
+  // アトミックにprocessingへclaimしてから外部APIへ送信し、二重発行を防ぐ。
+  providerRequestId String?   @map("provider_request_id") // 外部Mint APIのジョブ/リクエストID
+  metadataUri       String?   @map("metadata_uri") // Vercel Blobに置いたmetadata JSONのURL
+  submittedAt       DateTime? @map("submitted_at")
+  attemptCount      Int       @default(0) @map("attempt_count")
+  lastError         String?   @map("last_error")
+  // このタイムスタンプが未来の間はcronの再試行対象から除外する(指数バックオフ/保留の実現)。
+  nextAttemptAt     DateTime? @map("next_attempt_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
   order     Order           @relation(fields: [orderId], references: [id])
   orderItem OrderItem       @relation(fields: [orderItemId], references: [id])
@@ -327,20 +377,20 @@ model PasswordResetToken {
 }
 
 model Agency {
-  id                    String   @id @default(uuid()) @db.Uuid
-  name                  String
-  code                  String   @unique
-  externalId            String?  @unique @map("external_id") // 外部の代理店システム側のID(仕様書外の拡張: API連携用)
-  parentAgencyId        String?  @map("parent_agency_id") @db.Uuid // 親代理店(多階層ツリー構造。仕様書外の拡張)
+  id                      String   @id @default(uuid()) @db.Uuid
+  name                    String
+  code                    String   @unique
+  externalId              String?  @unique @map("external_id") // 外部の代理店システム側のID(仕様書外の拡張: API連携用)
+  parentAgencyId          String?  @map("parent_agency_id") @db.Uuid // 親代理店(多階層ツリー構造。仕様書外の拡張)
   // 仕様書外の拡張(先方仕様書v3.6.40): 連携APIで親がまだ登録されていない代理店を受信した場合、
   // エラーにせずexternal_id文字列のまま保持しておき、親が後から届いた時点で自動的に再紐付けする。
-  pendingParentExternalId String? @map("pending_parent_external_id")
-  contactName           String?  @map("contact_name")
-  contactEmail          String?  @map("contact_email")
-  status                String   @default("active") // active | inactive
-  defaultCommissionRate Decimal  @default(0) @map("default_commission_rate") @db.Decimal(5, 2)
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  pendingParentExternalId String?  @map("pending_parent_external_id")
+  contactName             String?  @map("contact_name")
+  contactEmail            String?  @map("contact_email")
+  status                  String   @default("active") // active | inactive
+  defaultCommissionRate   Decimal  @default(0) @map("default_commission_rate") @db.Decimal(5, 2)
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   parentAgency  Agency?        @relation("AgencyHierarchy", fields: [parentAgencyId], references: [id])
   childAgencies Agency[]       @relation("AgencyHierarchy")
@@ -387,19 +437,19 @@ model Influencer {
 }
 
 model ReferralLink {
-  id             String   @id @default(uuid()) @db.Uuid
-  code           String   @unique
-  agencyId       String?  @map("agency_id") @db.Uuid
-  influencerId   String?  @map("influencer_id") @db.Uuid
-  commissionRate Decimal? @map("commission_rate") @db.Decimal(5, 2)
-  landingPath    String   @default("/") @map("landing_path")
-  status         String   @default("active") // active | inactive
+  id              String   @id @default(uuid()) @db.Uuid
+  code            String   @unique
+  agencyId        String?  @map("agency_id") @db.Uuid
+  influencerId    String?  @map("influencer_id") @db.Uuid
+  commissionRate  Decimal? @map("commission_rate") @db.Decimal(5, 2)
+  landingPath     String   @default("/") @map("landing_path")
+  status          String   @default("active") // active | inactive
   // 仕様書外の拡張(クーポン機能): 紹介リンクの編集・削除機能は作らない方針(CLAUDE.md)のため、
   // クーポンの設定は発行時のみ可能とする(後から付け替える専用APIは用意しない)。
-  couponId       String?  @map("coupon_id") @db.Uuid
-  couponAutoApply Boolean @default(true) @map("coupon_auto_apply")
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  couponId        String?  @map("coupon_id") @db.Uuid
+  couponAutoApply Boolean  @default(true) @map("coupon_auto_apply")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   agency     Agency?     @relation(fields: [agencyId], references: [id])
   influencer Influencer? @relation(fields: [influencerId], references: [id])
@@ -436,18 +486,18 @@ model Commission {
 // 仕様書外の拡張: クーポン機能(sengoku_nft_cart_coupon_implementation_spec)。
 // 既存の紹介・報酬・注文フローとは独立した追加機能として実装する。
 model Coupon {
-  id          String   @id @default(uuid()) @db.Uuid
-  code        String   @unique
+  id          String  @id @default(uuid()) @db.Uuid
+  code        String  @unique
   name        String
   description String?
 
-  discountType       String   @map("discount_type") // fixed | percentage
+  discountType          String   @map("discount_type") // fixed | percentage
   // 金額はINTEGER(円)。discountTypeがfixedの時のみ使用(CLAUDE.md: 浮動小数点で金額計算しない)。
-  discountAmount     Int?     @map("discount_amount")
+  discountAmount        Int?     @map("discount_amount")
   // 割合はDecimal(既存のcommissionRate等と同じ扱い)。discountTypeがpercentageの時のみ使用。
-  discountPercentage Decimal? @map("discount_percentage") @db.Decimal(5, 2)
-  maximumDiscountAmount Int?  @map("maximum_discount_amount")
-  minimumOrderAmount    Int?  @map("minimum_order_amount")
+  discountPercentage    Decimal? @map("discount_percentage") @db.Decimal(5, 2)
+  maximumDiscountAmount Int?     @map("maximum_discount_amount")
+  minimumOrderAmount    Int?     @map("minimum_order_amount")
 
   startsAt  DateTime? @map("starts_at")
   expiresAt DateTime? @map("expires_at")
@@ -460,9 +510,9 @@ model Coupon {
   reservedCount         Int  @default(0) @map("reserved_count")
 
   // all | include | exclude (coupon_productsで対象/除外商品を指定)
-  productScopeType String @default("all") @map("product_scope_type")
+  productScopeType  String @default("all") @map("product_scope_type")
   // all | include (coupon_agenciesで対象代理店を指定)
-  agencyScopeType  String @default("all") @map("agency_scope_type")
+  agencyScopeType   String @default("all") @map("agency_scope_type")
   // all | include | new_customer (coupon_customersで対象顧客を指定)。
   // event_participant / gacha_result は将来のガチャシステム連携用に予約した値(今回は未実装)。
   customerScopeType String @default("all") @map("customer_scope_type")
