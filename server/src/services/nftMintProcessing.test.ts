@@ -172,6 +172,18 @@ describe('processNftMints(仕様書外の拡張)', () => {
     expect(after.status).toBe('wallet_required');
   });
 
+  it('claim直後でproviderRequestId未設定のprocessing行は、同時実行中とみなしすぐには失敗にしない', async () => {
+    // 並行claimテストで発覚した回帰の再発防止: 送信中(providerRequestId未設定)の行を
+    // 別の呼び出しがpollAndMaybeConfirmで見つけても、即座にhandleFailureへ倒さずスキップすること。
+    const issue = await createOrderAndIssue('processing', { providerRequestId: null });
+
+    await processNftMints();
+
+    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
+    expect(after.status).toBe('processing');
+    expect(after.attemptCount).toBe(0);
+  });
+
   it('未知のproviderRequestIdを持つprocessing行は失敗として扱われ、ready_to_issueへ差し戻される', async () => {
     const issue = await createOrderAndIssue('processing', { providerRequestId: 'nonexistent-request-id' });
 

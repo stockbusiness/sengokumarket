@@ -4,6 +4,7 @@ import {
   fetchBankTransferSettings,
   testAgencyKeyConnection,
   testExternalAgencyConnection,
+  testNftMintConnection,
   testResendConnection,
   testStripeConnection,
   updateAdminSettings,
@@ -33,6 +34,11 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
     key: 'external_agency_system_api_key',
     label: '外部代理店システムAPIキー(こちらから送信する際に使用)',
     helpText: 'このキーは外部の代理店システム側で発行される値です。先方から共有を受けて入力してください。',
+  },
+  {
+    key: 'nft_mint_api_key',
+    label: 'NFT Mint APIキー(仕様書外の拡張・NFT自動発行)',
+    helpText: '外部のNFT発行サービス(NFT_MINT_PROVIDER環境変数で選択)の認証キーです。fakeプロバイダー(既定)ではこのキーは使用されません。',
   },
 ];
 
@@ -64,6 +70,7 @@ export default function AdminSettingsPage() {
   const [externalAgencyTest, setExternalAgencyTest] = useState<TestState>(null);
   const [resendTestTo, setResendTestTo] = useState('');
   const [resendTest, setResendTest] = useState<TestState>(null);
+  const [nftMintTest, setNftMintTest] = useState<TestState>(null);
 
   function load() {
     fetchAdminSettings().then((d) => setSettings(d.settings));
@@ -114,6 +121,11 @@ export default function AdminSettingsPage() {
   async function handleTestAgencyKey() {
     setAgencyKeyTest('testing');
     setAgencyKeyTest(await testAgencyKeyConnection(inputs.agency_api_key ?? ''));
+  }
+
+  async function handleTestNftMint() {
+    setNftMintTest('testing');
+    setNftMintTest(await testNftMintConnection(inputs.nft_mint_api_key ?? ''));
   }
 
   return (
@@ -183,6 +195,15 @@ export default function AdminSettingsPage() {
                     接続テスト
                   </button>
                   <TestResultText state={externalAgencyTest} />
+                </div>
+              )}
+
+              {field.key === 'nft_mint_api_key' && (
+                <div className="admin-settings-test">
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestNftMint}>
+                    接続テスト
+                  </button>
+                  <TestResultText state={nftMintTest} />
                 </div>
               )}
             </Fragment>

@@ -182,6 +182,12 @@ export interface AdminNftIssue {
   transactionHash: string | null;
   issuedAt: string | null;
   adminNote: string | null;
+  // 仕様書外の拡張(NFT自動発行): 外部Mint API連携の状態表示用。
+  attemptCount: number;
+  lastError: string | null;
+  submittedAt: string | null;
+  providerRequestId: string | null;
+  nextAttemptAt: string | null;
 }
 
 export function fetchAdminNftIssues(status?: string) {
@@ -193,6 +199,14 @@ export function updateAdminNftIssue(
   payload: { status?: string; tokenId?: string; transactionHash?: string; adminNote?: string },
 ) {
   return adminSend<{ nftIssue: AdminNftIssue }>('PUT', `/nft-issues/${id}`, payload);
+}
+
+export function retryAdminNftIssue(id: string) {
+  return adminSend<{ nftIssue: AdminNftIssue }>('POST', `/nft-issues/${id}/retry`, undefined);
+}
+
+export function holdAdminNftIssue(id: string) {
+  return adminSend<{ nftIssue: AdminNftIssue }>('POST', `/nft-issues/${id}/hold`, undefined);
 }
 
 // --- Wallet missing ---
@@ -358,6 +372,8 @@ export interface AdminSettings {
   agency_api_key: AdminSettingInfo;
   external_agency_system_base_url: AdminSettingInfo;
   external_agency_system_api_key: AdminSettingInfo;
+  // 仕様書外の拡張(NFT自動発行): 外部Mint APIプロバイダーの認証キー。
+  nft_mint_api_key: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {
@@ -394,6 +410,10 @@ export function testExternalAgencyConnection(baseUrl: string, apiKey: string) {
 
 export function testAgencyKeyConnection(agencyApiKey: string) {
   return adminSend<ConnectionTestResult>('POST', '/settings/test/agency-key', { agency_api_key: agencyApiKey });
+}
+
+export function testNftMintConnection(nftMintApiKey: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/nft-mint', { nft_mint_api_key: nftMintApiKey });
 }
 
 // --- CSV商品インポート ---

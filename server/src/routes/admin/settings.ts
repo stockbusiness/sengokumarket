@@ -4,6 +4,7 @@ import { getAllSettingsMasked, setSetting, SETTING_KEYS, type SettingKey } from 
 import {
   testAgencyKeyConnection,
   testExternalAgencyConnection,
+  testNftMintConnection,
   testResendConnection,
   testStripeConnection,
 } from '../../services/connectionTest';
@@ -55,6 +56,13 @@ router.post('/settings/test/external-agency', async (req, res) => {
 
 router.post('/settings/test/agency-key', async (req, res) => {
   const result = await testAgencyKeyConnection(readString(req.body, 'agency_api_key'));
+  res.json(result);
+});
+
+// 仕様書外の拡張(NFT自動発行): NFT_MINT_PROVIDER環境変数の値によって結果が変わる
+// (fakeなら常に成功、crossmint等の未実装プロバイダーはその旨を返す)。
+router.post('/settings/test/nft-mint', async (req, res) => {
+  const result = await testNftMintConnection(readString(req.body, 'nft_mint_api_key'));
   res.json(result);
 });
 

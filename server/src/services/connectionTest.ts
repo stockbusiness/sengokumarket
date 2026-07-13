@@ -70,6 +70,26 @@ export async function testExternalAgencyConnection(baseUrlOverride?: string, api
   }
 }
 
+// 仕様書外の拡張(NFT自動発行): 外部Mint APIプロバイダーの疎通確認。crossmint等の実プロバイダーは
+// まだ未実装(nftMintProviders/crossmint.ts参照)のため、その場合は「未実装」であることを明示し、
+// 誤って接続成功と誤認させないようにする。
+export async function testNftMintConnection(apiKeyOverride?: string): Promise<ConnectionTestResult> {
+  const provider = process.env.NFT_MINT_PROVIDER ?? 'fake';
+
+  if (provider === 'fake') {
+    return { ok: true, message: 'ローカル開発・テスト用の擬似プロバイダー(fake)が有効です。実際の外部送信は行われません' };
+  }
+
+  const apiKey = apiKeyOverride?.trim() || (await getSetting('nft_mint_api_key'));
+  if (!apiKey) return { ok: false, message: 'NFT Mint APIキーが未入力です' };
+
+  if (provider === 'crossmint') {
+    return { ok: false, message: 'このMintプロバイダー(crossmint)は実装がまだ完了していません' };
+  }
+
+  return { ok: false, message: `未対応のNFT_MINT_PROVIDERです: ${provider}` };
+}
+
 // 代理店連携APIキー(自システムの受信用)の自己テスト。サーバー内部から直接ハンドラを呼ぶのではなく、
 // 実際に公開URL経由でリクエストし、認証ミドルウェアを含めた実際の疎通を確認する。
 export async function testAgencyKeyConnection(apiKeyOverride?: string): Promise<ConnectionTestResult> {

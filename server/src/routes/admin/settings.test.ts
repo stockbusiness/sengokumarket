@@ -8,12 +8,14 @@ const testStripeConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, m
 const testResendConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'resend ok' }));
 const testExternalAgencyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'external ok' }));
 const testAgencyKeyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'agency key ok' }));
+const testNftMintConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'nft mint ok' }));
 
 vi.mock('../../services/connectionTest', () => ({
   testStripeConnection: (...args: unknown[]) => testStripeConnection(...args),
   testResendConnection: (...args: unknown[]) => testResendConnection(...args),
   testExternalAgencyConnection: (...args: unknown[]) => testExternalAgencyConnection(...args),
   testAgencyKeyConnection: (...args: unknown[]) => testAgencyKeyConnection(...args),
+  testNftMintConnection: (...args: unknown[]) => testNftMintConnection(...args),
 }));
 
 const app = createApp();
@@ -119,5 +121,14 @@ describe('管理API: 接続テスト(仕様書外の拡張)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, message: 'agency key ok' });
     expect(testAgencyKeyConnection).toHaveBeenCalledWith('mykey');
+  });
+
+  it('POST /settings/test/nft-mintはtestNftMintConnectionの結果を返す(仕様書外の拡張)', async () => {
+    const { agent } = await createAdminAgent(app);
+    testNftMintConnection.mockClear();
+    const res = await agent.post('/api/admin/settings/test/nft-mint').set('Origin', TEST_ORIGIN).send({ nft_mint_api_key: 'mintkey' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'nft mint ok' });
+    expect(testNftMintConnection).toHaveBeenCalledWith('mintkey');
   });
 });

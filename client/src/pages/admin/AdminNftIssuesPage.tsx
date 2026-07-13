@@ -1,15 +1,22 @@
 import { useEffect, useState } from 'react';
-import { fetchAdminNftIssues, updateAdminNftIssue, type AdminNftIssue } from '../../lib/adminApi';
+import {
+  fetchAdminNftIssues,
+  updateAdminNftIssue,
+  retryAdminNftIssue,
+  holdAdminNftIssue,
+  type AdminNftIssue,
+} from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
 
-const STATUSES = ['wallet_required', 'ready_to_issue', 'issued', 'failed', 'cancelled'];
+const STATUSES = ['wallet_required', 'ready_to_issue', 'processing', 'issued', 'failed', 'cancelled'];
 
 export default function AdminNftIssuesPage() {
   const [nftIssues, setNftIssues] = useState<AdminNftIssue[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { tokenId: string; transactionHash: string }>>({});
   const [error, setError] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
   function load() {
     fetchAdminNftIssues(statusFilter || undefined).then((d) => setNftIssues(d.nftIssues));
@@ -36,6 +43,31 @@ export default function AdminNftIssuesPage() {
     load();
   }
 
+  // 仕様書外の拡張(NFT自動発行): 外部Mint APIへの自動送信を今すぐ再試行/一時的に止める。
+  async function retry(issue: AdminNftIssue) {
+    setError(null);
+    setMessage(null);
+    try {
+      await retryAdminNftIssue(issue.id);
+      setMessage(`${issue.customerName}様の発行を再試行対象にしました(次回の自動処理で再送信されます)`);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '再試行の設定に失敗しました');
+    }
+  }
+
+  async function hold(issue: AdminNftIssue) {
+    setError(null);
+    setMessage(null);
+    try {
+      await holdAdminNftIssue(issue.id);
+      setMessage(`${issue.customerName}様の発行を保留にしました(自動処理の対象から外れます)`);
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '保留の設定に失敗しました');
+    }
+  }
+
   return (
     <div>
       <h1>NFT発行管理</h1>
@@ -53,6 +85,7 @@ export default function AdminNftIssuesPage() {
       </label>
 
       {error && <p className="checkout-error">{error}</p>}
+      {message && <p>{message}</p>}
 
       {nftIssues.length === 0 ? (
         <div className="admin-table-card">
@@ -69,6 +102,7 @@ export default function AdminNftIssuesPage() {
                 <th>ステータス</th>
                 <th>token ID</th>
                 <th>transaction hash</th>
+                <th>自動発行状況(仕様書外の拡張)</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -103,9 +137,27 @@ export default function AdminNftIssuesPage() {
                     />
                   </td>
                   <td>
+                    {issue.attemptCount > 0 && <p>試行回数: {issue.attemptCount}</p>}
+                    {issue.submittedAt && <p>送信日時: {new Date(issue.submittedAt).toLocaleString('ja-JP')}</p>}
+                    {issue.lastError && <p className="checkout-error">最終エラー: {issue.lastError}</p>}
+                    {issue.nextAttemptAt && new Date(issue.nextAttemptAt).getTime() > Date.now() && (
+                      <p>次回再試行: {new Date(issue.nextAttemptAt).toLocaleString('ja-JP')}</p>
+                    )}
+                  </td>
+                  <td>
                     <button type="button" className="btn-primary btn-small" onClick={() => markIssued(issue)}>
                       発行済みにする
                     </button>
+                    {(issue.status === 'failed' || issue.status === 'ready_to_issue') && (
+                      <>
+                        <button type="button" className="btn-secondary btn-small" onClick={() => retry(issue)}>
+                          今すぐ再試行
+                        </button>
+                        <button type="button" className="btn-secondary btn-small" onClick={() => hold(issue)}>
+                          保留
+                        </button>
+                      </>
+                    )}
                   </td>
                 </tr>
               ))}

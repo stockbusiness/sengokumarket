@@ -94,9 +94,18 @@ async function submitAndMaybeConfirm(issueId: string, provider: MintProvider, re
   }
 }
 
+// claim直後、まだsubmitMintの送信が完了していない行(providerRequestId未設定)は、
+// 同時に動いている別の呼び出しが処理している最中の可能性があるため、すぐには失敗にしない。
+// この滞留時間を超えても未送信のままなら、送信処理自体がクラッシュ等で中断したとみなし失敗にする。
+const STUCK_PROCESSING_THRESHOLD_MS = 10 * 60 * 1000;
+
 async function pollAndMaybeConfirm(issue: NftIssue, provider: MintProvider, result: ProcessNftMintsResult) {
   if (!issue.providerRequestId) {
-    await handleFailure(issue.id, 'providerRequestIdが記録されていません', result);
+    if (Date.now() - issue.updatedAt.getTime() > STUCK_PROCESSING_THRESHOLD_MS) {
+      await handleFailure(issue.id, 'providerRequestIdが記録されないままprocessingで停滞しています', result);
+    } else {
+      result.skipped++;
+    }
     return;
   }
   try {
