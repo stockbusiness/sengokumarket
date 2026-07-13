@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { recoverMessageAddress } from 'viem';
 import type { Prisma } from '@prisma/client';
 import { HttpError } from '../lib/httpError';
+import { getNftChain } from './nftMint';
 
 type Tx = Prisma.TransactionClient;
 
@@ -74,7 +75,7 @@ export async function verifyAndRegisterWallet(
     where: { userId: params.userId },
     update: {
       walletAddress: params.walletAddress,
-      chain: 'polygon',
+      chain: getNftChain(),
       verified: true,
       verificationMethod: 'personal_sign',
       verifiedAt: new Date(),
@@ -82,7 +83,7 @@ export async function verifyAndRegisterWallet(
     create: {
       userId: params.userId,
       walletAddress: params.walletAddress,
-      chain: 'polygon',
+      chain: getNftChain(),
       verified: true,
       verificationMethod: 'personal_sign',
       verifiedAt: new Date(),

@@ -39,3 +39,9 @@ export function getMintProvider(): MintProvider {
       throw new Error(`未対応のNFT_MINT_PROVIDERです: ${providerName}`);
   }
 }
+
+// 発行対象チェーン。コードへ固定せずNFT_CHAIN環境変数で切り替える
+// (wallets.chain / nft_issues.chainへ書き込む値も含め、ここを唯一の参照元にする)。
+export function getNftChain(): string {
+  return process.env.NFT_CHAIN ?? 'bsc';
+}

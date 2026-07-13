@@ -2,6 +2,7 @@ import type { Order, OrderItem, Prisma } from '@prisma/client';
 import { createPasswordResetToken } from './passwordReset';
 import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
 import { confirmCouponUsage } from './coupon';
+import { getNftChain } from './nftMint';
 
 type Tx = Prisma.TransactionClient;
 
@@ -27,6 +28,8 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
       variantId: item.variantId,
       status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
       walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
+      // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
+      chain: getNftChain(),
     }));
     await tx.nftIssue.createMany({ data: rows });
   }
