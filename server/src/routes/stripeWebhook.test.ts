@@ -309,6 +309,46 @@ describe('POST /api/stripe/webhook', () => {
     expect(commission.status).toBe('cancelled');
   });
 
+  it('charge.refunded(全額)でも外部Mint APIへ送信中(processing)のnft_issuesはcancelledにせず、要確認の注記のみ追加する(仕様書外の拡張)', async () => {
+    const email = `webhook-test-fullrefund-processing-${Date.now()}@example.com`;
+    const { order } = await createTestOrder(email);
+    const paymentIntentId = `pi_test_${Math.random().toString(36).slice(2)}`;
+    const sessionId = (await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).stripeSessionId!;
+
+    await postWebhook({
+      id: `evt_test_precondition_processing_${Date.now()}`,
+      type: 'checkout.session.completed',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: sessionId, payment_intent: paymentIntentId, metadata: { order_id: order.id } } },
+    });
+
+    const nftIssue = await prisma.nftIssue.findFirstOrThrow({ where: { orderId: order.id } });
+    await prisma.nftIssue.update({ where: { id: nftIssue.id }, data: { status: 'processing', providerRequestId: 'test-in-flight' } });
+
+    const totalAmount = (await prisma.order.findUniqueOrThrow({ where: { id: order.id } })).totalAmount;
+
+    await postWebhook({
+      id: `evt_test_refund_full_processing_${Date.now()}`,
+      type: 'charge.refunded',
+      created: Math.floor(Date.now() / 1000),
+      data: {
+        object: {
+          id: `ch_test_processing_${Date.now()}`,
+          payment_intent: paymentIntentId,
+          amount: totalAmount,
+          amount_refunded: totalAmount,
+        },
+      },
+    });
+
+    const refundedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(refundedOrder.paymentStatus).toBe('refunded');
+
+    const updatedIssue = await prisma.nftIssue.findUniqueOrThrow({ where: { id: nftIssue.id } });
+    expect(updatedIssue.status).toBe('processing');
+    expect(updatedIssue.adminNote).toContain('全額返金発生・発行処理中のため要手動確認');
+  });
+
   it('charge.refunded(一部)は自動変更せずadmin_noteのみ記録する', async () => {
     const email = `webhook-test-partialrefund-${Date.now()}@example.com`;
     const { order } = await createTestOrder(email);

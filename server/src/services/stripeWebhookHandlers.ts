@@ -4,6 +4,7 @@ import { findOrderForEvent } from './orderLookup';
 import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
 import { sendCartAbandonedEmail } from './mailTemplates';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
+import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -47,6 +48,10 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   // stripe_events登録済みのため、ここで例外を投げるとWebhookが二重処理されずリトライされなくなってしまう
   // (sendPostPaymentEmails内部で例外は握りつぶし済み)。
   await sendPostPaymentEmails(result.order, result.items);
+
+  // 仕様書外の拡張(NFT自動発行): cronの実行間隔(Vercelプランによっては日次)を待たせないよう、
+  // 決済確定直後にベストエフォートで発行処理を試みる(失敗時はcronがセーフティネットとして拾う)。
+  await triggerImmediateNftMintProcessing();
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {
@@ -150,6 +155,18 @@ export async function handleChargeRefunded(event: Stripe.Event) {
       where: { orderId: order.id, status: { in: ['wallet_required', 'ready_to_issue'] } },
       data: { status: 'cancelled' },
     });
+
+    // 仕様書外の拡張(NFT自動発行): 外部Mint APIへ送信済み・確定待ち(processing)の行は
+    // 送信中のリクエストと競合しうるためここでは触らない(cancelledにしない)。
+    // Mintが完了してしまっても管理者が事後確認できるよう、注記だけ残す。
+    const processingIssues = await tx.nftIssue.findMany({ where: { orderId: order.id, status: 'processing' } });
+    for (const issue of processingIssues) {
+      const note = '全額返金発生・発行処理中のため要手動確認';
+      await tx.nftIssue.update({
+        where: { id: issue.id },
+        data: { adminNote: issue.adminNote ? `${issue.adminNote}\n${note}` : note },
+      });
+    }
 
     // 仕様書外の拡張(クーポン機能): 全額返金時、クーポン設定のrestoreOnCancelに従って
     // 再利用可能へ戻す(一部返金では呼ばない。仕様書12章)。

@@ -15,6 +15,8 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
   if (orderItems.length === 0) return;
 
   const wallet = userId ? await tx.wallet.findUnique({ where: { userId } }) : null;
+  // 仕様書外の拡張: 署名検証(verified)を通過したウォレットのみready_to_issueへ即時遷移する。
+  const hasVerifiedWallet = Boolean(wallet?.verified);
 
   for (const item of orderItems) {
     const rows = Array.from({ length: item.quantity }, () => ({
@@ -23,8 +25,8 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
       userId,
       productId: item.productId,
       variantId: item.variantId,
-      status: wallet ? 'ready_to_issue' : 'wallet_required',
-      walletAddress: wallet ? wallet.walletAddress : null,
+      status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
+      walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
     }));
     await tx.nftIssue.createMany({ data: rows });
   }

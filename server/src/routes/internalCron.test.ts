@@ -10,6 +10,12 @@ vi.mock('../services/agencyHierarchySync', () => ({
   syncAgencyHierarchyFromExternalSystem: () => syncAgencyHierarchyFromExternalSystem(),
 }));
 
+const processNftMints = vi.fn(async () => ({ claimed: 1, issued: 1, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 }));
+
+vi.mock('../services/nftMintProcessing', () => ({
+  processNftMints: () => processNftMints(),
+}));
+
 const app = createApp();
 
 describe('内部cron: 外部代理店システム階層同期(仕様書外の拡張)', () => {
@@ -117,5 +123,39 @@ describe('内部cron: 銀行振込注文の失効(仕様書外の拡張)', () =>
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: variantId } });
     // 期限切れ注文の分だけ解放され、期限内の注文の仮引当(1)は残る
     expect(variant.reservedStock).toBe(1);
+  });
+});
+
+describe('内部cron: NFT自動発行処理(仕様書外の拡張)', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalSecret;
+    processNftMints.mockClear();
+  });
+
+  it('CRON_SECRET未設定の場合は503', async () => {
+    delete process.env.CRON_SECRET;
+    const res = await request(app).get('/api/internal/cron/process-nft-mints');
+    expect(res.status).toBe(503);
+  });
+
+  it('Authorizationヘッダーが一致しない場合は401', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-nftmint';
+    const res = await request(app)
+      .get('/api/internal/cron/process-nft-mints')
+      .set('Authorization', 'Bearer wrong-secret');
+    expect(res.status).toBe(401);
+    expect(processNftMints).not.toHaveBeenCalled();
+  });
+
+  it('正しいCRON_SECRETでprocessNftMintsが実行される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-nftmint';
+    const res = await request(app)
+      .get('/api/internal/cron/process-nft-mints')
+      .set('Authorization', 'Bearer test-cron-secret-nftmint');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ claimed: 1, issued: 1, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 });
+    expect(processNftMints).toHaveBeenCalledTimes(1);
   });
 });

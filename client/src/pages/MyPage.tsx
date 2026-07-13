@@ -16,6 +16,7 @@ import {
 const NFT_STATUS_LABEL: Record<string, string> = {
   wallet_required: 'ウォレット未登録',
   ready_to_issue: '発行準備中',
+  processing: '発行手続き中',
   issued: '発行済み',
   failed: '発行エラー',
   cancelled: 'キャンセル済み',
