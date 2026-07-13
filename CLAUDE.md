@@ -3,7 +3,8 @@
 ## プロジェクト概要
 
 戦国楽市楽座の「評議員NFT(デジタル会員証)」を販売するECカートのMVP。
-Stripe決済 + 手動NFT発行管理 + インフルエンサー代理店の紹介報酬管理を含む。
+Stripe決済 + 外部Mint API連携によるNFT自動発行(Phase 1) + インフルエンサー代理店の紹介報酬管理を含む。
+LINE LIFF連携(戦国パスポート)はPhase 2/3として別途計画中で、本リポジトリには含まれない。
 
 **正式な仕様書は `docs/sengoku_nft_cart_codex_instructions_v1_5.md`(v1.5)。**
 本ファイルと仕様書が矛盾する場合は仕様書v1.5を正とする。
@@ -56,7 +57,25 @@ Stripe決済 + 手動NFT発行管理 + インフルエンサー代理店の紹�
 ### nft_issues
 
 - `order_items.item_type = 'nft'` の行のみ、**quantity個ぶん個別レコード**を作成
-- ウォレット登録APIでwallet_required→ready_to_issue一括更新+アドレスをスナップショット
+- ステータス: `wallet_required → ready_to_issue → processing → issued`(失敗時は`ready_to_issue`に
+  戻って再試行、最大試行回数超過で`failed`。返金・キャンセルで`cancelled`。`processing`中の行は
+  外部Mint APIへ送信済みの可能性があるため全額返金でも`cancelled`にせず注記のみ追加する)
+- `ready_to_issue`への遷移は**署名検証済み(`wallets.verified=true`)**のウォレットが登録された
+  場合のみ行う。ウォレット登録APIで対象行を一括更新+アドレスをスナップショット
+
+### NFT自動発行(仕様書外の拡張・Phase 1)
+
+- 自前コントラクト・秘密鍵管理は行わない。外部の管理型Mint APIサービスを`NFT_MINT_PROVIDER`
+  環境変数で切り替える(既定`fake`はローカル開発・テスト用の擬似プロバイダー)
+- ウォレットの所有確認は署名検証(EIP-191 `personal_sign`、`viem`で検証)必須。自由入力の
+  アドレスだけでは`ready_to_issue`にならない
+- Vercelには永続ワーカーが無いため、決済確定(Stripe Webhook・銀行振込入金確認)の直後に
+  ベストエフォートで即時実行し、cron(`/api/internal/cron/process-nft-mints`、日次)を
+  取りこぼし・失敗時のセーフティネットとして併用する
+- 外部APIへの多重送信防止は、条件付きUPDATE(`WHERE status='ready_to_issue'`)によるアトミックな
+  claimで行う。失敗時は指数バックオフ(5→10→20→40→60分)で最大5回まで再試行し、超過で`failed`
+- メタデータ・画像は既存のVercel Blobに保存する(IPFS等は未導入)。個人情報(氏名・メール・
+  電話・住所・購入金額等)はメタデータに一切含めない
 
 ### 紹介・報酬
 
@@ -91,4 +110,8 @@ Stripe決済 + 手動NFT発行管理 + インフルエンサー代理店の紹�
   - item_type != 'nft' でnft_issuesが作られないこと
   - 報酬率の3段階フォールバック解決
   - 全額返金でcommissionsがcancelledになりordersと同期されること
+  - (仕様書外の拡張)ウォレット署名検証: 不正な署名・期限切れ/使用済みnonce・アドレス不一致が
+    すべて拒否されること
+  - (仕様書外の拡張)NFT自動発行のclaimが同時実行下でも1回しか処理されないこと、失敗時の
+    バックオフ・最大試行回数、`processing`中の行が全額返金でcancelledにならないこと
 - Stripe CLIの `stripe listen --forward-to localhost:PORT/api/stripe/webhook` でローカル検証する
