@@ -37,6 +37,7 @@ const AdminProductCreatePage = lazyWithReload(() => import('./pages/admin/AdminP
 const AdminProductEditPage = lazyWithReload(() => import('./pages/admin/AdminProductEditPage'));
 const AdminImportProductsPage = lazyWithReload(() => import('./pages/admin/AdminImportProductsPage'));
 const AdminOrdersPage = lazyWithReload(() => import('./pages/admin/AdminOrdersPage'));
+const AdminExternalOrdersPage = lazyWithReload(() => import('./pages/admin/AdminExternalOrdersPage'));
 const AdminNftIssuesPage = lazyWithReload(() => import('./pages/admin/AdminNftIssuesPage'));
 const AdminWalletMissingPage = lazyWithReload(() => import('./pages/admin/AdminWalletMissingPage'));
 const AdminNoticesPage = lazyWithReload(() => import('./pages/admin/AdminNoticesPage'));
@@ -214,6 +215,7 @@ function App() {
           <Route path="products/:id/edit" element={<AdminProductEditPage />} />
           <Route path="import-products" element={<AdminImportProductsPage />} />
           <Route path="orders" element={<AdminOrdersPage />} />
+          <Route path="external-orders" element={<AdminExternalOrdersPage />} />
           <Route path="nft-issues" element={<AdminNftIssuesPage />} />
           <Route path="wallet-missing" element={<AdminWalletMissingPage />} />
           <Route path="notices" element={<AdminNoticesPage />} />

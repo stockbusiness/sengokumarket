@@ -42,6 +42,7 @@ const NAV_GROUPS: {
   {
     heading: 'NFT',
     items: [
+      { to: '/admin/external-orders', label: '外部購入者の取り込み', icon: IconUpload },
       { to: '/admin/nft-issues', label: 'NFT発行管理', icon: IconBadge },
       { to: '/admin/wallet-missing', label: 'ウォレット未登録一覧', icon: IconWallet, badgeKey: 'walletMissing' },
     ],

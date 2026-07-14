@@ -197,8 +197,9 @@ model Order {
   paymentStatus         String    @default("pending") @map("payment_status") // pending | paid | failed | refunded | expired
   orderStatus           String    @default("pending") @map("order_status") // pending | paid | cancelled | refunded
   // 仕様書外の拡張: 決済手段。bank_transferの場合、決済確定はStripe Webhookではなく
-  // 管理画面からの手動確認(admin/orders.tsの入金確認)によって行われる。
-  paymentMethod         String    @default("stripe") @map("payment_method") // stripe | bank_transfer
+  // 管理画面からの手動確認(admin/orders.tsの入金確認)によって行われる。external_importは
+  // このシステム以外の販路で決済済みの購入者を事後的に取り込んだ注文(admin/externalOrders.ts)。
+  paymentMethod         String    @default("stripe") @map("payment_method") // stripe | bank_transfer | external_import
   paidAt                DateTime? @map("paid_at")
   refundedAt            DateTime? @map("refunded_at")
   expiredAt             DateTime? @map("expired_at")
