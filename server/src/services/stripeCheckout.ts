@@ -44,6 +44,14 @@ export async function createStripeCheckoutSession(order: Order, items: OrderItem
       },
     })),
     discounts,
+    // 仕様書外の拡張: 日本発行カードの分割払い(JCB最大24回、Visa/Mastercard最大60回)。
+    // ダッシュボードの決済手段設定で有効化済みだが、payment_method_typesを将来指定した際に
+    // 暗黙的に外れてしまわないよう明示的に有効化しておく。手数料・入金額への影響はない。
+    payment_method_options: {
+      card: {
+        installments: { enabled: true },
+      },
+    },
     payment_intent_data: {
       metadata: { order_id: order.id },
     },
