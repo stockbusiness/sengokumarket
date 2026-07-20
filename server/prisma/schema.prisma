@@ -156,6 +156,10 @@ model Product {
   description String?
   category    String
   itemType    String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
+  // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
+  // direct_allowed = 代理店なしで購入可, agent_required = 販売担当代理店が確定していないと
+  // 購入不可, hybrid = 両方可(既存商品はすべてこれで初期化。紹介コードは従来通り任意入力)。
+  salesModel  String   @default("hybrid") @map("sales_model")
   basePrice   Int      @map("base_price")
   status      String   @default("draft") // draft | published | archived
   // 仕様書外の拡張: 商品画像の複数枚対応。先頭(images[0])を一覧・OGP等のサムネイルとして扱う。

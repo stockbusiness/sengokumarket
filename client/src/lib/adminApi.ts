@@ -67,6 +67,7 @@ export interface AdminProduct {
   description: string | null;
   category: string;
   itemType: string;
+  salesModel: string;
   basePrice: number;
   status: string;
   images: string[];

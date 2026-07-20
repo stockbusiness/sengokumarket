@@ -41,6 +41,45 @@ describe('管理API: 商品管理', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.product.variants).toHaveLength(1);
+    // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 未指定時はhybridで初期化される。
+    expect(res.body.product.salesModel).toBe('hybrid');
+  });
+
+  it('sales_modelを指定して商品を作成できる', async () => {
+    const agentRequiredSlug = `admin-test-agent-required-${Date.now()}`;
+    const res = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: '代理店必須商品テスト',
+        slug: agentRequiredSlug,
+        category: 'テスト',
+        itemType: 'membership',
+        salesModel: 'agent_required',
+        basePrice: 500000,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.product.salesModel).toBe('agent_required');
+
+    await prisma.product.delete({ where: { slug: agentRequiredSlug } });
+  });
+
+  it('不正なsales_modelは400を返す', async () => {
+    const res = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: '不正販売方式テスト',
+        slug: `admin-test-invalid-salesmodel-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        salesModel: 'not-a-real-model',
+        basePrice: 1000,
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('同じslugは409を返す', async () => {
@@ -80,6 +119,33 @@ describe('管理API: 商品管理', () => {
     expect(res.status).toBe(200);
     expect(res.body.product.status).toBe('published');
     expect(res.body.product.variants[0].stock).toBe(20);
+  });
+
+  it('sales_modelを更新できる', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { slug } });
+
+    const res = await agent
+      .put(`/api/admin/products/${product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ salesModel: 'agent_required' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.product.salesModel).toBe('agent_required');
+
+    // 他のテストへの影響を避けるためhybridへ戻す
+    await agent.put(`/api/admin/products/${product.id}`).set('Origin', TEST_ORIGIN).send({ salesModel: 'hybrid' });
+  });
+
+  it('不正なsales_modelでの更新は400を返す', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { slug } });
+
+    const res = await agent
+      .put(`/api/admin/products/${product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ salesModel: 'not-a-real-model' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 
   it('不正な商品タイプは400を返す', async () => {

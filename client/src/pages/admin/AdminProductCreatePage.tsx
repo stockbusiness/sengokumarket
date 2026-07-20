@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { createAdminProduct, uploadAdminProductImage } from '../../lib/adminApi';
 import {
   ITEM_TYPES,
+  SALES_MODELS,
+  SALES_MODEL_LABELS,
   DEFAULT_VARIANT_ROWS,
   toTaxIncluded,
   type PriceMode,
@@ -17,6 +19,7 @@ export default function AdminProductCreatePage() {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [itemType, setItemType] = useState('nft');
+  const [salesModel, setSalesModel] = useState('hybrid');
   const [basePrice, setBasePrice] = useState(0);
   const [priceMode, setPriceMode] = useState<PriceMode>('included');
   const [variantRows, setVariantRows] = useState<VariantRow[]>(DEFAULT_VARIANT_ROWS);
@@ -78,6 +81,7 @@ export default function AdminProductCreatePage() {
         description: description.trim() || null,
         category,
         itemType,
+        salesModel,
         basePrice: finalPrice,
         status: 'draft',
         images: parseImagesText(imagesText),
@@ -127,6 +131,16 @@ export default function AdminProductCreatePage() {
               {ITEM_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            販売方式
+            <select value={salesModel} onChange={(e) => setSalesModel(e.target.value)}>
+              {SALES_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {SALES_MODEL_LABELS[m]}
                 </option>
               ))}
             </select>

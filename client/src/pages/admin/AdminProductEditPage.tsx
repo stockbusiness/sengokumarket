@@ -10,6 +10,8 @@ import {
 } from '../../lib/adminApi';
 import {
   ITEM_TYPES,
+  SALES_MODELS,
+  SALES_MODEL_LABELS,
   STATUSES,
   toTaxIncluded,
   toTaxExcludedEstimate,
@@ -32,6 +34,7 @@ export default function AdminProductEditPage() {
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('');
   const [itemType, setItemType] = useState('nft');
+  const [salesModel, setSalesModel] = useState('hybrid');
   const [status, setStatus] = useState('draft');
   const [basePrice, setBasePrice] = useState(0);
   const [priceMode, setPriceMode] = useState<PriceMode>('included');
@@ -53,6 +56,7 @@ export default function AdminProductEditPage() {
         setDescription(d.product.description ?? '');
         setCategory(d.product.category);
         setItemType(d.product.itemType);
+        setSalesModel(d.product.salesModel);
         setStatus(d.product.status);
         setBasePrice(d.product.basePrice);
         setPriceMode('included');
@@ -111,6 +115,7 @@ export default function AdminProductEditPage() {
         description: description.trim() || null,
         category,
         itemType,
+        salesModel,
         status,
         basePrice: finalPrice,
         images: parseImagesText(imagesText),
@@ -221,6 +226,16 @@ export default function AdminProductEditPage() {
               {ITEM_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {t}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            販売方式
+            <select value={salesModel} onChange={(e) => setSalesModel(e.target.value)}>
+              {SALES_MODELS.map((m) => (
+                <option key={m} value={m}>
+                  {SALES_MODEL_LABELS[m]}
                 </option>
               ))}
             </select>

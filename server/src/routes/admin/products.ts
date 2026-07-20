@@ -9,6 +9,8 @@ const router = Router();
 
 const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 const STATUSES = ['draft', 'published', 'archived'];
+// 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
+const SALES_MODELS = ['direct_allowed', 'agent_required', 'hybrid'];
 
 // 仕様書外の拡張: 商品画像アップロード。Vercelのサーバーレス実行環境はローカルディスクが
 // 永続化されないため、ディスクに書かず(memoryStorage)Vercel Blobへ直接アップロードする。
@@ -46,7 +48,7 @@ router.get('/products/:id', async (req, res) => {
 });
 
 router.post('/products', async (req, res) => {
-  const { name, slug, description, category, itemType, basePrice, status, images, variants } = req.body ?? {};
+  const { name, slug, description, category, itemType, salesModel, basePrice, status, images, variants } = req.body ?? {};
 
   if (!isNonEmptyString(name)) return sendError(res, 400, 'VALIDATION_ERROR', '商品名を入力してください');
   if (!isNonEmptyString(slug) || !/^[a-z0-9-]+$/.test(slug)) {
@@ -54,6 +56,9 @@ router.post('/products', async (req, res) => {
   }
   if (!isNonEmptyString(category)) return sendError(res, 400, 'VALIDATION_ERROR', 'カテゴリを入力してください');
   if (!ITEM_TYPES.includes(itemType)) return sendError(res, 400, 'VALIDATION_ERROR', '商品タイプが不正です');
+  if (salesModel !== undefined && !SALES_MODELS.includes(salesModel)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', '販売方式が不正です');
+  }
   if (!Number.isInteger(basePrice) || basePrice < 0) {
     return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
   }
@@ -69,6 +74,7 @@ router.post('/products', async (req, res) => {
       description: isNonEmptyString(description) ? description : null,
       category,
       itemType,
+      salesModel: SALES_MODELS.includes(salesModel) ? salesModel : 'hybrid',
       basePrice,
       status: resolvedStatus,
       images: normalizeImages(images) ?? [],
@@ -91,13 +97,16 @@ router.post('/products', async (req, res) => {
 
 router.put('/products/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, description, category, itemType, basePrice, status, images, variants } = req.body ?? {};
+  const { name, description, category, itemType, salesModel, basePrice, status, images, variants } = req.body ?? {};
 
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
 
   if (itemType !== undefined && !ITEM_TYPES.includes(itemType)) {
     return sendError(res, 400, 'VALIDATION_ERROR', '商品タイプが不正です');
+  }
+  if (salesModel !== undefined && !SALES_MODELS.includes(salesModel)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', '販売方式が不正です');
   }
   if (status !== undefined && !STATUSES.includes(status)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
@@ -114,6 +123,7 @@ router.put('/products/:id', async (req, res) => {
         description: description === undefined ? undefined : description,
         category: isNonEmptyString(category) ? category : undefined,
         itemType: itemType ?? undefined,
+        salesModel: salesModel ?? undefined,
         basePrice: basePrice ?? undefined,
         status: status ?? undefined,
         images: normalizeImages(images),

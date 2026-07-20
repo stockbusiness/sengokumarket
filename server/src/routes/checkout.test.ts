@@ -4,6 +4,8 @@ import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { referralCookieHeader } from '../test/referralCookie';
 import { createAdminAgent } from '../test/adminAgent';
+import { createPendingOrder } from '../services/checkout';
+import { HttpError } from '../lib/httpError';
 
 // このテストファイルでは注文作成の業務ロジックのみを検証する。
 // 実際のStripe API呼び出しはネットワーク/実キーが必要なため、成功を返すダミー実装に差し替える。
@@ -21,6 +23,9 @@ describe('POST /api/checkout/create-session', () => {
   let variantId: string;
   let agencyId: string;
   let influencerId: string;
+  let referralCode: string;
+  let agentRequiredProductId: string;
+  let agentRequiredVariantId: string;
 
   const baseCustomer = {
     customerName: 'テスト太郎',
@@ -59,19 +64,37 @@ describe('POST /api/checkout/create-session', () => {
     });
     influencerId = influencer.id;
 
+    referralCode = `TESTREF-${Date.now()}`.slice(0, 20);
     await prisma.referralLink.create({
-      data: { code: `TESTREF-${Date.now()}`.slice(0, 20), agencyId, influencerId, landingPath: '/products/test' },
+      data: { code: referralCode, agencyId, influencerId, landingPath: '/products/test' },
     });
+
+    const agentRequiredProduct = await prisma.product.create({
+      data: {
+        name: 'テスト代理店必須商品',
+        slug: `test-checkout-agent-required-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'membership',
+        salesModel: 'agent_required',
+        basePrice: 500000,
+        status: 'published',
+      },
+    });
+    agentRequiredProductId = agentRequiredProduct.id;
+    const agentRequiredVariant = await prisma.productVariant.create({
+      data: { productId: agentRequiredProductId, name: '城主プラン', price: 500000, stock: 5 },
+    });
+    agentRequiredVariantId = agentRequiredVariant.id;
   });
 
   afterAll(async () => {
-    await prisma.orderItem.deleteMany({ where: { productId } });
+    await prisma.orderItem.deleteMany({ where: { productId: { in: [productId, agentRequiredProductId] } } });
     await prisma.order.deleteMany({ where: { customerEmail: { contains: 'checkout-test' } } });
     await prisma.referralLink.deleteMany({ where: { agencyId } });
     await prisma.influencer.deleteMany({ where: { id: influencerId } });
     await prisma.agency.deleteMany({ where: { id: agencyId } });
-    await prisma.productVariant.deleteMany({ where: { productId } });
-    await prisma.product.delete({ where: { id: productId } });
+    await prisma.productVariant.deleteMany({ where: { productId: { in: [productId, agentRequiredProductId] } } });
+    await prisma.product.deleteMany({ where: { id: { in: [productId, agentRequiredProductId] } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'checkout-test' } } });
     await prisma.$disconnect();
   });
@@ -188,6 +211,41 @@ describe('POST /api/checkout/create-session', () => {
     expect(order.referrerName).toBe('テストインフルエンサー');
     expect(order.agencyId).toBe(agencyId);
     expect(order.influencerId).toBe(influencerId);
+  });
+
+  // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15.2): sales_model=agent_requiredの商品。
+  // createPendingOrderを直接呼び、/api/checkout/create-sessionのレート制限(5分間20回)を
+  // このファイルの他のテストと共有しないようにする。
+  describe('sales_model=agent_requiredの商品(仕様書外の拡張)', () => {
+    it('販売担当代理店(紹介コード)が未確定だとAGENT_REQUIREDで400相当のエラーになり、在庫は変化しない', async () => {
+      const email = `agentrequired-noref-checkout-test-${Date.now()}@example.com`;
+
+      await expect(
+        createPendingOrder({
+          ...baseCustomer,
+          customerEmail: email,
+          items: [{ variantId: agentRequiredVariantId, quantity: 1 }],
+        }),
+      ).rejects.toMatchObject({ status: 400, code: 'AGENT_REQUIRED' } satisfies Partial<HttpError>);
+
+      const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: agentRequiredVariantId } });
+      expect(variant.reservedStock).toBe(0);
+      const user = await prisma.user.findUnique({ where: { email } });
+      expect(user).toBeNull();
+    });
+
+    it('有効な紹介コードで販売担当代理店が確定していれば購入できる', async () => {
+      const email = `agentrequired-withref-checkout-test-${Date.now()}@example.com`;
+
+      const { order } = await createPendingOrder({
+        ...baseCustomer,
+        customerEmail: email,
+        referralCode,
+        items: [{ variantId: agentRequiredVariantId, quantity: 1 }],
+      });
+
+      expect(order.agencyId).toBe(agencyId);
+    });
   });
 
   describe('代理店への永久帰属(仕様書外の拡張)', () => {

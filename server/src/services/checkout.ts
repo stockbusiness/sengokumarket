@@ -90,6 +90,7 @@ interface VariantRow {
   product_name: string;
   item_type: string;
   status: string;
+  sales_model: string;
 }
 
 export async function createPendingOrder(input: CreatePendingOrderInput): Promise<CreatePendingOrderResult> {
@@ -110,7 +111,8 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         p.id AS product_id,
         p.name AS product_name,
         p.item_type AS item_type,
-        p.status AS status
+        p.status AS status,
+        p.sales_model AS sales_model
       FROM product_variants pv
       JOIN products p ON p.id = pv.product_id
       WHERE pv.id = ANY(${sortedVariantIds}::uuid[])
@@ -176,6 +178,18 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
           },
         });
       }
+    }
+
+    // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15.2): sales_model=agent_requiredの商品は、
+    // 販売担当代理店(または紹介インフルエンサー)が確定していない注文を確定させない。
+    const agentRequiredItem = input.items.find((item) => rowByVariantId.get(item.variantId)!.sales_model === 'agent_required');
+    if (agentRequiredItem && !referral.agencyId && !referral.influencerId) {
+      const row = rowByVariantId.get(agentRequiredItem.variantId)!;
+      throw new HttpError(
+        400,
+        'AGENT_REQUIRED',
+        `「${row.product_name}」のご購入には担当代理店の確認が必要です。担当代理店にご相談のうえ、ご案内の購入用リンクからお進みください`,
+      );
     }
 
     const orderNumber = await generateOrderNumber(tx);

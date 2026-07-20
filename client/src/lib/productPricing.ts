@@ -4,6 +4,13 @@
 // すべてINTEGER(円)」を維持し、税別入力時は税込金額に変換してから送信する)。
 export const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
 export const STATUSES = ['draft', 'published', 'archived'];
+// 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
+export const SALES_MODELS = ['direct_allowed', 'agent_required', 'hybrid'] as const;
+export const SALES_MODEL_LABELS: Record<string, string> = {
+  direct_allowed: '直販可能(代理店なしで購入可)',
+  agent_required: '代理店経由必須(担当代理店確定が必要)',
+  hybrid: '直販・代理店経由の併用',
+};
 export const TAX_RATE = 0.1;
 export type PriceMode = 'included' | 'excluded';
 
