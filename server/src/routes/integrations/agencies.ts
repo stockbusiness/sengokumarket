@@ -11,6 +11,21 @@ import { isValidEmail } from '../../lib/validation';
 
 const router = Router();
 
+// 仕様書外の拡張(外部開発者向け連携ガイドv3.6.78-draft 11.1): このシステムは代理店(agencies)の
+// upsertしか扱えないため、既知の代理店ライフサイクル系イベント(またはevent未指定の従来形式)のみ
+// 既存のupsert処理へ通す。それ以外(共通顧客HUB関連イベント等)は、対応するデータモデルが
+// このシステムに存在しないため、200で受理はしつつ処理をスキップする(相手側の再送ループを防ぐ)。
+const AGENCY_LIFECYCLE_EVENTS = new Set([
+  'upsert',
+  'admin_created',
+  'admin_updated',
+  'role_updated',
+  'approved',
+  'promoted',
+  'deactivated',
+  'deleted',
+]);
+
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
@@ -73,7 +88,7 @@ router.get('/', async (req, res) => {
   const queryExternalId = req.query.external_id;
   if (typeof queryExternalId === 'string' && queryExternalId.length > 0) {
     const detail = await findAgencyDetail(queryExternalId);
-    if (!detail) return sendIntegrationError(res, 404, 'Agency not found');
+    if (!detail) return sendIntegrationError(res, 404, 'AGENCY_NOT_FOUND', 'Agency not found.');
     return res.json({ agency: detail });
   }
 
@@ -86,17 +101,23 @@ router.get('/', async (req, res) => {
 
 router.get('/:externalId', async (req, res) => {
   const detail = await findAgencyDetail(req.params.externalId);
-  if (!detail) return sendIntegrationError(res, 404, 'Agency not found');
+  if (!detail) return sendIntegrationError(res, 404, 'AGENCY_NOT_FOUND', 'Agency not found.');
   res.json({ agency: detail });
 });
 
 router.post('/', async (req, res) => {
   const body = req.body ?? {};
 
-  // 先方仕様書v3.6.40: 接続テストボタン(event=connection_test またはdry_run=true)は
+  // 接続テストボタン(event=connection_test またはdry_run=true)は
   // 認証・受信可否の確認のみを行い、代理店データとしては一切保存しない。
   if (body.event === 'connection_test' || body.dry_run === true) {
-    return res.status(200).json({ success: true, data: { external_id: body.external_id ?? null, status: 'ok', synced: false } });
+    return res.status(200).json({ ok: true, external_id: body.external_id ?? null, status: 'ok', synced: false });
+  }
+
+  // 共通顧客HUB関連イベント等、このシステムがまだ対応していないイベント種別は
+  // 200で受理するだけに留め、代理店upsertとして誤処理しない(上記コメント参照)。
+  if (typeof body.event === 'string' && !AGENCY_LIFECYCLE_EVENTS.has(body.event)) {
+    return res.status(200).json({ ok: true, received: true, processed: false, event: body.event });
   }
 
   const {
@@ -111,23 +132,23 @@ router.post('/', async (req, res) => {
   } = body;
 
   if (!isNonEmptyString(externalId)) {
-    return sendIntegrationError(res, 422, 'external_id is required');
+    return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'external_id is required.');
   }
   if (!isNonEmptyString(name)) {
-    return sendIntegrationError(res, 422, 'name is required');
+    return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'name is required.');
   }
   if (
     defaultCommissionRate !== undefined &&
     defaultCommissionRate !== null &&
     (typeof defaultCommissionRate !== 'number' || defaultCommissionRate < 0 || defaultCommissionRate > 100)
   ) {
-    return sendIntegrationError(res, 422, 'default_commission_rate must be a number between 0 and 100');
+    return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'default_commission_rate must be a number between 0 and 100.');
   }
   if (status !== undefined && status !== 'active' && status !== 'inactive') {
-    return sendIntegrationError(res, 422, 'status must be "active" or "inactive"');
+    return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'status must be "active" or "inactive".');
   }
   if (loginEmail !== undefined && loginEmail !== null && !isValidEmail(loginEmail)) {
-    return sendIntegrationError(res, 422, 'login_email is invalid');
+    return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'login_email is invalid.');
   }
 
   try {
@@ -141,14 +162,14 @@ router.post('/', async (req, res) => {
       pendingParentExternalId = null;
     } else if (parentExternalId !== undefined) {
       if (!isNonEmptyString(parentExternalId)) {
-        return sendIntegrationError(res, 422, 'parent_external_id is invalid');
+        return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'parent_external_id is invalid.');
       }
       if (parentExternalId === externalId) {
-        return sendIntegrationError(res, 422, 'Cannot set itself as parent_external_id');
+        return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'Cannot set itself as parent_external_id.');
       }
       const parent = await prisma.agency.findUnique({ where: { externalId: parentExternalId } });
       if (!parent) {
-        // 仕様書v3.6.40: 親が未登録の場合はエラーにせず、external_idを未解決のまま保存し、
+        // 親が未登録の場合はエラーにせず、external_idを未解決のまま保存し、
         // 親レコードが後から届いた時点で自動的に再紐付けする(下記の再紐付け処理を参照)。
         parentAgencyId = null;
         pendingParentExternalId = parentExternalId;
@@ -156,7 +177,7 @@ router.post('/', async (req, res) => {
         if (existing) {
           const cyclic = await wouldCreateCycle(existing.id, parent.id);
           if (cyclic) {
-            return sendIntegrationError(res, 422, 'Cannot set a descendant agency as parent_external_id');
+            return sendIntegrationError(res, 422, 'VALIDATION_ERROR', 'Cannot set a descendant agency as parent_external_id.');
           }
         }
         parentAgencyId = parent.id;
@@ -206,7 +227,7 @@ router.post('/', async (req, res) => {
           });
         });
 
-    // 仕様書v3.6.40: このexternal_idを親として待っていた代理店(未解決のまま保存されていた子)を再紐付けする。
+    // このexternal_idを親として待っていた代理店(未解決のまま保存されていた子)を再紐付けする。
     await prisma.agency.updateMany({
       where: { pendingParentExternalId: externalId },
       data: { parentAgencyId: agency.id, pendingParentExternalId: null },
@@ -221,7 +242,7 @@ router.post('/', async (req, res) => {
         if (existingUserByEmail) {
           // 既に代理店ポータル・管理者として使われているアカウントは横取りしない。
           if (['agency', 'admin', 'admin_viewer'].includes(existingUserByEmail.role)) {
-            return sendIntegrationError(res, 409, 'login_email is already used by another admin/agency account');
+            return sendIntegrationError(res, 409, 'VALIDATION_ERROR', 'login_email is already used by another admin/agency account.');
           }
 
           // 仕様書外の拡張: 既存の一般会員アカウント(評議員NFT購入者等)を代理店ポータルログインに
@@ -250,14 +271,16 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // レスポンス形式は先方仕様書v3.6.40の{success, data}エンベロープに合わせる。
+    // レスポンス形式は外部開発者向け連携ガイド(v3.6.78-draft)の{ok, ...}エンベロープに合わせる。
     res.status(existing ? 200 : 201).json({
-      success: true,
-      data: { ...serializeAgency(agency), login_provisioned: loginProvisioned, synced: true },
+      ok: true,
+      ...serializeAgency(agency),
+      login_provisioned: loginProvisioned,
+      synced: true,
     });
   } catch (e) {
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return sendIntegrationError(res, 409, 'login_email is already in use');
+      return sendIntegrationError(res, 409, 'VALIDATION_ERROR', 'login_email is already in use.');
     }
     throw e;
   }

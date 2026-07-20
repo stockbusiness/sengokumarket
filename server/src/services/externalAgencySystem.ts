@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { HttpError } from '../lib/httpError';
 import { getSetting } from './settings';
 
@@ -40,10 +41,18 @@ export interface PushAgencyCandidateResult {
   synced: boolean;
 }
 
+// 仕様書外の拡張: 外部開発者向け連携ガイド(v3.6.78-draft)では{ok:true, ...}のフラット形式に
+// 統一されているが、旧仕様(v3.6.40)の{success:true, data:{...}}形式で応答する可能性も
+// 残っているため、両方を解釈できるようにする。
 interface SyncResponse {
-  success: boolean;
-  data?: PushAgencyCandidateResult;
+  ok?: boolean;
+  success?: boolean;
+  data?: Partial<PushAgencyCandidateResult>;
+  error?: { code?: string; message?: string };
   message?: string;
+  external_id?: string;
+  status?: string;
+  synced?: boolean;
 }
 
 async function getConfig(baseUrlOverride?: string, apiKeyOverride?: string): Promise<{ baseUrl: string; apiKey: string }> {
@@ -141,7 +150,9 @@ export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandi
 
   const res = await fetch(`${baseUrl}/api/integrations/agencies`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+    // 仕様書外の拡張(外部開発者向け連携ガイドv3.6.78-draft 6.2): 二重送信防止のため
+    // 冪等性キーを付与する(相手側は「可能であれば」対応の任意仕様)。
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'Idempotency-Key': crypto.randomUUID() },
     body: JSON.stringify({
       event: 'upsert',
       source: 'sengoku-rr',
@@ -162,9 +173,14 @@ export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandi
   }
 
   const body = (await res.json()) as SyncResponse;
-  if (!body.success || !body.data) {
-    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', body.message ?? '代理店同期APIがエラーを返しました');
+  const succeeded = body.ok === true || body.success === true;
+  const data: Partial<PushAgencyCandidateResult> | undefined =
+    body.data ?? (body.external_id !== undefined ? { external_id: body.external_id, status: body.status, synced: body.synced } : undefined);
+
+  if (!succeeded || !data?.external_id) {
+    const message = body.error?.message ?? body.message ?? '代理店同期APIがエラーを返しました';
+    throw new HttpError(502, 'EXTERNAL_AGENCY_SYSTEM_ERROR', message);
   }
 
-  return body.data;
+  return data as PushAgencyCandidateResult;
 }

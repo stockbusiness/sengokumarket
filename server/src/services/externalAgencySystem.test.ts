@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchExternalAgencyHierarchy } from './externalAgencySystem';
+import { fetchExternalAgencyHierarchy, pushAgencyCandidateToExternalSystem } from './externalAgencySystem';
+import { setSetting } from './settings';
 
 // 先方(sengoku-ai.com)から実際に共有されたサンプルレスポンス(2026-07-09回答)。
 // projects配列(LPプロジェクト一覧、代理店データではない)とtree配列(代理店階層)が
@@ -82,5 +83,65 @@ describe('fetchExternalAgencyHierarchy(仕様書外の拡張)', () => {
     expect(codes).toEqual(['agent_7_8573', 'dir260b6d6e']);
     expect(codes).not.toContain('sengoku-influencer');
     expect(codes).not.toContain('ai-art-school');
+  });
+});
+
+// 仕様書外の拡張(外部開発者向け連携ガイドv3.6.78-draft): 代理店同期APIのレスポンスが
+// 新形式{ok, ...}・旧形式{success, data}のどちらでも解釈できること、送信時にIdempotency-Keyを
+// 付与することを確認する。
+describe('pushAgencyCandidateToExternalSystem(仕様書外の拡張)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const input = { externalId: 'ext-1', name: 'テスト代理店' };
+
+  it('新形式{ok, external_id, status, synced}のレスポンスを解釈できる', async () => {
+    await setSetting('external_agency_system_base_url', 'https://sengoku-ai.com');
+    await setSetting('external_agency_system_api_key', 'test-key');
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, external_id: 'ext-1', status: 'active', synced: true }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await pushAgencyCandidateToExternalSystem(input);
+    expect(result).toMatchObject({ external_id: 'ext-1', status: 'active', synced: true });
+
+    const [, requestInit] = fetchMock.mock.calls[0];
+    expect(requestInit.headers['Idempotency-Key']).toBeTypeOf('string');
+    expect(requestInit.headers['Idempotency-Key'].length).toBeGreaterThan(0);
+  });
+
+  it('旧形式{success, data}のレスポンスも解釈できる', async () => {
+    await setSetting('external_agency_system_base_url', 'https://sengoku-ai.com');
+    await setSetting('external_agency_system_api_key', 'test-key');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, data: { external_id: 'ext-1', status: 'active', synced: true } }),
+      }),
+    );
+
+    const result = await pushAgencyCandidateToExternalSystem(input);
+    expect(result).toMatchObject({ external_id: 'ext-1', status: 'active', synced: true });
+  });
+
+  it('新形式のエラー{ok:false, error:{message}}を検知して例外を投げる', async () => {
+    await setSetting('external_agency_system_base_url', 'https://sengoku-ai.com');
+    await setSetting('external_agency_system_api_key', 'test-key');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ok: false, error: { code: 'VALIDATION_ERROR', message: '不正なリクエストです' } }),
+      }),
+    );
+
+    await expect(pushAgencyCandidateToExternalSystem(input)).rejects.toThrow('不正なリクエストです');
   });
 });
