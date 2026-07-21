@@ -47,6 +47,8 @@ describe('管理API: スタッフ権限のアクセス制限(仕様書外の拡�
       '/bank-transfer-settings',
       '/legal',
       '/coupons',
+      '/stripe-events',
+      '/integration-outbox',
     ]) {
       const res = await agent.get(`/api/admin${path}`);
       expect(res.status, `${path} should be 403 for staff`).toBe(403);

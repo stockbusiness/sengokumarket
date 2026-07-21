@@ -18,6 +18,8 @@ import bankTransferSettingsRouter from './bankTransferSettings';
 import importProductsRouter from './importProducts';
 import legalRouter from './legal';
 import couponsRouter from './coupons';
+import stripeEventsRouter from './stripeEvents';
+import integrationOutboxRouter from './integrationOutbox';
 
 const router = Router();
 
@@ -49,5 +51,7 @@ router.use(settingsRouter);
 router.use(bankTransferSettingsRouter);
 router.use(legalRouter);
 router.use(couponsRouter);
+router.use(stripeEventsRouter);
+router.use(integrationOutboxRouter);
 
 export default router;

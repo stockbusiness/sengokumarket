@@ -5,6 +5,7 @@ import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfill
 import { sendCartAbandonedEmail } from './mailTemplates';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
+import { enqueueEntitlementEvents } from './integrationOutbox';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -171,6 +172,12 @@ export async function handleChargeRefunded(event: Stripe.Event) {
     // 仕様書外の拡張(クーポン機能): 全額返金時、クーポン設定のrestoreOnCancelに従って
     // 再利用可能へ戻す(一部返金では呼ばない。仕様書12章)。
     await restoreCouponUsageOnFullRefund(tx, order.id);
+
+    // 仕様書外の拡張(千ノ国全体統合契約2026-07-21 6章): 全額返金と同一トランザクションで
+    // entitlement.revokedをOutboxへ記録する(送信先ルール未設定の商品はno-op)。
+    const refundedOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
+    const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
+    await enqueueEntitlementEvents(tx, refundedOrder, orderItems, 'entitlement.revoked');
 
     const commission = await tx.commission.findUnique({ where: { orderId: order.id } });
     if (commission) {

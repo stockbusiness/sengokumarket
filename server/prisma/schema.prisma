@@ -83,6 +83,11 @@ model User {
   // 承認されるとroleがagencyに変わり、このフィールドはクリアされる。
   agencyApplicationSubmittedAt DateTime? @map("agency_application_submitted_at")
 
+  // 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 4.1章): 代理店システムの共通顧客HUBが
+  // 発行するcu_...形式の共通ユーザーID。このシステムが独自発番することはなく(3.2禁止事項)、
+  // resolve API呼び出しが未実装の間は常にnull。
+  commonUserId String? @unique @map("common_user_id")
+
   wallet                   Wallet?
   orders                   Order[]
   nftIssues                NftIssue[]
@@ -93,8 +98,29 @@ model User {
   walletVerificationNonces WalletVerificationNonce[]
   walletChangeLogs         WalletChangeLog[]
   walletReminderEmailsSent WalletReminderEmail[]
+  externalIdentities       ExternalIdentity[]
 
   @@map("users")
+}
+
+// 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 5.1章): 各外部システムのユーザーIDと
+// 代理店システムの共通ユーザーIDとの対応を保持する(system_account_links相当)。resolve API呼び出しが
+// 未実装の間は空のまま。
+model ExternalIdentity {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  systemKey      String    @default("sengoku-market") @map("system_key")
+  externalUserId String    @map("external_user_id")
+  commonUserId   String?   @map("common_user_id")
+  identityType   String    @map("identity_type") // email | phone | line | wallet 等
+  verifiedAt     DateTime? @map("verified_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([systemKey, externalUserId])
+  @@index([commonUserId])
+  @@map("external_identities")
 }
 
 model Wallet {
@@ -167,12 +193,32 @@ model Product {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  variants      ProductVariant[]
-  orderItems    OrderItem[]
-  nftIssues     NftIssue[]
-  couponEntries CouponProduct[]
+  variants        ProductVariant[]
+  orderItems      OrderItem[]
+  nftIssues       NftIssue[]
+  couponEntries   CouponProduct[]
+  integrationRule ProductIntegrationRule?
 
   @@map("products")
+}
+
+// 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 5.6章): 商品名の文字列判定ではなく、
+// 商品ごとにentitlement(権利)の送信先・種別を設定できるようにするルーティング設定。
+// 送信先の実エンドポイントが未確定のため、設定してもOutboxはpendingのまま留まり実送信はされない。
+model ProductIntegrationRule {
+  id                         String   @id @default(uuid()) @db.Uuid
+  productId                  String   @unique @map("product_id") @db.Uuid
+  productCode                String?  @map("product_code")
+  entitlementTargetSystemKey String?  @map("entitlement_target_system_key") // sengoku-passport | ove-wallet | ai-art-school
+  entitlementType            String?  @map("entitlement_type")
+  rewardRuleId               String?  @map("reward_rule_id")
+  revokeOnRefund             Boolean  @default(true) @map("revoke_on_refund")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@map("product_integration_rules")
 }
 
 model ProductVariant {
@@ -194,63 +240,77 @@ model ProductVariant {
 }
 
 model Order {
-  id                    String    @id @default(uuid()) @db.Uuid
-  orderNumber           String    @unique @map("order_number")
-  userId                String?   @map("user_id") @db.Uuid
-  totalAmount           Int       @map("total_amount")
-  paymentStatus         String    @default("pending") @map("payment_status") // pending | paid | failed | refunded | expired
-  orderStatus           String    @default("pending") @map("order_status") // pending | paid | cancelled | refunded
+  id                            String    @id @default(uuid()) @db.Uuid
+  orderNumber                   String    @unique @map("order_number")
+  userId                        String?   @map("user_id") @db.Uuid
+  totalAmount                   Int       @map("total_amount")
+  paymentStatus                 String    @default("pending") @map("payment_status") // pending | paid | failed | refunded | expired
+  orderStatus                   String    @default("pending") @map("order_status") // pending | paid | cancelled | refunded
   // 仕様書外の拡張: 決済手段。bank_transferの場合、決済確定はStripe Webhookではなく
   // 管理画面からの手動確認(admin/orders.tsの入金確認)によって行われる。external_importは
   // このシステム以外の販路で決済済みの購入者を事後的に取り込んだ注文(admin/externalOrders.ts)。
-  paymentMethod         String    @default("stripe") @map("payment_method") // stripe | bank_transfer | external_import
-  paidAt                DateTime? @map("paid_at")
-  refundedAt            DateTime? @map("refunded_at")
-  expiredAt             DateTime? @map("expired_at")
-  stripeSessionId       String?   @map("stripe_session_id")
-  stripePaymentIntentId String?   @map("stripe_payment_intent_id")
-  referralCode          String?   @map("referral_code")
-  referrerName          String?   @map("referrer_name")
-  agencyName            String?   @map("agency_name")
+  paymentMethod                 String    @default("stripe") @map("payment_method") // stripe | bank_transfer | external_import
+  paidAt                        DateTime? @map("paid_at")
+  refundedAt                    DateTime? @map("refunded_at")
+  expiredAt                     DateTime? @map("expired_at")
+  stripeSessionId               String?   @map("stripe_session_id")
+  stripePaymentIntentId         String?   @map("stripe_payment_intent_id")
+  referralCode                  String?   @map("referral_code")
+  referrerName                  String?   @map("referrer_name")
+  agencyName                    String?   @map("agency_name")
   // 以下3項目はreferral_links等への物理FKを張らない(仕様書6.5のDDL通り)
-  agencyId              String?   @map("agency_id") @db.Uuid
-  influencerId          String?   @map("influencer_id") @db.Uuid
-  referralLinkId        String?   @map("referral_link_id") @db.Uuid
-  commissionRate        Decimal   @default(0) @map("commission_rate") @db.Decimal(5, 2)
-  commissionAmount      Int       @default(0) @map("commission_amount")
-  commissionStatus      String    @default("pending") @map("commission_status") // pending | approved | paid | cancelled
-  customerName          String    @map("customer_name")
-  customerEmail         String    @map("customer_email")
-  customerPhone         String?   @map("customer_phone")
-  customerPostalCode    String?   @map("customer_postal_code")
-  customerAddress       String?   @map("customer_address")
-  termsAgreedAt         DateTime  @map("terms_agreed_at")
-  termsVersion          String    @map("terms_version")
-  adminNote             String?   @map("admin_note")
+  agencyId                      String?   @map("agency_id") @db.Uuid
+  influencerId                  String?   @map("influencer_id") @db.Uuid
+  referralLinkId                String?   @map("referral_link_id") @db.Uuid
+  commissionRate                Decimal   @default(0) @map("commission_rate") @db.Decimal(5, 2)
+  commissionAmount              Int       @default(0) @map("commission_amount")
+  commissionStatus              String    @default("pending") @map("commission_status") // pending | approved | paid | cancelled
+  customerName                  String    @map("customer_name")
+  customerEmail                 String    @map("customer_email")
+  customerPhone                 String?   @map("customer_phone")
+  customerPostalCode            String?   @map("customer_postal_code")
+  customerAddress               String?   @map("customer_address")
+  termsAgreedAt                 DateTime  @map("terms_agreed_at")
+  termsVersion                  String    @map("terms_version")
+  adminNote                     String?   @map("admin_note")
   // 仕様書外の拡張: この注文でゲスト用アカウントを新規作成したかどうか。
   // 決済完了時にパスワード設定メールを送るべきか判定するために使う(仕様書v1.5 4.9)。
-  guestAccountCreated   Boolean   @default(false) @map("guest_account_created")
+  guestAccountCreated           Boolean   @default(false) @map("guest_account_created")
   // 仕様書外の拡張(クーポン機能): totalAmountは既存通り「実際に決済する金額」のまま維持し、
   // originalAmountに割引前金額、couponDiscountAmountに割引額をスナップショットする。
   // クーポン未使用時もoriginalAmount=totalAmount・couponDiscountAmount=0として保存する。
-  couponId              String?   @map("coupon_id") @db.Uuid
-  couponCode            String?   @map("coupon_code")
-  couponDiscountAmount  Int       @default(0) @map("coupon_discount_amount")
-  originalAmount        Int       @map("original_amount")
+  couponId                      String?   @map("coupon_id") @db.Uuid
+  couponCode                    String?   @map("coupon_code")
+  couponDiscountAmount          Int       @default(0) @map("coupon_discount_amount")
+  originalAmount                Int       @map("original_amount")
   // 仕様書外の拡張: アドバイザー経由の注文で、上位(ディレクター・エージェント)への
   // 紐付けを記録のみ目的でスナップショットする(報酬計算には使わない)。
   // [{ id, name, code, depth }, ...] の配列。depth 0が直属、上位ほど大きい。
-  referralHierarchy     Json?     @map("referral_hierarchy")
+  referralHierarchy             Json?     @map("referral_hierarchy")
   // 仕様書外の拡張: 紹介コードの持ち主(referrerName)とは別に、購入者に商品を説明した
   // 担当者名を記録する。紹介コードと同様、注文時点の値として一度スナップショットしたら
   // 変更しない性質のものではなく、後から入力・修正されうるためadmin側からの更新も許可する
   // (referral_code等とは独立したフィールドであり、仕様書16章の「紹介コード変更禁止」には
   // 抵触しない)。名簿と一致すればID、しなければ名前のみ保存する(照合失敗で購入を止めない)。
-  explainerName         String?   @map("explainer_name")
-  explainerAgencyId     String?   @map("explainer_agency_id") @db.Uuid
-  explainerInfluencerId String?   @map("explainer_influencer_id") @db.Uuid
-  createdAt             DateTime  @default(now()) @map("created_at")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  explainerName                 String?   @map("explainer_name")
+  explainerAgencyId             String?   @map("explainer_agency_id") @db.Uuid
+  explainerInfluencerId         String?   @map("explainer_influencer_id") @db.Uuid
+  // 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 4.1/4.2/7章): 外部システム連携用の
+  // 注文時スナップショット。既存のagencyId/influencerId(このDB内のUUID・報酬計算対象)とは別物で、
+  // 代理店システムが発行する外部agent_code(文字列)をそのまま保持する。commonUserIdも代理店システムの
+  // 共通顧客HUBが発行するcu_...形式のIDで、このシステムが独自発番することはない。
+  // いずれも実際の外部呼び出し(common-users/resolve・referrals/capture・confirm)が未実装のため、
+  // 現時点では常にnull/unresolvedのまま保存される(3.2禁止事項: 既存explainer_*をこれらへ自動転用しない)。
+  commonUserId                  String?   @map("common_user_id")
+  commonUserResolutionStatus    String    @default("unresolved") @map("common_user_resolution_status") // unresolved | resolved | skipped
+  registrationReferrerAgentCode String?   @map("registration_referrer_agency_id")
+  assignedAgentCode             String?   @map("assigned_agency_id")
+  salesAgentCode                String?   @map("sales_agent_id")
+  closingAgentCode              String?   @map("closing_agent_id")
+  referralSessionKey            String?   @map("referral_session_key")
+  correlationId                 String?   @map("correlation_id")
+  createdAt                     DateTime  @default(now()) @map("created_at")
+  updatedAt                     DateTime  @updatedAt @map("updated_at")
 
   user        User?        @relation(fields: [userId], references: [id])
   orderItems  OrderItem[]
@@ -339,6 +399,32 @@ model WalletReminderEmail {
   @@map("wallet_reminder_emails")
 }
 
+// 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 6章): 決済確定・返金等のイベントを
+// 下流システム(代理店システム・パスポート・ウォレット・AIアート教室)へ送信するためのOutbox。
+// 決済確定と同一トランザクションでenqueueすることで、下流が停止していても決済の事実(paid)を
+// 失わない。宛先の実エンドポイント・認証情報が未設定の間、ディスパッチャは何も送信せず
+// pendingのまま保持する(安全側のデフォルト)。
+model IntegrationOutboxEvent {
+  id                   String    @id @default(uuid()) @db.Uuid
+  eventId              String    @unique @map("event_id") // evt_... 形式。送信元(このシステム)で一意に固定
+  eventType            String    @map("event_type") // order.paid 等(契約書6.2章)
+  eventVersion         String    @default("1.0") @map("event_version")
+  destinationSystemKey String    @map("destination_system_key") // agency-system | sengoku-passport | ove-wallet | ai-art-school
+  payload              Json
+  payloadHash          String    @map("payload_hash")
+  correlationId        String?   @map("correlation_id")
+  status               String    @default("pending") @map("status") // pending | processing | succeeded | failed | dead
+  attemptCount         Int       @default(0) @map("attempt_count")
+  lastError            String?   @map("last_error")
+  nextAttemptAt        DateTime? @map("next_attempt_at")
+  processedAt          DateTime? @map("processed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([destinationSystemKey])
+  @@map("integration_outbox_events")
+}
+
 model Notice {
   id          String    @id @default(uuid()) @db.Uuid
   title       String
@@ -378,13 +464,24 @@ model LegalDocument {
   @@map("legal_documents")
 }
 
+// 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 5.4章): Stripe Webhookの冪等性をInbox方式に
+// する。以前はevent_idをINSERTした時点でprocessedAtを確定していたため、その後の業務処理(注文確定等)が
+// 失敗しても「重複」として扱われ、Stripeの再送では二度と処理されない欠陥があった。
+// status(processing→succeeded/failed_retryable/failed_terminal)で実際の処理完了を追跡し、
+// 失敗時は再送で再処理できるようにする。
 model StripeEvent {
-  id            String   @id @default(uuid()) @db.Uuid
-  stripeEventId String   @unique @map("stripe_event_id")
-  eventType     String   @map("event_type")
-  processedAt   DateTime @map("processed_at")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id                  String    @id @default(uuid()) @db.Uuid
+  stripeEventId       String    @unique @map("stripe_event_id")
+  eventType           String    @map("event_type")
+  payloadHash         String    @map("payload_hash")
+  status              String    @default("processing") @map("status") // processing | succeeded | failed_retryable | failed_terminal
+  attemptCount        Int       @default(1) @map("attempt_count")
+  lastError           String?   @map("last_error")
+  processingStartedAt DateTime? @map("processing_started_at")
+  processedAt         DateTime? @map("processed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
 
+  @@index([status])
   @@map("stripe_events")
 }
 

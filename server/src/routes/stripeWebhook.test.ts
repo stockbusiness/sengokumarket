@@ -5,6 +5,7 @@ import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { createPendingOrder } from '../services/checkout';
 import { setSetting } from '../services/settings';
+import { hashPayload } from '../services/stripeEventInbox';
 
 const app = createApp();
 const WEBHOOK_SECRET = 'whsec_test_dummy_secret_for_local_tests';
@@ -382,6 +383,63 @@ describe('POST /api/stripe/webhook', () => {
 
     const nftIssues = await prisma.nftIssue.findMany({ where: { orderId: order.id } });
     expect(nftIssues.every((n) => n.status === 'wallet_required')).toBe(true);
+  });
+
+  // 仕様書外の拡張(千ノ国全体統合契約2026-07-21・Stripe Inbox冪等性修正の回帰テスト):
+  // 旧実装は「event_idを先行INSERTした時点で処理済み扱い」にしていたため、その後の業務処理が
+  // 失敗しても、Stripeが同一event_idで再送すると即座に「重複」として無視され、注文が永久に
+  // 未確定のまま残る欠陥があった。failed_retryableとして記録済みのイベントを同一内容で再送すると、
+  // 正しく再処理されて決済が確定することを確認する。
+  it('前回の配信で業務処理が失敗した(failed_retryable)イベントを同一内容で再送すると、正しく再処理されて決済が確定する', async () => {
+    const email = `webhook-test-retryrecovery-${Date.now()}@example.com`;
+    // 他のテストと在庫プールを共有しているnftVariantId/createTestOrderは使わず、
+    // このテスト専用の商品・バリエーションを用意して在庫不足によるフレークを避ける。
+    const dedicatedVariant = await prisma.productVariant.create({
+      data: { productId: nftProductId, name: `RetryRecoveryTest-${Date.now()}`, price: 20000, stock: 5, reservedStock: 0 },
+    });
+    const { order } = await createPendingOrder({
+      customerName: 'Webhookテスト太郎',
+      customerEmail: email,
+      customerPhone: '090-0000-0000',
+      customerPostalCode: '100-0001',
+      customerAddress: '東京都千代田区1-1-1',
+      agreedToTerms: true,
+      items: [{ variantId: dedicatedVariant.id, quantity: 1 }],
+    });
+    const sessionId = `cs_test_${Math.random().toString(36).slice(2)}`;
+    await prisma.order.update({ where: { id: order.id }, data: { stripeSessionId: sessionId } });
+    const paymentIntentId = `pi_test_${Math.random().toString(36).slice(2)}`;
+    const eventId = `evt_test_retryrecovery_${Date.now()}`;
+    const eventPayload = {
+      id: eventId,
+      type: 'checkout.session.completed',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: sessionId, payment_intent: paymentIntentId, metadata: { order_id: order.id } } },
+    };
+
+    // 前回の配信で業務処理が一時的なエラーで失敗し、failed_retryableとして記録された状態を再現する。
+    const { payload } = sign(eventPayload);
+    await prisma.stripeEvent.create({
+      data: {
+        stripeEventId: eventId,
+        eventType: 'checkout.session.completed',
+        payloadHash: hashPayload(payload),
+        status: 'failed_retryable',
+        attemptCount: 1,
+        lastError: 'テスト: 前回配信時の一時的な処理失敗を想定',
+      },
+    });
+
+    const res = await postWebhook(eventPayload);
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBeUndefined();
+
+    const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(updatedOrder.paymentStatus).toBe('paid');
+
+    const eventRow = await prisma.stripeEvent.findUniqueOrThrow({ where: { stripeEventId: eventId } });
+    expect(eventRow.status).toBe('succeeded');
+    expect(eventRow.attemptCount).toBe(2);
   });
 
   it('不正な署名は400を返す', async () => {

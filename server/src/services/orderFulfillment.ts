@@ -3,6 +3,7 @@ import { createPasswordResetToken } from './passwordReset';
 import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
 import { confirmCouponUsage } from './coupon';
 import { getNftChain } from './nftMint';
+import { enqueueEntitlementEvents } from './integrationOutbox';
 
 type Tx = Prisma.TransactionClient;
 
@@ -78,6 +79,9 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
   // 仕様書外の拡張(クーポン機能): reserved→usedへの確定。Stripe・銀行振込どちらの
   // 決済手段でもこの関数を通るため、ここに1箇所追加するだけで両方に対応できる。
   await confirmCouponUsage(tx, order.id);
+  // 仕様書外の拡張(千ノ国全体統合契約2026-07-21 6章): 決済確定と同一トランザクションで
+  // entitlement.grantedをOutboxへ記録する(送信先ルール未設定の商品はno-op)。
+  await enqueueEntitlementEvents(tx, order, orderItems, 'entitlement.granted');
 
   return { order, items: orderItems };
 }
