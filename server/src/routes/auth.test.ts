@@ -27,6 +27,22 @@ describe('認証API', () => {
     expect(res.body.error.code).toBe('CSRF_ORIGIN_MISMATCH');
   });
 
+  it('CSRF: APP_URL未設定時はfail-openにせず状態変更系リクエストを403で拒否する(仕様書外の拡張)', async () => {
+    const originalAppUrl = process.env.APP_URL;
+    delete process.env.APP_URL;
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', ORIGIN)
+        .send({ email: 'x@example.com', password: 'password123' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('CSRF_ORIGIN_MISMATCH');
+    } finally {
+      process.env.APP_URL = originalAppUrl;
+    }
+  });
+
   it('register → me → logout の一連の流れが動作する', async () => {
     const email = `register-auth-test-${Date.now()}@example.com`;
     const agent = request.agent(app);
