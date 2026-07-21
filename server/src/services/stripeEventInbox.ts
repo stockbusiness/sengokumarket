@@ -15,8 +15,12 @@ const STALE_PROCESSING_MS = 5 * 60 * 1000;
 // 手動再試行(admin/stripe-events)を必須にする。
 const MAX_ATTEMPTS_BEFORE_TERMINAL = 10;
 
+// 2026-07-15時点の移行(既存stripe_eventsのInbox化)でバックフィルしたプレースホルダ値。
+// 実ペイロードのハッシュと一致することはない。
+const LEGACY_UNKNOWN_HASH = 'legacy-unknown';
+
 export type StripeEventClaim =
-  | { outcome: 'process' }
+  | { outcome: 'process'; processingToken: string }
   | { outcome: 'already_succeeded' }
   | { outcome: 'in_progress' }
   | { outcome: 'failed_terminal' }
@@ -26,23 +30,51 @@ export function hashPayload(rawBody: Buffer | string): string {
   return crypto.createHash('sha256').update(rawBody).digest('hex');
 }
 
+function generateProcessingToken(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 // 冪等性の核心: 同一stripeEventIdの初回はINSERTでprocessingをクレームする。
 // 既存行がある場合はpayloadHashの一致を確認したうえで、状態に応じてreclaim/no-opを判定する。
+//
+// 仕様書外の拡張(2026-07-22指示書Stage1): 処理権にランダムなprocessing_tokenを発行し、
+// このクレームで得たtoken以外からのmarkSucceeded/Failedでは状態を上書きできないようにする。
+// staleなprocessing行の再クレームは、読み込んだ時点のprocessing_started_at/processing_tokenを
+// WHERE条件に含めたCompare-And-Swapで行うことで、複数リクエストが同時に同じstale行を
+// 再クレームしようとしても1件しか成功しないようにする(値が変化しないUPDATEはPostgresの
+// 行ロックだけでは排他できないため、CASの鍵として使う値自体を毎回更新する必要がある)。
 export async function claimStripeEventForProcessing(
   stripeEventId: string,
   eventType: string,
   payloadHash: string,
 ): Promise<StripeEventClaim> {
+  const initialToken = generateProcessingToken();
   try {
     await prisma.stripeEvent.create({
-      data: { stripeEventId, eventType, payloadHash, status: 'processing', attemptCount: 1, processingStartedAt: new Date() },
+      data: {
+        stripeEventId,
+        eventType,
+        payloadHash,
+        status: 'processing',
+        attemptCount: 1,
+        processingStartedAt: new Date(),
+        processingToken: initialToken,
+      },
     });
-    return { outcome: 'process' };
+    return { outcome: 'process', processingToken: initialToken };
   } catch (e) {
     if (!(e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002')) throw e;
   }
 
   const existing = await prisma.stripeEvent.findUniqueOrThrow({ where: { stripeEventId } });
+
+  // 仕様書外の拡張(2026-07-22指示書Stage2): 2026-07-15のInbox化移行より前に成功していたイベントは
+  // payload_hashが実ハッシュ未記録のプレースホルダ('legacy-unknown')のまま保存されている。
+  // Stripeがこれらを再送してきた場合、実ハッシュとは一致しなくても「処理済みの重複」として
+  // 扱い、業務処理を再実行しない(payload_mismatch判定より優先する)。
+  if (existing.status === 'succeeded' && existing.payloadHash === LEGACY_UNKNOWN_HASH) {
+    return { outcome: 'already_succeeded' };
+  }
 
   // 同一event_idで本文が異なる場合は処理しない(契約書6.4章)。Stripeが同じevent_idを
   // 使い回すことは本来ないはずだが、なりすまし・データ破損の検知として扱う。
@@ -55,47 +87,76 @@ export async function claimStripeEventForProcessing(
   if (existing.status === 'failed_terminal') {
     return { outcome: 'failed_terminal' };
   }
+
   if (existing.status === 'processing') {
     const isStale = existing.processingStartedAt !== null && Date.now() - existing.processingStartedAt.getTime() > STALE_PROCESSING_MS;
     if (!isStale) {
       return { outcome: 'in_progress' };
     }
-    // stale: 下のreclaimへフォールスルー
+
+    const newToken = generateProcessingToken();
+    const claimed = await prisma.stripeEvent.updateMany({
+      where: {
+        stripeEventId,
+        status: 'processing',
+        processingStartedAt: existing.processingStartedAt,
+        processingToken: existing.processingToken,
+      },
+      data: { status: 'processing', attemptCount: { increment: 1 }, processingStartedAt: new Date(), processingToken: newToken },
+    });
+    if (claimed.count === 0) {
+      // 別のリクエストが先にこのstale行を再クレームした(CAS失敗)。
+      return { outcome: 'in_progress' };
+    }
+    return { outcome: 'process', processingToken: newToken };
   }
 
-  // failed_retryable、またはstaleなprocessingを再クレームする。同時に複数リクエストが
-  // 到達した場合に二重処理しないよう、条件付きUPDATE(該当行のcountが0なら誰かが先に取った)で判定する。
+  // ここに到達するのはfailed_retryableのみ。status自体がprocessingへ変わる(値が変化する)ため、
+  // 同時に複数リクエストが到達してもUPDATE ... WHERE status='failed_retryable'は1件しか成功しない。
+  const newToken = generateProcessingToken();
   const claimed = await prisma.stripeEvent.updateMany({
     where: { stripeEventId, status: existing.status },
-    data: { status: 'processing', attemptCount: { increment: 1 }, processingStartedAt: new Date() },
+    data: { status: 'processing', attemptCount: { increment: 1 }, processingStartedAt: new Date(), processingToken: newToken },
   });
   if (claimed.count === 0) {
     return { outcome: 'in_progress' };
   }
-  return { outcome: 'process' };
+  return { outcome: 'process', processingToken: newToken };
 }
 
 // 管理画面からの手動再試行用。failed_retryable/failed_terminalのいずれからでも、
 // 明示的な管理者操作としてprocessingへ遷移させる(Webhook経由のクレームとは別の入口)。
-export async function claimStripeEventForManualRetry(stripeEventId: string): Promise<boolean> {
+// status自体がprocessingへ変わる遷移のため、Webhook側の自動再送と同時に発生しても
+// どちらか一方しかクレームできない。
+export async function claimStripeEventForManualRetry(stripeEventId: string): Promise<{ processingToken: string } | null> {
+  const newToken = generateProcessingToken();
   const claimed = await prisma.stripeEvent.updateMany({
     where: { stripeEventId, status: { in: ['failed_retryable', 'failed_terminal'] } },
-    data: { status: 'processing', attemptCount: { increment: 1 }, processingStartedAt: new Date() },
+    data: { status: 'processing', attemptCount: { increment: 1 }, processingStartedAt: new Date(), processingToken: newToken },
   });
-  return claimed.count > 0;
+  if (claimed.count === 0) return null;
+  return { processingToken: newToken };
 }
 
-export async function markStripeEventSucceeded(stripeEventId: string): Promise<void> {
-  await prisma.stripeEvent.update({
-    where: { stripeEventId },
+// processingTokenが一致する場合のみ状態を更新する。既に別の処理(stale reclaim等)に所有権が
+// 移っている場合は0件更新となり、古い処理の結果で新しい処理の状態を上書きしない。
+export async function markStripeEventSucceeded(stripeEventId: string, processingToken: string): Promise<void> {
+  await prisma.stripeEvent.updateMany({
+    where: { stripeEventId, status: 'processing', processingToken },
     data: { status: 'succeeded', processedAt: new Date(), lastError: null },
   });
 }
 
-export async function markStripeEventFailed(stripeEventId: string, error: unknown): Promise<void> {
+export async function markStripeEventFailed(stripeEventId: string, processingToken: string, error: unknown): Promise<void> {
   const message = (error instanceof Error ? error.message : String(error)).slice(0, 2000);
   const current = await prisma.stripeEvent.findUnique({ where: { stripeEventId } });
-  const attemptCount = current?.attemptCount ?? 1;
-  const status = attemptCount >= MAX_ATTEMPTS_BEFORE_TERMINAL ? 'failed_terminal' : 'failed_retryable';
-  await prisma.stripeEvent.update({ where: { stripeEventId }, data: { status, lastError: message } });
+  if (!current || current.status !== 'processing' || current.processingToken !== processingToken) {
+    // 所有権を既に失っている(別処理がstale reclaimした等)。自分の結果で状態を上書きしない。
+    return;
+  }
+  const status = current.attemptCount >= MAX_ATTEMPTS_BEFORE_TERMINAL ? 'failed_terminal' : 'failed_retryable';
+  await prisma.stripeEvent.updateMany({
+    where: { stripeEventId, status: 'processing', processingToken },
+    data: { status, lastError: message },
+  });
 }

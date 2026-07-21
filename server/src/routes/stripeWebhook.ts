@@ -75,13 +75,16 @@ export async function stripeWebhookHandler(req: Request, res: Response) {
       break;
   }
 
+  // 上のswitchで'process'以外は全てreturn済みのため、ここではclaimは'process'に絞り込まれている。
+  const { processingToken } = claim;
+
   try {
     await processStripeEvent(event);
-    await markStripeEventSucceeded(event.id);
+    await markStripeEventSucceeded(event.id, processingToken);
     res.status(200).json({ received: true });
   } catch (e) {
     console.error('stripe webhook handling error', e);
-    await markStripeEventFailed(event.id, e);
+    await markStripeEventFailed(event.id, processingToken, e);
     res.status(500).json({ error: { code: 'WEBHOOK_HANDLING_ERROR', message: 'internal error' } });
   }
 }

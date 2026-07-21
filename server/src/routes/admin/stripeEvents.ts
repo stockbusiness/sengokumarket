@@ -51,11 +51,11 @@ router.post('/stripe-events/:id/retry', async (req, res) => {
 
   try {
     await processStripeEvent(event);
-    await markStripeEventSucceeded(existing.stripeEventId);
+    await markStripeEventSucceeded(existing.stripeEventId, claimed.processingToken);
     const updated = await prisma.stripeEvent.findUniqueOrThrow({ where: { id: existing.id } });
     res.json({ stripeEvent: updated });
   } catch (e) {
-    await markStripeEventFailed(existing.stripeEventId, e);
+    await markStripeEventFailed(existing.stripeEventId, claimed.processingToken, e);
     console.error('manual stripe event retry failed', { stripeEventId: existing.stripeEventId, error: e });
     return sendError(res, 500, 'RETRY_FAILED', '再試行に失敗しました');
   }

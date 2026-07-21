@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # 2026-07-22指示書Stage5: 実際のGitHub既定ブランチ/唯一の開発ブランチはmainではなく
+    # claude/confirmation-needed-3wicjuであり、push対象がmainのみだとCIが一度も実行されない
+    # (実際にGitHub Actionsの実行回数が0件であることを確認済み)。mainブランチ運用への正式統一は
+    # Vercel Production Branch・GitHub既定ブランチ・branch protectionの変更を伴うため別途判断が
+    # 必要だが、それまでの暫定対応として現行ブランチをpushトリガーに追加する。
+    branches: [main, claude/confirmation-needed-3wicju]
   pull_request:
 
 jobs:

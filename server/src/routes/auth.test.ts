@@ -43,6 +43,63 @@ describe('認証API', () => {
     }
   });
 
+  it('CSRF: APP_URLが不正なURL文字列の場合も403で拒否する(仕様書外の拡張・2026-07-22指示書Stage4)', async () => {
+    const originalAppUrl = process.env.APP_URL;
+    process.env.APP_URL = 'not a valid url';
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', ORIGIN)
+        .send({ email: 'x@example.com', password: 'password123' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('CSRF_ORIGIN_MISMATCH');
+    } finally {
+      process.env.APP_URL = originalAppUrl;
+    }
+  });
+
+  it('CSRF: APP_URLの末尾スラッシュの有無で誤って拒否しない(仕様書外の拡張・2026-07-22指示書Stage4)', async () => {
+    const originalAppUrl = process.env.APP_URL;
+    process.env.APP_URL = `${ORIGIN}/`;
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Origin', ORIGIN)
+        .send({ email: 'x@example.com', password: 'password123' });
+
+      // Origin不一致(403)ではなく、認証情報自体の失敗(401)まで到達すればCSRF検証は通過している
+      expect(res.status).not.toBe(403);
+    } finally {
+      process.env.APP_URL = originalAppUrl;
+    }
+  });
+
+  it('CSRF: Refererが正しいOriginなら通過する(仕様書外の拡張・2026-07-22指示書Stage4)', async () => {
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Referer', `${ORIGIN}/login`)
+      .send({ email: 'x@example.com', password: 'password123' });
+
+    expect(res.status).not.toBe(403);
+  });
+
+  it('CSRF: APP_URLを前方一致するだけの別オリジン(なりすましドメイン)は拒否する(仕様書外の拡張・2026-07-22指示書Stage4)', async () => {
+    const originalAppUrl = process.env.APP_URL;
+    process.env.APP_URL = 'https://example.com';
+    try {
+      const res = await request(app)
+        .post('/api/auth/login')
+        .set('Referer', 'https://example.com.evil.example/path')
+        .send({ email: 'x@example.com', password: 'password123' });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('CSRF_ORIGIN_MISMATCH');
+    } finally {
+      process.env.APP_URL = originalAppUrl;
+    }
+  });
+
   it('register → me → logout の一連の流れが動作する', async () => {
     const email = `register-auth-test-${Date.now()}@example.com`;
     const agent = request.agent(app);

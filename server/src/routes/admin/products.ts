@@ -95,6 +95,9 @@ router.post('/products', async (req, res) => {
   res.status(201).json({ product });
 });
 
+type VariantUpdateEntry = { id: string; name?: string; sku?: string | null; price?: number; stock?: number };
+type VariantCreateEntry = { name: string; sku?: string | null; price: number; stock?: number };
+
 router.put('/products/:id', async (req, res) => {
   const { id } = req.params;
   const { name, description, category, itemType, salesModel, basePrice, status, images, variants } = req.body ?? {};
@@ -113,6 +116,48 @@ router.put('/products/:id', async (req, res) => {
   }
   if (basePrice !== undefined && (!Number.isInteger(basePrice) || basePrice < 0)) {
     return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
+  }
+
+  // 仕様書外の拡張(2026-07-22指示書Stage3): variantsはPATCH相当の部分更新として扱う。
+  // フロント側の在庫だけ編集する画面(AdminProductEditPage)は{ id, stock }のみを送るため、
+  // 未指定フィールド(name・sku・price)を強制的に上書きすると既存値が消失・破損してしまう。
+  // トランザクション開始前に検証し、途中で400/404を返す際にレスポンスの二重送信が起きないようにする。
+  const updateEntries: VariantUpdateEntry[] = [];
+  const createEntries: VariantCreateEntry[] = [];
+  if (variants !== undefined) {
+    if (!Array.isArray(variants)) {
+      return sendError(res, 400, 'VALIDATION_ERROR', 'variantsは配列で指定してください');
+    }
+
+    const rawEntries = variants as { id?: string; name?: string; sku?: string | null; price?: number; stock?: number }[];
+
+    for (const v of rawEntries) {
+      if (v.price !== undefined && (!Number.isInteger(v.price) || v.price < 0)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
+      }
+      if (v.stock !== undefined && (!Number.isInteger(v.stock) || v.stock < 0)) {
+        return sendError(res, 400, 'VALIDATION_ERROR', '在庫数は0以上の整数で入力してください');
+      }
+    }
+
+    const idsToUpdate = rawEntries.filter((v): v is VariantUpdateEntry & { id: string } => v.id !== undefined).map((v) => v.id);
+    if (idsToUpdate.length > 0) {
+      const matchingCount = await prisma.productVariant.count({ where: { id: { in: idsToUpdate }, productId: id } });
+      if (matchingCount !== new Set(idsToUpdate).size) {
+        return sendError(res, 404, 'VARIANT_NOT_FOUND', 'バリエーションが見つかりません');
+      }
+    }
+
+    for (const v of rawEntries) {
+      if (v.id !== undefined) {
+        updateEntries.push({ id: v.id, name: v.name, sku: v.sku, price: v.price, stock: v.stock });
+      } else {
+        if (!isNonEmptyString(v.name) || v.price === undefined || !Number.isInteger(v.price) || v.price < 0) {
+          return sendError(res, 400, 'VALIDATION_ERROR', '新規バリエーションには商品名と価格(0以上の整数)を入力してください');
+        }
+        createEntries.push({ name: v.name, sku: v.sku, price: v.price, stock: v.stock });
+      }
+    }
   }
 
   await prisma.$transaction(async (tx) => {
@@ -138,19 +183,26 @@ router.put('/products/:id', async (req, res) => {
       await tx.productVariant.updateMany({ where: { productId: id }, data: { price: basePrice } });
     }
 
-    if (Array.isArray(variants)) {
-      for (const v of variants as { id?: string; name: string; sku?: string; price: number; stock?: number }[]) {
-        if (v.id) {
-          await tx.productVariant.update({
-            where: { id: v.id },
-            data: { name: v.name, sku: v.sku ?? null, price: v.price, stock: v.stock ?? undefined },
-          });
-        } else {
-          await tx.productVariant.create({
-            data: { productId: id, name: v.name, sku: v.sku ?? null, price: v.price, stock: v.stock ?? 0 },
-          });
-        }
-      }
+    for (const v of updateEntries) {
+      await tx.productVariant.update({
+        where: { id: v.id },
+        data: {
+          name: v.name === undefined ? undefined : v.name,
+          // Prismaはdata内のundefinedを「更新しない」として無視するため、未指定のsku(undefined)は
+          // 既存値を維持し、明示的にnullを渡した場合のみ解除できる(仕様書外の拡張・2026-07-22指示書
+          // Stage3)。旧実装は`v.sku ?? null`で未指定時も常にnullへ上書きしてしまい、管理画面の
+          // 在庫だけ編集する操作のたびに既存SKUが消えていた。
+          sku: v.sku,
+          price: v.price === undefined ? undefined : v.price,
+          stock: v.stock === undefined ? undefined : v.stock,
+        },
+      });
+    }
+
+    for (const v of createEntries) {
+      await tx.productVariant.create({
+        data: { productId: id, name: v.name, sku: v.sku ?? null, price: v.price, stock: v.stock ?? 0 },
+      });
     }
   });
 

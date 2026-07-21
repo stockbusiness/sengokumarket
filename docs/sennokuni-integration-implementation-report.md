@@ -169,4 +169,89 @@ Test Files  54 passed (54)
 
 ---
 
+## 追記: 2026-07-22指示書対応(P0・本番接続前必須事項)
+
+対象指示書: `NEXT_IMPLEMENTATION_INSTRUCTIONS_20260722.md`(調査基準コミット`25da924`)。前回報告のInbox方式・共通IDスキーマ・CSRF fail-close等は維持したまま、以下5点を追加対応しました。外部連携の実HTTP接続は今回も追加していません。
+
+### 変更ファイル一覧
+
+```text
+server/prisma/schema.prisma
+server/prisma/migrations/20260722010000_stripe_event_processing_token/migration.sql
+server/prisma/migrations/20260722010000_stripe_event_processing_token/rollback.sql
+server/src/services/stripeEventInbox.ts
+server/src/services/stripeEventInbox.test.ts
+server/src/routes/stripeWebhook.ts
+server/src/routes/admin/stripeEvents.ts
+server/src/routes/admin/stripeEvents.test.ts(新規)
+server/src/routes/admin/products.ts
+server/src/routes/admin/products.test.ts
+server/src/middleware/csrf.ts
+server/src/routes/auth.test.ts
+.github/workflows/ci.yml
+docs/sennokuni-integration-implementation-report.md(本追記)
+```
+
+client側(`AdminProductEditPage.tsx`/`adminApi.ts`)は、既存の型・送信内容(`{ id, stock }`等の部分送信)がそのままサーバー側の修正と整合するため変更していません。
+
+### Stage1: Stripe Inboxの所有権・競合修正
+
+`stripe_events`に`processing_token`(nullable)を追加しました。staleなprocessing行の再クレームは、読み込んだ時点の`processing_started_at`/`processing_token`をWHERE条件に含めたCompare-And-Swapに変更し、`markStripeEventSucceeded`/`markStripeEventFailed`も呼び出し元が取得した`processing_token`が一致する場合のみ状態を更新するようにしました(`server/src/services/stripeEventInbox.ts`)。値が変化しないUPDATE(processing→processing)は行ロックだけでは同時実行を排除できないため、CASの鍵となる値自体を毎回更新する設計です。Webhook側(`stripeWebhook.ts`)と管理画面の手動再試行API(`admin/stripeEvents.ts`)の両方を、返却されたtokenを渡す形に変更しました。
+
+### Stage2: 移行前(legacy)Stripeイベントとの互換性
+
+`payload_hash='legacy-unknown'`かつ`status='succeeded'`の行は、実ペイロードのハッシュと一致しなくても`already_succeeded`として扱い、payload不一致判定より優先するようにしました。新方式で保存されたイベントのpayload不一致検知(409)は従来どおりです。
+
+### Stage3: 商品バリエーション部分更新の修正
+
+`admin/products.ts`のバリエーション更新をPATCH相当の部分更新に変更しました。未指定の`name`/`price`/`stock`は既存値を維持し、`sku`のみ、明示的に`null`を渡した場合だけ解除できるようにしています(旧実装は`sku: v.sku ?? null`により、未指定のたびにSKUが`null`へ上書きされていました)。**この問題は仮説ではなく、管理画面の在庫だけ編集するUI(`AdminProductEditPage.tsx`のクイック在庫編集)が実際に`{ id, stock }`のみを送信しているため、この修正前は在庫編集のたびに既存SKUが消失する実害が発生していました。** 新規バリエーション作成時は`name`・`price`を引き続き必須検証します。
+
+### Stage4: CSRF Origin/Referer比較の厳密化
+
+`Origin`・`Referer`・`APP_URL`をすべて`new URL(...).origin`でparseし、schema+host+portの厳密一致に変更しました(`server/src/middleware/csrf.ts`)。旧実装の`referer.startsWith(appUrl)`は、`APP_URL=https://example.com`に対し`https://example.com.evil.example/path`のような別オリジンを誤って通す文字列前方一致のバイパス経路があったため廃止しています。`APP_URL`が未設定・不正なURL文字列のいずれの場合もfail-closed(403)のままです。
+
+### Stage5: CI・ブランチ
+
+GitHub Actions APIで実行履歴を確認したところ`total_count: 0`——このリポジトリでCIは一度も実行されていませんでした。原因は`ci.yml`のpushトリガーが`main`のみである一方、実際の唯一のブランチは`claude/confirmation-needed-3wicju`で`main`は存在しないためです。今回は暫定対応として、pushトリガーに現行ブランチを追加しました(`branches: [main, claude/confirmation-needed-3wicju]`)。GitHub既定ブランチの`main`への統一・Vercel Production Branchの変更・branch protection設定は、権限・影響範囲の確認が必要なためこのセッションでは実施していません(下記「本番未確認事項」参照)。
+
+### 商品価格仕様の判断ゲート(セクション9)について
+
+このセッションからは本番DB(Supabase)に接続できないため、ローカル開発DBのみで確認しました(商品1件のみのデータで、価格差異なし)。**本番の実データはこのセッションからは確認できていません。** 本番での確認には、Supabase SQL Editorで以下を実行してください。
+
+```sql
+SELECT product_id, COUNT(DISTINCT price) AS distinct_prices
+FROM product_variants GROUP BY product_id HAVING COUNT(DISTINCT price) > 1;
+```
+
+バリエーション別価格を許可するかどうかの仕様判断は行っておらず、価格仕様(basePrice変更時の全variant追従)自体も変更していません。
+
+### テスト件数と結果
+
+```
+Test Files  55 passed (55)
+     Tests  370 passed (370)
+```
+
+前回報告時(348件)から22件追加。`npx tsc --noEmit`も全ワークスペースでクリーン、`npm run build --workspace=client`も成功。
+
+- **stale同時claimテスト結果**: 新規イベントへ5並列リクエスト→`process`1件・`in_progress`4件(`attempt_count`は1のまま)。staleなprocessing行へ5並列再クレーム→`process`1件・`in_progress`4件(`attempt_count`は2)。手動再試行とStripe自動再送(webhook側)が同一`failed_retryable`イベントへ同時到達するケースも、成功は必ず1件のみであることを確認(`stripeEventInbox.test.ts`・`admin/stripeEvents.test.ts`)。
+- **古いtokenでの上書き防止テスト結果**: staleなprocessing行を先に別リクエストが再クレームした後、古い`processingToken`での`markStripeEventSucceeded`/`markStripeEventFailed`はどちらも状態を変更しない(0件更新で無視される)ことを確認。
+- **legacy event互換テスト結果**: `payload_hash='legacy-unknown'`かつ`succeeded`の行は、異なる実ペイロードで再送しても`already_succeeded`(業務処理を再実行しない)。新方式でのpayload不一致は従来どおり`payload_mismatch`。
+- **SKU保持テスト結果**: `{ id, stock }`のみの更新でSKU・name・priceが維持されること、`{ id, price }`のみの更新でSKU・name・stockが維持されること、`sku: null`を明示した場合のみSKUが解除されること、存在しないvariant IDは404で既存データも変更されないこと、負の価格は400になることを確認(`admin/products.test.ts`)。
+- **CSRF origin比較テスト結果**: 正しいOrigin/Refererは通過、`APP_URL`末尾スラッシュの有無で誤拒否しない、`APP_URL`不正値(URLとしてparse不可)は403、`https://example.com.evil.example/path`のような前方一致のみのなりすましは403、を確認(`auth.test.ts`)。
+- **CI実行結果**: GitHub Actions上での実行はこの追記時点では未確認(pushしてから実際に実行されるかはこの後の確認事項)。ローカルでは`npm ci`相当の依存関係のもとで`prisma migrate deploy`(空DB・既存DBの両方)・`tsc -b --noEmit`・`vitest run`・`npm run build --workspace=client`をすべて実行し成功を確認済みです。
+
+### 本番未確認事項
+
+- GitHub Actionsが実際にpush後に実行されるかどうか(ローカル確認のみ)。
+- GitHub既定ブランチ・Vercel Production Branch・branch protectionの現状設定と、`main`への正式統一の可否(権限確認が必要)。
+- 本番DBでのバリエーション別価格の実データ状況(上記SQLの実行結果)。
+- 本番Supabaseへの`processing_token`カラム追加マイグレーションの手動適用(このリポジトリの既存運用どおり、Vercelはmigrationを自動実行しないため)。
+
+### 外部接続未実装事項
+
+前回報告(本ファイル前半)から変更はありません。`common_user_id`解決・`referral_token` capture/confirm・Outboxディスパッチャ・HMAC署名・外部システムへのHTTP送信・ウォレット`rewards/grant`/`REVERSAL`・`order.*`/`payment.*`汎用イベント送信は、認証情報・実エンドポイント・署名契約が未確定のため、引き続き実装していません。
+
+---
+
 以上、ご確認のほどよろしくお願いいたします。実接続に必要な認証情報・エンドポイントが確定次第、対応いたします。

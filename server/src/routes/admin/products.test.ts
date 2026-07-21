@@ -175,6 +175,108 @@ describe('管理API: 商品管理', () => {
     expect(res.status).toBe(400);
   });
 
+  // 2026-07-22指示書 Stage3: バリエーション部分更新の回帰テスト。
+  // 管理画面の在庫だけ編集する操作(AdminProductEditPage)は{ id, stock }のみを送るため、
+  // 未指定のname/sku/priceを上書きしてはいけない。
+  describe('バリエーションの部分更新(仕様書外の拡張・2026-07-22指示書Stage3)', () => {
+    let partialUpdateProductId: string;
+    let partialUpdateVariantId: string;
+
+    beforeEach(async () => {
+      const createRes = await agent
+        .post('/api/admin/products')
+        .set('Origin', TEST_ORIGIN)
+        .send({
+          name: '部分更新テスト商品',
+          slug: `${slug}-partial-update-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          category: 'テスト',
+          itemType: 'physical',
+          basePrice: 5000,
+          variants: [{ name: '通常', sku: 'ORIG-SKU-001', price: 5000, stock: 10 }],
+        });
+      partialUpdateProductId = createRes.body.product.id;
+      partialUpdateVariantId = createRes.body.product.variants[0].id;
+    });
+
+    afterEach(async () => {
+      await prisma.productVariant.deleteMany({ where: { productId: partialUpdateProductId } });
+      await prisma.product.deleteMany({ where: { id: partialUpdateProductId } });
+    });
+
+    it('stockだけ更新してもSKU・name・priceが維持される', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ id: partialUpdateVariantId, stock: 20 }] });
+
+      expect(res.status).toBe(200);
+      const variant = res.body.product.variants[0];
+      expect(variant.stock).toBe(20);
+      expect(variant.sku).toBe('ORIG-SKU-001');
+      expect(variant.name).toBe('通常');
+      expect(variant.price).toBe(5000);
+    });
+
+    it('priceだけ更新してもSKU・name・stockが維持される', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ id: partialUpdateVariantId, price: 6000 }] });
+
+      expect(res.status).toBe(200);
+      const variant = res.body.product.variants[0];
+      expect(variant.price).toBe(6000);
+      expect(variant.sku).toBe('ORIG-SKU-001');
+      expect(variant.name).toBe('通常');
+      expect(variant.stock).toBe(10);
+    });
+
+    it('sku: nullを明示した場合のみSKUを解除できる', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ id: partialUpdateVariantId, sku: null }] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.product.variants[0].sku).toBeNull();
+      expect(res.body.product.variants[0].name).toBe('通常');
+      expect(res.body.product.variants[0].price).toBe(5000);
+      expect(res.body.product.variants[0].stock).toBe(10);
+    });
+
+    it('存在しないvariant IDを含む更新は404を返し、既存バリエーションも変更されない', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ id: '00000000-0000-0000-0000-000000000000', stock: 99 }] });
+
+      expect(res.status).toBe(404);
+
+      const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: partialUpdateVariantId } });
+      expect(variant.stock).toBe(10);
+    });
+
+    it('不正な価格(負の数)を含む更新は400を返す', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ id: partialUpdateVariantId, price: -100 }] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+
+    it('新規バリエーション追加時はnameとpriceが必須', async () => {
+      const res = await agent
+        .put(`/api/admin/products/${partialUpdateProductId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ variants: [{ stock: 5 }] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    });
+  });
+
   it('注文実績が無い商品は削除できる', async () => {
     const createRes = await agent
       .post('/api/admin/products')
