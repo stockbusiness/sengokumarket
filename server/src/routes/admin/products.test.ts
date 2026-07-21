@@ -121,6 +121,24 @@ describe('管理API: 商品管理', () => {
     expect(res.body.product.variants[0].stock).toBe(20);
   });
 
+  // 実際に決済で使われるのはバリエーションのpriceであり(basePriceは一覧表示用)、
+  // 価格編集時にバリエーションのpriceが追従しないと表示価格と請求額がずれるバグの回帰テスト。
+  it('basePriceを変更すると既存バリエーションのpriceも追従して更新される', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
+
+    const res = await agent
+      .put(`/api/admin/products/${product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ basePrice: 27500 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.product.basePrice).toBe(27500);
+    expect(res.body.product.variants[0].price).toBe(27500);
+
+    const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: product.variants[0].id } });
+    expect(variant.price).toBe(27500);
+  });
+
   it('sales_modelを更新できる', async () => {
     const product = await prisma.product.findUniqueOrThrow({ where: { slug } });
 

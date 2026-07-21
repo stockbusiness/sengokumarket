@@ -130,6 +130,14 @@ router.put('/products/:id', async (req, res) => {
       },
     });
 
+    // 実際に決済で使われる価格はバリエーションごとのprice(checkout.ts参照)であり、
+    // basePriceは一覧表示用の値に過ぎない。価格編集時にbasePriceだけ更新してバリエーションの
+    // priceが古いまま残ると、管理画面の表示価格と実際の請求額がずれてしまうため、
+    // basePrice変更時は既存の全バリエーションのpriceも追従させる(仕様書外の拡張)。
+    if (basePrice !== undefined) {
+      await tx.productVariant.updateMany({ where: { productId: id }, data: { price: basePrice } });
+    }
+
     if (Array.isArray(variants)) {
       for (const v of variants as { id?: string; name: string; sku?: string; price: number; stock?: number }[]) {
         if (v.id) {
