@@ -419,6 +419,9 @@ model IntegrationOutboxEvent {
   nextAttemptAt        DateTime? @map("next_attempt_at")
   processedAt          DateTime? @map("processed_at")
   createdAt            DateTime  @default(now()) @map("created_at")
+  // 仕様書外の拡張(2026-07-22千ノ国全体連携パッケージ対応): dispatcherがstaleなprocessing行
+  // (クラッシュ等で放置された行)を検知するために使う。NFT自動発行の既存のstale検知パターンを踏襲。
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   @@index([status])
   @@index([destinationSystemKey])

@@ -3,7 +3,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
-import { isValidEmail } from '../../lib/validation';
+import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../../lib/validation';
 import { createPasswordResetToken } from '../../services/passwordReset';
 import { sendAdminAccountSetupEmail } from '../../services/mailTemplates';
 
@@ -41,7 +41,8 @@ router.post('/admin-users', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', '権限は管理者・閲覧専用管理者・スタッフのいずれかを指定してください');
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  // 仕様書外の拡張: メールアドレスの大文字小文字を区別しない(既存の混在データも拾えるようinsensitive検索する)。
+  const existing = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
   if (existing) {
     return sendError(res, 409, 'EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に登録されています');
   }
@@ -51,7 +52,7 @@ router.post('/admin-users', async (req, res) => {
   const user = await prisma.user.create({
     data: {
       name: name.trim(),
-      email: email.trim(),
+      email: normalizeEmail(email),
       passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),
       role,
     },

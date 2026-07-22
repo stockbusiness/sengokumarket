@@ -7,7 +7,7 @@ import { sendIntegrationError } from '../../lib/apiError';
 import { generateAgencyCode } from '../../services/referralCodeGenerator';
 import { createPasswordResetToken } from '../../services/passwordReset';
 import { sendAgencyAccountSetupEmail, sendAgencyAccessGrantedEmail } from '../../services/mailTemplates';
-import { isValidEmail } from '../../lib/validation';
+import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../../lib/validation';
 
 const router = Router();
 
@@ -188,7 +188,7 @@ router.post('/', async (req, res) => {
       // 「このサイトで購入経験があり、既に代理店へ永久帰属しているユーザー」のメールアドレスと
       // 一致する場合、その元の代理店(紹介者)を上位代理店として自動継承する。
       // (例: 評議員NFTを購入した会員がインフルエンサー申請を経て代理店に昇格するケース)
-      const referredUser = await prisma.user.findUnique({ where: { email: loginEmail } });
+      const referredUser = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(loginEmail) } });
       if (referredUser?.referredByAgencyId) {
         parentAgencyId = referredUser.referredByAgencyId;
       }
@@ -237,7 +237,8 @@ router.post('/', async (req, res) => {
     if (isNonEmptyString(loginEmail)) {
       const alreadyHasLogin = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
       if (!alreadyHasLogin) {
-        const existingUserByEmail = await prisma.user.findUnique({ where: { email: loginEmail } });
+        // 仕様書外の拡張: メールアドレスの大文字小文字を区別しない。
+        const existingUserByEmail = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(loginEmail) } });
 
         if (existingUserByEmail) {
           // 既に代理店ポータル・管理者として使われているアカウントは横取りしない。
@@ -256,7 +257,7 @@ router.post('/', async (req, res) => {
           const user = await prisma.user.create({
             data: {
               name: agency.contactName ?? agency.name,
-              email: loginEmail,
+              email: normalizeEmail(loginEmail),
               // 仮パスワードは平文で扱わずランダム値をハッシュ化するのみ(仕様書v1.5 16章の原則を踏襲)。
               // 本人はパスワード再設定メールのリンクから初期設定する。
               passwordHash: await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10),

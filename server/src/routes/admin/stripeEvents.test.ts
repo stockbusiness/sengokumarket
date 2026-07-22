@@ -67,7 +67,7 @@ describe('管理API: Stripe Webhookイベント一覧・手動再試行(仕様�
     expect(row.attemptCount).toBe(3);
   });
 
-  it('同一イベントへ再試行が同時に到達しても、一方は409 ALREADY_PROCESSINGになる', async () => {
+  it('同一イベントへ再試行が同時に到達しても、処理に成功するのは一方だけになる', async () => {
     const stripeEventId = `admin-stripe-events-test-concurrent-${Date.now()}`;
     const event = await prisma.stripeEvent.create({
       data: { stripeEventId, eventType: 'customer.updated', payloadHash: hashPayload('{}'), status: 'failed_retryable', attemptCount: 1 },
@@ -82,8 +82,18 @@ describe('管理API: Stripe Webhookイベント一覧・手動再試行(仕様�
       agentB.post(`/api/admin/stripe-events/${event.id}/retry`).set('Origin', TEST_ORIGIN).send({}),
     ]);
 
-    const statuses = [resA.status, resB.status].sort();
-    expect(statuses).toEqual([200, 409]);
+    // 先頭の状態チェック(400)とアトミックなclaim(409)は別ステップのため、負けた側が
+    // どちらの応答になるかはタイミング依存。重要なのは「処理(200)に到達するのは1件だけ」
+    // という安全性であり、レース時の具体的な拒否コードではない。
+    const statuses = [resA.status, resB.status];
+    const successCount = statuses.filter((s) => s === 200).length;
+    const rejectedCount = statuses.filter((s) => s === 400 || s === 409).length;
+    expect(successCount).toBe(1);
+    expect(rejectedCount).toBe(1);
+
+    const row = await prisma.stripeEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(row.status).toBe('succeeded');
+    expect(row.attemptCount).toBe(2); // 二重処理されていれば3になるはず
   });
 
   it('一覧はstatusで絞り込める', async () => {

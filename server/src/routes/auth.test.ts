@@ -140,6 +140,40 @@ describe('認証API', () => {
     expect(res.body.error.code).toBe('EMAIL_ALREADY_EXISTS');
   });
 
+  // 2026-07-22 千ノ国全体連携パッケージの新規指摘の回帰テスト: 大文字小文字違いだけの
+  // メールアドレスで別アカウントが作れてしまう問題(SYSTEM_ANALYSIS 15.5)の修正確認。
+  it('大文字小文字が異なるだけの同じメールアドレスでの登録は409を返す(仕様書外の拡張)', async () => {
+    const base = `case-auth-test-${Date.now()}@example.com`;
+    await request(app)
+      .post('/api/auth/register')
+      .set('Origin', ORIGIN)
+      .send({ name: 'テスト', email: base.toLowerCase(), password: 'password123' });
+
+    const res = await request(app)
+      .post('/api/auth/register')
+      .set('Origin', ORIGIN)
+      .send({ name: 'テスト2', email: base.toUpperCase(), password: 'password456' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('EMAIL_ALREADY_EXISTS');
+  });
+
+  it('登録時と異なる大文字小文字で入力してもログインできる(仕様書外の拡張)', async () => {
+    const base = `case-login-auth-test-${Date.now()}@example.com`;
+    await request(app)
+      .post('/api/auth/register')
+      .set('Origin', ORIGIN)
+      .send({ name: 'テスト', email: base, password: 'password123' });
+
+    const res = await request(app)
+      .post('/api/auth/login')
+      .set('Origin', ORIGIN)
+      .send({ email: base.toUpperCase(), password: 'password123' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.email).toBe(base.toLowerCase());
+  });
+
   it('パスワード誤りを5回繰り返すとACCOUNT_LOCKEDになる', async () => {
     const email = `lockout-auth-test-${Date.now()}@example.com`;
     await request(app)

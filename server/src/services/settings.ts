@@ -18,6 +18,20 @@ export const SETTING_KEYS = [
   // 管理画面では専用のbankTransferSettingsルートで平文のまま表示・編集する(マスク表示の対象外)。
   'bank_transfer_enabled',
   'bank_transfer_info',
+  // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT・2026-07-22指示書対応):
+  // 代理店HUB(common_user resolve・referral capture/confirm)向けのHMAC認証情報・接続先。
+  // 実送信自体はSENNOKUNI_INTEGRATION_ENABLED環境変数がtrueの場合のみ行われる(既定OFF)。
+  'sennokuni_agency_hub_base_url',
+  'sennokuni_hmac_key_id',
+  'sennokuni_hmac_secret',
+  // 仕様書外の拡張: Outbox dispatcherが送信先ごとに参照する接続先URL(未設定の送信先はスキップする)。
+  'integration_endpoint_sengoku_passport',
+  'integration_endpoint_ai_art_school',
+  // 仕様書外の拡張: OVE Walletは共通契約と異なる独自HMAC方式(X-OVE-*)を使うため、
+  // 認証情報を分離して保持する(千ノ国全体統合実装報告書の既知の未対応事項を踏まえた設計)。
+  'ove_wallet_base_url',
+  'ove_wallet_api_key_id',
+  'ove_wallet_hmac_secret',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

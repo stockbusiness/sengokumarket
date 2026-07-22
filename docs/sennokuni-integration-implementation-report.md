@@ -248,9 +248,72 @@ Test Files  55 passed (55)
 - 本番DBでのバリエーション別価格の実データ状況(上記SQLの実行結果)。
 - 本番Supabaseへの`processing_token`カラム追加マイグレーションの手動適用(このリポジトリの既存運用どおり、Vercelはmigrationを自動実行しないため)。
 
-### 外部接続未実装事項
+### 外部接続未実装事項(この追記より前の状態)
 
-前回報告(本ファイル前半)から変更はありません。`common_user_id`解決・`referral_token` capture/confirm・Outboxディスパッチャ・HMAC署名・外部システムへのHTTP送信・ウォレット`rewards/grant`/`REVERSAL`・`order.*`/`payment.*`汎用イベント送信は、認証情報・実エンドポイント・署名契約が未確定のため、引き続き実装していません。
+前回報告時点では、認証情報・実エンドポイント・署名契約が未確定のため、`common_user_id`解決・`referral_token` capture/confirm・Outboxディスパッチャ・HMAC署名・外部システムへのHTTP送信・ウォレット`rewards/grant`/`REVERSAL`・`order.*`/`payment.*`汎用イベント送信を実装していませんでした。以下の追記で、これらを**Feature Flagで無効化したままの実装(dormant実装)**として追加しています。
+
+---
+
+## 追記2: 「02_SHOPPING_SYSTEM_PACKAGE.zip」対応(2026-07-22)
+
+対象パッケージ: `00_READ_ME_FIRST.md` / `01_SYSTEM_INTEGRATION_CURRENT_STATE_2026-07-22.md` / `02_COMMON_INTERFACE_CONTRACT_V1_1_DRAFT.md` / `03_NEXT_ACTION_INSTRUCTIONS.md` / `04_SYSTEM_ANALYSIS_REFERENCE.md`。
+
+このパッケージの確認結果、新たに実バグ2件を検出・修正し、また03章の「必須改修」(common_user resolve・referral capture/confirm・Outbox実送信・ウォレットreward連携)を、**`SENNOKUNI_INTEGRATION_ENABLED`環境変数(既定`false`)で無効化したdormant実装**として追加しました。共通契約(`02_COMMON_INTERFACE_CONTRACT_V1_1_DRAFT.md`)がDRAFTであり「署名テストベクトルとevent versionの合意前は本番有効化禁止」と明記されているため、実際の外部送信はこのフラグが明示的に`true`にならない限り一切発生しません。
+
+### A. 新規バグ修正
+
+1. **メールアドレスの大文字小文字正規化なし**(`04_SYSTEM_ANALYSIS_REFERENCE.md` 15.5): `User@example.com`と`user@example.com`で別アカウントが作れてしまう問題。登録・ログイン・パスワード再設定・代理店SSO・外部注文取込・代理店連携APIの全てのユーザー検索/作成箇所を、大文字小文字を区別しない検索(`findFirst`+`mode: 'insensitive'`)と、新規登録時の正規化(小文字化)保存に統一しました(`server/src/lib/validation.ts`の`normalizeEmail`/`emailFilterInsensitive`)。
+2. **紹介限定アクセスの`ref`クエリ未検証**(15.3): `?ref=`クエリが空でなければ内容を検証せず通過させていたため、実在しないコードでも非公開の商品カタログが閲覧できていた問題。`referral_links.code`(`status='active'`)と実際に照合するよう修正しました(`server/src/middleware/referralAccess.ts`)。
+
+### B. dormant実装(Feature Flag無効時は既存動作と完全に同一)
+
+| 項目 | 実装ファイル |
+|---|---|
+| common_user_id解決クライアント | `server/src/services/externalCommonUserClient.ts` |
+| referral capture/confirmクライアント | `server/src/services/externalReferralClient.ts` |
+| 登録・購入時のオーケストレーター | `server/src/services/sennokuniOrderLinking.ts` |
+| OVE Wallet reward grant/reversalクライアント(共通契約とは別のHMAC方式) | `server/src/services/oveWalletRewardClient.ts`、`server/src/lib/oveWalletHmac.ts` |
+| Outbox dispatcher(claim・指数バックオフ・dead・stale再クレーム) | `server/src/services/integrationOutboxDispatcher.ts` |
+| 共通契約HMAC署名(暫定実装) | `server/src/lib/sennokuniHmac.ts` |
+| Feature Flag・接続設定の読み出し | `server/src/services/sennokuniIntegrationConfig.ts` |
+| cron配線(`GET /api/internal/cron/process-integration-outbox`) | `server/src/routes/internalCron.ts`、`vercel.json` |
+
+新規設定キー(`server/src/services/settings.ts`、管理画面の既存`/admin/settings`から編集可能): `sennokuni_hmac_key_id` / `sennokuni_hmac_secret` / `sennokuni_agency_hub_base_url` / `integration_endpoint_sengoku_passport` / `integration_endpoint_ai_art_school` / `ove_wallet_base_url` / `ove_wallet_api_key_id` / `ove_wallet_hmac_secret`。
+
+**登録・購入フローへの組み込み**: `server/src/routes/auth.ts`の会員登録後、`server/src/routes/checkout.ts`の注文作成後に、それぞれベストエフォート(例外を握りつぶし・DBトランザクション完了後・レスポンスをブロックしない)で呼び出しています。Feature Flag無効時はこれらの呼び出しが即座に返るため、既存の決済・登録フローへの影響はありません。
+
+### C. 既知の暫定事項(本番有効化前に確認・確定が必要)
+
+1. **HMAC署名フォーマットは契約書7.1が未確定のため暫定実装**: `sennokuniHmac.ts`は`keyId\ntimestamp\nnonce\nMETHOD\npath\nrawBody`を独自に採用しています。統合責任者が正式テストベクトルを確定した際は、この1ファイルの修正で対応できるよう分離しています。
+2. **Outbox dispatcherの送信先エンドポイントパスは暫定**: パスポート・AIアート教室向けは`/shopping/webhook`(AIアート教室側分析で確認できたパス)を両送信先で仮に使用しています。正式なパスは契約確定待ちです。
+3. **OVE Walletのreward取消(REVERSAL)の紐付けは簡易実装**: 返金時、対応する`entitlement.granted`のOutbox行(同一`order_item_id`・`status=succeeded`)を検索し、その`payload.ove_transaction_id`を使って取消しています。専用の`order_wallet_transactions`テーブルは未実装であり(前回報告済みの既知の未対応事項)、今回はOutboxのpayload内に簡易的に記録するにとどめています。
+4. **代理店HUB・パスポート・AIアート教室で同一のHMAC鍵(`sennokuni_hmac_*`)を共用する設計**: 各送信先が個別の鍵を要求する場合は、送信先ごとの認証情報分離が別途必要です。
+5. **`agency-system`宛の`order.*`/`payment.*`汎用イベント送信は実装していません**: 今回のOutbox実送信は`entitlement.granted/revoked`のみが対象で、`product_integration_rules`が未設定の商品(現状すべて)はno-opです。
+
+### D. テスト・確認結果
+
+```
+Test Files  60 passed (60)
+     Tests  405 passed (405)
+```
+
+前回報告(370件)から35件追加。`npx tsc --noEmit`もクリーン、`npm run build --workspace=client`も成功。マイグレーション(`20260722050000_integration_outbox_updated_at`)は空DB・既存DBの両方で適用成功を確認済みです。
+
+新規テストの内訳:
+- `externalCommonUserClient.test.ts`(7件): Feature Flag無効/未設定時の即時no-op、HMACヘッダー付き送信、非2xx時の挙動、ベストエフォートラッパーの例外握りつぶし
+- `externalReferralClient.test.ts`(5件): capture/confirmそれぞれのFeature Flag無効時no-op・成功時の解析
+- `sennokuniOrderLinking.test.ts`(4件): Feature Flag無効時に注文へ一切影響しないこと(最重要)、resolve→confirmの一連の流れ、common_user_id未解決時の部分保存、referralCode無し注文でのno-op
+- `oveWalletRewardClient.test.ts`(4件): grant/reverseそれぞれのFeature Flag無効時no-op・OVE独自HMACヘッダーの送信確認
+- `integrationOutboxDispatcher.test.ts`(8件): Feature Flag無効時の完全no-op、OVE Wallet宛grant/revoke連携、対応するgrantが無いrevokeのリトライ、最大試行超過でdead、汎用送信先へのHMAC付き送信、接続先未設定時のリトライ、staleなprocessing行の再クレーム
+- `auth.test.ts`追加分(2件): メール大文字小文字違いの重複登録拒否・ログイン成功
+- `products.test.ts`追加分(2件): refクエリの実在チェック・inactiveコードの拒否
+
+### E. 本番未確認事項・接続テストが必要な事項
+
+- `SENNOKUNI_INTEGRATION_ENABLED`は本番では`false`のまま(未設定)であることの確認。
+- 実際の代理店HUB・パスポート・AIアート教室・OVE Walletとの接続テストは未実施(認証情報・確定エンドポイントが無いため実施不可)。
+- 上記C章の暫定事項(署名フォーマット・エンドポイントパス・鍵共用設計)は、統合責任者の正式確定後に見直しが必要です。
+- 新規設定キー追加分のマイグレーションはなし(Settingテーブルの既存キー追加のみのため、スキーマ変更は`integration_outbox_events.updated_at`カラム追加のみ)。本番Supabaseへの適用が必要です。
 
 ---
 

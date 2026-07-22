@@ -12,6 +12,7 @@ import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { resolveReferral } from '../services/referral';
 import { validateCoupon } from '../services/coupon';
+import { runBestEffortSennokuniOrderLinking } from '../services/sennokuniOrderLinking';
 
 const router = Router();
 
@@ -46,6 +47,11 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
 
     const { order, items } = await createPendingOrder(input);
     orderId = order.id;
+
+    // 仕様書外の拡張(千ノ国全体連携・2026-07-22指示書対応): common_user_id解決・referral
+    // capture/confirmはDBトランザクション完了後にベストエフォートで行う(在庫仮引当の完了を
+    // 外部APIの応答速度に左右させないため)。Feature Flag無効時(既定)は即座に何もしない。
+    void runBestEffortSennokuniOrderLinking(order.id);
 
     if (input.paymentMethod === 'bank_transfer') {
       const config = await getBankTransferConfig();

@@ -3,7 +3,7 @@ import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
-import { isValidEmail } from '../lib/validation';
+import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../lib/validation';
 import { signAuthToken } from '../services/jwt';
 import { setAuthCookie, clearAuthCookie } from '../lib/authCookie';
 import { isLocked, recordLoginFailure, recordLoginSuccess } from '../services/loginAttempts';
@@ -12,6 +12,7 @@ import { createPasswordResetToken, consumePasswordResetToken } from '../services
 import { sendPasswordResetEmail } from '../services/mailTemplates';
 import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
+import { bestEffortResolveAndLinkCommonUserId } from '../services/externalCommonUserClient';
 
 const router = Router();
 
@@ -60,7 +61,10 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', 'パスワードは8文字以上で入力してください');
   }
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  // 仕様書外の拡張: メールアドレスは大文字小文字を区別しない(User@example.comとuser@example.com
+  // で別アカウントが作られてしまう問題の修正)。既存の混在データも拾えるようfindFirst+insensitiveで
+  // 重複チェックし、新規登録は正規化(小文字化)して保存する。
+  const existing = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
   if (existing) {
     return sendError(res, 409, 'EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に登録されています');
   }
@@ -68,7 +72,7 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
   const user = await prisma.user.create({
     data: {
       name,
-      email,
+      email: normalizeEmail(email),
       phone: isNonEmptyString(phone) ? phone : null,
       passwordHash: await bcrypt.hash(password, 10),
       role: 'user',
@@ -78,6 +82,10 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
   const token = signAuthToken({ sub: user.id, role: user.role });
   setAuthCookie(res, token);
   res.status(201).json({ user: publicUser(user) });
+
+  // 仕様書外の拡張(千ノ国全体連携・2026-07-22指示書対応): common_user_id解決はベストエフォート・
+  // レスポンス送信後に行い、Feature Flag無効時(既定)は即座に何もしない。
+  void bestEffortResolveAndLinkCommonUserId(user.id, user.email);
 });
 
 router.post('/auth/login', async (req, res) => {
@@ -92,7 +100,7 @@ router.post('/auth/login', async (req, res) => {
     return sendError(res, 423, 'ACCOUNT_LOCKED', 'ログイン試行回数の上限に達しました。しばらくしてから再度お試しください');
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
   const passwordOk = user ? await bcrypt.compare(password, user.passwordHash) : false;
 
   if (!user || !passwordOk) {
@@ -145,7 +153,7 @@ router.get('/auth/me', requireAuth, async (req, res) => {
 router.post('/auth/password-reset/request', passwordResetRequestLimiter, async (req, res) => {
   const { email } = req.body ?? {};
   if (isNonEmptyString(email) && isValidEmail(email)) {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
     if (user) {
       const token = await createPasswordResetToken(user.id);
       await sendPasswordResetEmail(user.email, user.name, token);

@@ -6,6 +6,7 @@ import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { getSetting } from './settings';
 import { generateAgencyCode } from './referralCodeGenerator';
+import { emailFilterInsensitive, normalizeEmail } from '../lib/validation';
 
 // 仕様書外の拡張(先方仕様書v3.6.45準拠): 代理店システム(IdP)発行のSSOトークンを検証し、
 // 対応する代理店ポータルアカウントを特定する。エラーコードは先方仕様書のログイン画面
@@ -112,12 +113,14 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
   const existing = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
   if (existing) return existing;
 
-  const email = stringClaim(payload, 'actor_email') ?? stringClaim(payload, 'contact_email');
-  if (!email) {
+  const rawEmail = stringClaim(payload, 'actor_email') ?? stringClaim(payload, 'contact_email');
+  if (!rawEmail) {
     throw new HttpError(401, 'agency_not_linked', 'ログイン用のメールアドレス情報がSSOトークンに含まれていません');
   }
+  const email = normalizeEmail(rawEmail);
 
-  const existingByEmail = await prisma.user.findUnique({ where: { email } });
+  // 仕様書外の拡張: メールアドレスの大文字小文字を区別しない(既存の混在データも拾えるようinsensitive検索する)。
+  const existingByEmail = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
   if (existingByEmail) {
     // このメールが今まさに作ろうとしている代理店ログインアカウントそのもの(同一subの
     // 初回SSOが同時に処理された場合の競合)なら、衝突ではなく先に完了した方を返す。
@@ -147,7 +150,7 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
     // 同一メールでの初回SSOが二重タブ等で競合した場合、片方はemailのユニーク制約に
     // 引っかかる。500にせず、先に作成された方を取得して処理を続行する。
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      const created = await prisma.user.findUnique({ where: { email } });
+      const created = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
       if (created) return created;
     }
     throw e;

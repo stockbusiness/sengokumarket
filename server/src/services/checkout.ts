@@ -6,7 +6,7 @@ import { HttpError } from '../lib/httpError';
 import { generateOrderNumber } from './orderNumber';
 import { resolveReferral, resolveReferralByAttribution } from './referral';
 import { matchExplainerName } from './explainerMatch';
-import { isValidEmail } from '../lib/validation';
+import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../lib/validation';
 import { cancelCouponUsage, reserveCouponUsage } from './coupon';
 
 export interface CheckoutItemInput {
@@ -139,14 +139,16 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       });
     }
 
-    let user = await tx.user.findUnique({ where: { email: input.customerEmail } });
+    // 仕様書外の拡張: users.emailは大文字小文字を区別しない(注文自体のcustomerEmailは
+    // 購入者が入力した表記のまま保存するため、ここではログインアカウント検索/作成のみ正規化する)。
+    let user = await tx.user.findFirst({ where: { email: emailFilterInsensitive(input.customerEmail) } });
     let guestAccountCreated = false;
     if (!user) {
       const randomPassword = crypto.randomBytes(32).toString('hex');
       user = await tx.user.create({
         data: {
           name: input.customerName,
-          email: input.customerEmail,
+          email: normalizeEmail(input.customerEmail),
           phone: input.customerPhone,
           passwordHash: await bcrypt.hash(randomPassword, 10),
           role: 'user',

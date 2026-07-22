@@ -4,7 +4,7 @@ import { parse } from 'csv-parse/sync';
 import type { Order, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
-import { isValidEmail } from '../lib/validation';
+import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../lib/validation';
 import { generateOrderNumber } from './orderNumber';
 import { createNftIssuesForOrder, createCommissionForOrder } from './orderFulfillment';
 import { createPasswordResetToken } from './passwordReset';
@@ -82,14 +82,16 @@ async function importOne(tx: Tx, input: ExternalOrderInput, dryRun: boolean): Pr
 
   await tx.productVariant.update({ where: { id: row.variant_id }, data: { stock: { decrement: input.quantity } } });
 
-  let user = await tx.user.findUnique({ where: { email: input.customerEmail } });
+  // 仕様書外の拡張: users.emailは大文字小文字を区別しない(注文自体のcustomerEmailは
+  // 入力された表記のまま保存するため、ここではログインアカウント検索/作成のみ正規化する)。
+  let user = await tx.user.findFirst({ where: { email: emailFilterInsensitive(input.customerEmail) } });
   let guestAccountCreated = false;
   if (!user) {
     const randomPassword = crypto.randomBytes(32).toString('hex');
     user = await tx.user.create({
       data: {
         name: input.customerName,
-        email: input.customerEmail,
+        email: normalizeEmail(input.customerEmail),
         phone: input.customerPhone ?? null,
         passwordHash: await bcrypt.hash(randomPassword, 10),
         role: 'user',

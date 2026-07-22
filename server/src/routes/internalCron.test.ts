@@ -16,6 +16,12 @@ vi.mock('../services/nftMintProcessing', () => ({
   processNftMints: () => processNftMints(),
 }));
 
+const dispatchPendingOutboxEvents = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 }));
+
+vi.mock('../services/integrationOutboxDispatcher', () => ({
+  dispatchPendingOutboxEvents: () => dispatchPendingOutboxEvents(),
+}));
+
 const app = createApp();
 
 describe('内部cron: 外部代理店システム階層同期(仕様書外の拡張)', () => {
@@ -157,5 +163,42 @@ describe('内部cron: NFT自動発行処理(仕様書外の拡張)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ claimed: 1, issued: 1, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 });
     expect(processNftMints).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 仕様書外の拡張(千ノ国全体連携 2026-07-22指示書対応): Outbox dispatcherのcron配線確認。
+// dispatchPendingOutboxEvents自体の送信ロジックはintegrationOutboxDispatcher.test.tsで検証済みのため、
+// ここではcron認証・呼び出し配線のみ確認する。
+describe('内部cron: 連携Outbox送信(仕様書外の拡張)', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalSecret;
+    dispatchPendingOutboxEvents.mockClear();
+  });
+
+  it('CRON_SECRET未設定の場合は503', async () => {
+    delete process.env.CRON_SECRET;
+    const res = await request(app).get('/api/internal/cron/process-integration-outbox');
+    expect(res.status).toBe(503);
+  });
+
+  it('Authorizationヘッダーが一致しない場合は401', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    const res = await request(app)
+      .get('/api/internal/cron/process-integration-outbox')
+      .set('Authorization', 'Bearer wrong-secret');
+    expect(res.status).toBe(401);
+    expect(dispatchPendingOutboxEvents).not.toHaveBeenCalled();
+  });
+
+  it('正しいCRON_SECRETでdispatchPendingOutboxEventsが実行される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    const res = await request(app)
+      .get('/api/internal/cron/process-integration-outbox')
+      .set('Authorization', 'Bearer test-cron-secret-outbox');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
+    expect(dispatchPendingOutboxEvents).toHaveBeenCalledTimes(1);
   });
 });

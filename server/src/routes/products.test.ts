@@ -11,6 +11,7 @@ const app = createApp();
 // 紹介URL(Cookie)を踏んでいない・ログインもしていないブラウザには商品情報を見せない。
 describe('公開API: 商品(紹介URL/ログイン必須のアクセス制御)', () => {
   let productSlug: string;
+  let agencyId: string;
 
   beforeAll(async () => {
     const product = await prisma.product.create({
@@ -24,11 +25,21 @@ describe('公開API: 商品(紹介URL/ログイン必須のアクセス制御)',
       },
     });
     productSlug = product.slug;
+
+    // 仕様書外の拡張(2026-07-22指示書対応): ?ref=クエリはreferral_links.codeとして実在し、
+    // status='active'であることをDBで検証するようになったため、実データを用意する。
+    const agency = await prisma.agency.create({
+      data: { name: '商品アクセス制御テスト代理店', code: `PRODTEST-AG-${Date.now()}`, defaultCommissionRate: 10 },
+    });
+    agencyId = agency.id;
+    await prisma.referralLink.create({ data: { code: 'TEST-REF', agencyId, status: 'active' } });
   });
 
   afterAll(async () => {
     await prisma.product.deleteMany({ where: { slug: productSlug } });
     await prisma.user.deleteMany({ where: { email: { contains: 'referralgate-test' } } });
+    await prisma.referralLink.deleteMany({ where: { agencyId } });
+    await prisma.agency.deleteMany({ where: { id: agencyId } });
     await prisma.$disconnect();
   });
 
@@ -96,6 +107,23 @@ describe('公開API: 商品(紹介URL/ログイン必須のアクセス制御)',
       const res = await request(app).get('/api/products?ref=');
       expect(res.status).toBe(403);
       expect(res.body.error.code).toBe('REFERRAL_REQUIRED');
+    });
+
+    // 2026-07-22 千ノ国全体連携パッケージの新規指摘の回帰テスト(SYSTEM_ANALYSIS 15.3): 以前は
+    // refクエリの中身を検証せず、空でなければ何でも通過させていたため、実在しないコードでも
+    // 非公開の商品カタログが閲覧できてしまっていた。
+    it('refクエリが実在しないreferral_links.codeの場合は403になる(仕様書外の拡張)', async () => {
+      const res = await request(app).get('/api/products?ref=NOT-A-REAL-CODE');
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('REFERRAL_REQUIRED');
+    });
+
+    it('refクエリがinactive化されたreferral_links.codeの場合は403になる(仕様書外の拡張)', async () => {
+      await prisma.referralLink.create({ data: { code: 'TEST-REF-INACTIVE', agencyId, status: 'inactive' } });
+      const res = await request(app).get('/api/products?ref=TEST-REF-INACTIVE');
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('REFERRAL_REQUIRED');
+      await prisma.referralLink.deleteMany({ where: { code: 'TEST-REF-INACTIVE' } });
     });
   });
 });

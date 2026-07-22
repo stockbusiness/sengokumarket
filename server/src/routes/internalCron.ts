@@ -4,6 +4,7 @@ import { HttpError } from '../lib/httpError';
 import { syncAgencyHierarchyFromExternalSystem } from '../services/agencyHierarchySync';
 import { expireOverdueBankTransferOrders } from '../services/bankTransfer';
 import { processNftMints } from '../services/nftMintProcessing';
+import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispatcher';
 
 const router = Router();
 
@@ -35,6 +36,19 @@ router.get('/expire-bank-transfer-orders', async (_req, res) => {
 router.get('/process-nft-mints', async (_req, res) => {
   try {
     const result = await processNftMints();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// 仕様書外の拡張(千ノ国全体連携 2026-07-22指示書対応): integration_outbox_eventsの実送信
+// ディスパッチャ。SENNOKUNI_INTEGRATION_ENABLED(既定OFF)が有効化されるまで、呼び出しても
+// 常に全項目0のまま何もしない("Feature Flagでdormantなコード"という方針)。
+router.get('/process-integration-outbox', async (_req, res) => {
+  try {
+    const result = await dispatchPendingOutboxEvents();
     res.json(result);
   } catch (e) {
     if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
