@@ -493,3 +493,71 @@ server/src/shared/statusPolicy/
 ## 結論(Phase 6)
 
 指示書11.4の受入条件のうち、正常遷移の維持・不正遷移の拒否・APIエラーコードの定義・管理画面からの不正遷移防止・Webhook処理への無影響をすべて満たした。DB CHECK制約(11.3)は本番データ未検証のため見送り、次のご指示があれば対応する。Phase 7(通知モジュール化)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 7: 通知モジュール化(完了報告)
+
+## 事前調査で判明した実際のセキュリティ上の欠陥
+
+`server/src/services/mailTemplates.ts`(155行、9通のメール送信関数)を調査した結果、**顧客が自由入力する値(customerName・explainerName等)や商品名が、HTMLエスケープなしでメール本文のテンプレート文字列へ直接埋め込まれていた**ことを確認した。例えば注文時に入力する氏名に`<script>...</script>`のような文字列を入れると、購入完了メール等の本文にそのまま挿入される状態だった。これは指示書1.8が指摘する問題そのものであり、指示書12.3の受入条件「顧客名・商品名・銀行情報をエスケープ」に対応する形で、本Phaseの実質的な修正の中心とした。
+
+## 12.1 分割構成
+
+```text
+server/src/modules/notifications/
+├─ domain/
+│  └─ notification.types.ts        … EmailMessage型(to/subject/html/text)
+├─ renderers/
+│  ├─ htmlRenderer.ts               … escapeHtml()・renderHtmlLayout()
+│  └─ textRenderer.ts               … renderTextLayout()(段落配列を空行区切りで連結)
+├─ templates/
+│  ├─ purchaseComplete.ts
+│  ├─ cartAbandoned.ts              … 指示書の例示にはないが、既存のカート放棄リマインドメール用に追加
+│  ├─ bankTransfer.ts
+│  ├─ passwordSetup.ts              … ゲスト/代理店/管理者のアカウント設定・代理店アクセス許可の4通を集約
+│  ├─ passwordReset.ts
+│  └─ walletReminder.ts
+├─ application/
+│  └─ sendNotification.usecase.ts   … 送信の唯一の入口(Adapterを直接呼ばせない)
+└─ infrastructure/
+   └─ resend.adapter.ts             … 旧services/mail.tsを移設(Resend未設定時・送信失敗時も例外を投げない契約を維持)
+```
+
+各テンプレートは`buildXxxEmail(...)`という**副作用のない純粋関数**として実装し、`EmailMessage`(`{to, subject, html, text}`)を返す。実際の送信(`sendNotification`)とは分離したことで、テンプレート単体でのsnapshot testが可能になった(指示書12.3)。
+
+## 12.2 必須対応の実装状況
+
+- **HTMLエスケープ**: `escapeHtml()`を新設し、顧客名・商品名・バリエーション名・銀行情報・管理者名等、テンプレートへ差し込むすべての動的な文字列に適用した。
+- **共通レイアウト**: `renderHtmlLayout()`を新設したが、現行メールの見た目(装飾のないp/ul構成)を変えないという指示書12.3の方針を優先し、今回は素通しの実装にとどめた(将来ブランド共通のヘッダー・フッターを追加する際の変更箇所として用意)。
+- **subject生成分離**: 各`buildXxxEmail()`が返す`EmailMessage.subject`として、本文の組み立てと同じ関数内で完結させた(送信処理からは完全に分離済み)。
+- **text/plain生成**: 全9通すべてに`text`版を追加した(HTMLからの自動変換ではなく、各テンプレートがhtml/textを対で明示的に組み立てる方式)。
+- **ブランド名・APP_URLのConfig化**: `shared/config/appConfig.ts`に`brandName`を追加し、`appUrl`と合わせて全テンプレートがConfig経由で参照するようにした(以前は各ファイルにcopy-pasteされた`appUrl()`ヘルパー関数が重複していた)。
+- **Notification Outbox対応**: 見送った(下記「対象外」参照)。
+
+## 互換性の維持
+
+`server/src/services/mailTemplates.ts`は削除せず、元と同じ9つの関数名(`sendPurchaseCompleteEmail`等)を持つ薄いラッパーとして残した(指示書18.1「新モジュールを互換Facade経由で呼び出す」)。この関数群は8つの呼び出し元ファイル・4つの`vi.mock('.../mailTemplates', ...)`によるテスト差し替えから参照されており、Phase1の`adminApi.ts`・Phase4の`checkout.ts`と同じ理由で、全面的なre-exportではなく「テンプレート組み立て→送信」の実処理を残す形にした。`services/mail.ts`(旧Resendラッパー)は直接の呼び出し元が`mailTemplates.ts`自身のみだったため削除し、`modules/notifications/infrastructure/resend.adapter.ts`へ実装を移設、テストファイルも移動した。
+
+## 対象外(意図的に見送った箇所)
+
+- **Notification Outbox対応**(指示書12.2): Phase3で見送った`notification_outbox_events`と同様、新規テーブル・マイグレーションを伴う。既存のメール送信は「例外を投げない・業務トランザクションを巻き戻さない」という安全性が既に確保されているため、永続化によるリトライ機構の追加は独立した機能追加として扱い、必要になった時点で別途対応する。
+- **共通レイアウトへの実際の装飾追加**(ヘッダー・フッター・ブランドロゴ等): 「現行メール内容を大きく変更しない」を優先し、今回はレイアウト関数の骨組みのみ用意した。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)クリーン。
+- `npx vitest run`: 483件全成功(既存462件 + 通知モジュールの新規テスト21件)。8つの呼び出し元ファイル・4つの`vi.mock`利用テスト(`agencyIntegration.routes.test.ts`・`admin/adminUsers.test.ts`・`routes/auth.mail.test.ts`・`routes/stripeWebhook.mail.test.ts`)、および`checkout.test.ts`・`stripeWebhook.test.ts`・`stripeWebhook.coupon.test.ts`・`admin/walletMissing.test.ts`・`routes/auth.test.ts`はいずれも**無変更のまま**成功しており、メール送信を伴う全業務フローに影響がないことを確認した。
+- 各テンプレートに、悪意ある入力値(`<script>alert(1)</script>`等)を顧客名・商品名・銀行情報に与えてhtml出力がエスケープされることを検証するテストと、snapshot testを追加した。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npx tsc -b --noEmit`(client)・`npm run build --workspace=client`成功。
+
+## ファイル行数の変化
+
+| ファイル | Phase 0時点 | Phase 7後 |
+|---|---:|---:|
+| `server/src/services/mailTemplates.ts` | 155 | 52(互換ラッパーのみ)。実装は`modules/notifications/`へ分割、最大ファイルは`templates/passwordSetup.ts`の78行 |
+
+## 結論(Phase 7)
+
+指示書12.3の受入条件のうち、現行メール内容を大きく変更しない・顧客名商品名銀行情報のエスケープ・リンクURLの正しさ・送信失敗で業務トランザクションを巻き戻さない・テンプレートsnapshot test追加をすべて満たした。特にHTMLエスケープの欠如は実際のセキュリティ上の欠陥であり、本Phaseで修正した。Notification Outbox対応は新規テーブルを伴うため見送り、理由を明記した。Phase 8(性能改善)以降は、着手のご指示があり次第対応する。

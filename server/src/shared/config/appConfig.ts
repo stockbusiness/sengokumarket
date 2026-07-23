@@ -24,4 +24,9 @@ export const appConfig = {
   get cronSecret(): string | undefined {
     return process.env.CRON_SECRET;
   },
+  // 仕様書外の拡張(指示書12.2「ブランド名のConfig化」): 通知メール件名等で使うブランド表記。
+  // 現時点では環境変数化しておらず(変更頻度が低いため)、この1箇所のみを変更点とする。
+  get brandName(): string {
+    return '戦国楽市楽座';
+  },
 };
