@@ -1,13 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
-import { createApp } from '../../app';
-import { prisma } from '../../lib/prisma';
-import { setSetting } from '../../services/settings';
+import { createApp } from '../../../app';
+import { prisma } from '../../../lib/prisma';
+import { setSetting } from '../../../services/settings';
 
 const sendAgencyAccountSetupEmail = vi.fn(async (..._args: unknown[]) => {});
 const sendAgencyAccessGrantedEmail = vi.fn(async (..._args: unknown[]) => {});
 
-vi.mock('../../services/mailTemplates', () => ({
+vi.mock('../../../services/mailTemplates', () => ({
   sendAgencyAccountSetupEmail: (...args: unknown[]) => sendAgencyAccountSetupEmail(...args),
   sendAgencyAccessGrantedEmail: (...args: unknown[]) => sendAgencyAccessGrantedEmail(...args),
   sendPasswordResetEmail: vi.fn(async () => {}),
@@ -309,6 +309,24 @@ describe('外部代理店システム連携API', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.ok).toBe(false);
+  });
+
+  it('login_emailが衝突した場合、代理店自体も作成されない(部分成功を防ぐ・Phase3で修正)', async () => {
+    const takenEmail = `integration-agency-test-taken2-${Date.now()}@example.com`;
+    await prisma.user.create({
+      data: { name: '既存の代理店担当者2', email: takenEmail, passwordHash: 'x', role: 'agency' },
+    });
+
+    const externalId = `integration-test-conflict-rollback-${Date.now()}`;
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: externalId, name: 'ロールバック確認代理店', login_email: takenEmail });
+
+    expect(res.status).toBe(409);
+
+    const saved = await prisma.agency.findUnique({ where: { externalId } });
+    expect(saved).toBeNull();
   });
 
   it('contact_name未指定時はnameが使われる', async () => {

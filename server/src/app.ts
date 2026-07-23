@@ -15,7 +15,7 @@ import authRouter from './routes/auth';
 import mypageRouter from './routes/mypage';
 import adminRouter from './routes/admin';
 import agencyRouter from './routes/agency';
-import integrationAgenciesRouter from './routes/integrations/agencies';
+import integrationAgenciesRouter from './modules/agencies/http/agencyIntegration.routes';
 import internalCronRouter from './routes/internalCron';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';

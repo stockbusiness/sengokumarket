@@ -250,3 +250,69 @@ Vercelの実デプロイ経路(`api/index.ts`が`server/src/app.ts`をTypeScript
 ## 結論(Phase 2)
 
 指示書7章の受入条件(ビルドステップなしでの型・定数共有、既存の重複定義を実際の値と突き合わせて統一、コアの決済・在庫・報酬ロジックは変更しない)を満たした。Phase 3(代理店連携モジュール化)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 3: 代理店連携モジュール化(完了報告)
+
+## 8.2 分割構成
+
+`server/src/routes/integrations/agencies.ts`(291行、HTTP・入力検証・親解決・循環判定・代理店upsert・pending parent再紐付け・ログインユーザー作成/昇格・メール送信・レスポンス生成が単一ファイルに混在)を、指示書8.2の構成どおり分割した。
+
+```text
+server/src/modules/agencies/
+├─ http/
+│  ├─ agencyIntegration.routes.ts       … 入力取得・UseCase呼び出し・Presenter・HTTPレスポンスのみ(71行)
+│  ├─ agencyIntegration.schema.ts       … 形式的な入力検証(81行)
+│  └─ agencyIntegration.presenter.ts    … レスポンス整形(23行)
+├─ application/
+│  ├─ upsertAgency.usecase.ts           … 親解決・作成/更新・再紐付け・ログイン作成の一連の流れ(112行)
+│  ├─ provisionAgencyAccount.usecase.ts … ログインユーザー作成/昇格の判断(56行)
+│  └─ reconcilePendingParents.usecase.ts(11行)
+├─ domain/
+│  ├─ agencyHierarchy.policy.ts         … 循環判定(Prisma非依存、単体テスト追加)
+│  ├─ agencyEvent.policy.ts             … 対応イベント種別判定
+│  └─ agency.types.ts                   … 共有型・ドメインエラー
+└─ infrastructure/
+   ├─ prismaAgency.repository.ts        … Prismaアクセスを集約、Domain型を返す(143行)
+   └─ agencyNotification.adapter.ts     … メール送信・トークン発行(18行)
+```
+
+旧`server/src/routes/integrations/agencies.ts`は削除し、`app.ts`のimportを新モジュールへ直接差し替えた(参照元がapp.tsのみだったため、Phase1のadminApi.tsのような互換re-exportバレルは不要と判断)。テストファイルも`modules/agencies/http/agencyIntegration.routes.test.ts`へ移動。
+
+## 8.4 トランザクション境界の是正(実際に発見・修正したバグ)
+
+指示書1.2が指摘する「DB更新とメール送信が同一Route内で逐次実行されるため、部分成功が発生しうる」を調査した結果、実際に以下の部分成功バグが存在することを確認した。
+
+- 旧実装: 代理店のcreate/update → pending parent再紐付け(別クエリ) → ログインユーザー作成/昇格、の順に**逐次・非トランザクション**で実行しており、`login_email`が既に他の管理者/代理店アカウントに使われていた場合の409エラーは、**代理店自体が既にDBへcommitされた後**に返っていた(代理店だけ作成され、ログインは作成されない不整合な状態が残る)。
+- 修正: 代理店のcreate/update・pending parent再紐付け・ログインユーザー作成/昇格を`upsertAgency.usecase.ts`内の単一`prisma.$transaction`にまとめた。`provisionAgencyAccount.usecase.ts`がlogin_email競合を検知すると`AgencyLoginConflictError`を投げてトランザクション全体をロールバックするため、409になるケースで代理店が作成されることはなくなった。
+- メール送信(`sendAgencyAccountSetupEmail`/`sendAgencyAccessGrantedEmail`)とパスワード再設定トークン発行(`createPasswordResetToken`、既存の共有サービスで独自にトランザクションを持つため今回の主トランザクションには含めない)は、指示書8.4のとおりトランザクションのcommit後に実行する(`agencyNotification.adapter.ts`)。送信失敗によりDB更新が巻き戻ることはない。
+
+新規テスト`login_emailが衝突した場合、代理店自体も作成されない(部分成功を防ぐ・Phase3で修正)`でこの修正を確認済み。
+
+## ドリフト・注意点
+
+- `wouldCreateCycle`(循環判定)はPrisma・Expressに依存しない純粋なPolicyとして抽出し、親ID解決を呼び出し側から関数として注入する形にした。DBなしのDomain Unit Testを4件追加(`agencyHierarchy.policy.test.ts`)。
+- 「自分自身を親に指定」バリデーションは、既存代理店の有無・DBの親解決と密接に関わるため、HTTP層の`schema.ts`ではなくapplication層の`upsertAgency.usecase.ts`内(`resolveParentAssignment`)に置いた(純粋な入力形式検証と、DBアクセスを伴うドメイン解決を分離)。
+- `createPasswordResetToken`は代理店以外(管理者アカウント・一般パスワード再設定)でも使われる共有サービスで、既存の呼び出し規約(グローバル`prisma`を使い、呼び出し元のトランザクションには参加しない)を今回変更していない。この関数自体をトランザクション対応させることはPhase3の対象(agencies.tsの分割)を超えるため見送った。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)クリーン。
+- `npx vitest run`: 410件全成功(既存405件 + 部分成功防止テスト1件 + Domain Unit Test 4件)。既存20件の代理店連携APIテストはすべてそのまま(挙動変更なし)で成功。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npx tsc -b --noEmit`(client)・`npm run build --workspace=client`成功(本Phaseはサーバー専用のためclientへの影響なし)。
+
+## ファイル行数の変化
+
+| ファイル | Phase 0時点 | Phase 3後 |
+|---|---:|---:|
+| `server/src/routes/integrations/agencies.ts` | 290〜291 | 削除(`modules/agencies/`へ分割、最大ファイルは`prismaAgency.repository.ts`の143行) |
+
+## 対象外(意図的に見送った箇所)
+
+指示書8.5「Notification Outbox」・8.6「未対応イベントの`integration_inbox_events`への保存」は、いずれも指示書内で「新規テーブル候補」と位置づけられており必須ではないこと、また通知の仕組み自体の本格的なモジュール化はPhase 7(通知モジュール化)の対象であることから、今回は見送った。対応外イベントの扱い(200で受理・処理はスキップ)自体は既存仕様のまま維持しており、動作に変更はない。新規テーブル・マイグレーションを伴わない範囲(Route分割・トランザクション境界の是正)にPhase 3のスコープを絞った。
+
+## 結論(Phase 3)
+
+指示書8.7の受入条件のうち、既存API request/response互換・部分成功なし(今回新たに修正)・メール失敗でDB更新を巻き戻さない・同一イベント再送で重複作成しない・循環代理店を拒否・pending parentが後続登録で解決する、を満たした。対応外イベントの監査可能な永続化(8.6)は上記のとおり今回のスコープ外とした。Phase 4(Checkoutモジュール化)以降は、着手のご指示があり次第対応する。
