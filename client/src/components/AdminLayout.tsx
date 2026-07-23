@@ -2,6 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { fetchAdminDashboard } from '../lib/adminApi';
 import { useAuth } from '../context/AuthContext';
+import { canAccessFullAdmin } from '../app/permissions';
 import {
   IconBell,
   IconBox,
@@ -82,7 +83,9 @@ export default function AdminLayout() {
   }, []);
 
   const badgeCounts: Record<BadgeKey, number> = { walletMissing: walletMissingCount, alerts: alertCount };
-  const isStaff = user?.role === 'staff';
+  // RequireAdminの内側でのみ描画される(=roleはadmin/admin_viewer/staffのいずれか)ため、
+  // !canAccessFullAdminはstaffと同義になる。
+  const isStaff = !!user && !canAccessFullAdmin(user.role);
   const visibleNavGroups = NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter((item) => !(isStaff && item.staffHidden)),
