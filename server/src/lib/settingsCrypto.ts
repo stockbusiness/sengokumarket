@@ -1,9 +1,10 @@
 import crypto from 'crypto';
+import { appConfig } from '../shared/config/appConfig';
 
 const ALGORITHM = 'aes-256-gcm';
 
 function getKey(): Buffer {
-  const hex = process.env.SETTINGS_ENCRYPTION_KEY;
+  const hex = appConfig.settingsEncryptionKeyHex;
   if (!hex || hex.length !== 64) {
     throw new Error('SETTINGS_ENCRYPTION_KEY must be a 64-character hex string (32 bytes)');
   }

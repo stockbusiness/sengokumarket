@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { HttpError } from '../lib/httpError';
+import { fetchWithTimeout } from '../shared/http/httpClient';
 import { getSetting } from './settings';
 
 // 仕様書外の拡張: 外部代理店システム(sengoku-ai.com)との連携(先方仕様書v3.6.40準拠)。
@@ -98,7 +99,7 @@ function flattenTree(nodes: ExternalAgencyTreeNode[], parentCode: string | null,
 export async function fetchExternalAgencyHierarchy(baseUrlOverride?: string, apiKeyOverride?: string): Promise<ExternalAgencyNode[]> {
   const { baseUrl, apiKey } = await getConfig(baseUrlOverride, apiKeyOverride);
 
-  const res = await fetch(`${baseUrl}/api/hierarchy.php?format=tree&include_contact=1`, {
+  const res = await fetchWithTimeout(`${baseUrl}/api/hierarchy.php?format=tree&include_contact=1`, {
     headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
   });
 
@@ -148,7 +149,7 @@ export async function fetchExternalAgencyHierarchy(baseUrlOverride?: string, api
 export async function pushAgencyCandidateToExternalSystem(input: PushAgencyCandidateInput): Promise<PushAgencyCandidateResult> {
   const { baseUrl, apiKey } = await getConfig();
 
-  const res = await fetch(`${baseUrl}/api/integrations/agencies`, {
+  const res = await fetchWithTimeout(`${baseUrl}/api/integrations/agencies`, {
     method: 'POST',
     // 仕様書外の拡張(外部開発者向け連携ガイドv3.6.78-draft 6.2): 二重送信防止のため
     // 冪等性キーを付与する(相手側は「可能であれば」対応の任意仕様)。

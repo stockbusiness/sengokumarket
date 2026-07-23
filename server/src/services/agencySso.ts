@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { Prisma, type Agency } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
+import { fetchWithTimeout } from '../shared/http/httpClient';
 import { getSetting } from './settings';
 import { generateAgencyCode } from './referralCodeGenerator';
 import { emailFilterInsensitive, normalizeEmail } from '../lib/validation';
@@ -28,7 +29,7 @@ interface CachedJwks {
 let cachedJwks: CachedJwks | null = null;
 
 async function fetchJwks(jwksUrl: string): Promise<Map<string, crypto.KeyObject>> {
-  const res = await fetch(jwksUrl);
+  const res = await fetchWithTimeout(jwksUrl);
   if (!res.ok) {
     throw new HttpError(401, 'sso_invalid', `JWKSの取得に失敗しました(HTTP ${res.status})`);
   }

@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import type { Order, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
+import { appConfig } from '../shared/config/appConfig';
 import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../lib/validation';
 import { generateOrderNumber } from './orderNumber';
 import { createNftIssuesForOrder, createCommissionForOrder } from './orderFulfillment';
@@ -49,7 +50,7 @@ function buildAdminNote(input: ExternalOrderInput): string {
 
 // dryRun=trueの場合はSKU存在・在庫のみ検証し、一切書き込みを行わない(CSVプレビュー用)。
 async function importOne(tx: Tx, input: ExternalOrderInput, dryRun: boolean): Promise<{ order: Order | null; guestAccountCreated: boolean }> {
-  const termsVersion = process.env.TERMS_VERSION;
+  const termsVersion = appConfig.termsVersion;
   if (!termsVersion) throw new HttpError(500, 'CONFIG_ERROR', 'TERMS_VERSIONが設定されていません');
 
   const rows = await tx.$queryRaw<VariantRow[]>`

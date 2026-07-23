@@ -1,5 +1,6 @@
 import { prisma } from '../../../lib/prisma';
 import { HttpError } from '../../../lib/httpError';
+import { appConfig } from '../../../shared/config/appConfig';
 import { generateOrderNumber } from '../../../services/orderNumber';
 import { resolveReferral, resolveReferralByAttribution } from '../../../services/referral';
 import { matchExplainerName } from '../../../services/explainerMatch';
@@ -15,7 +16,7 @@ import type { CreatePendingOrderInput, CreatePendingOrderResult } from '../domai
 // 指示書9.4「トランザクション境界」: このUseCaseの外側(このファイル内)で単一のPrismaトランザクションを
 // 維持し、内部で呼び出す各repository/adapterは独自にトランザクションを開始しない。
 export async function createPendingOrder(input: CreatePendingOrderInput): Promise<CreatePendingOrderResult> {
-  const termsVersion = process.env.TERMS_VERSION;
+  const termsVersion = appConfig.termsVersion;
   if (!termsVersion) throw new HttpError(500, 'CONFIG_ERROR', 'TERMS_VERSIONが設定されていません');
 
   // ロック順序を揃えてデッドロックを防ぐ

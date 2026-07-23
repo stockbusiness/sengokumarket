@@ -1,4 +1,6 @@
 import { HttpError } from '../../lib/httpError';
+import { fetchWithTimeout } from '../../shared/http/httpClient';
+import { integrationConfig } from '../../shared/config/integrationConfig';
 import { getSetting } from '../settings';
 import type { MintProvider, MintRequestInput, MintStatusResult } from '../nftMint';
 
@@ -20,7 +22,7 @@ const API_VERSION = '2022-06-09';
 // ことを確認してから本番プロバイダーとして有効化すること。
 
 function getCollectionId(): string {
-  const collectionId = process.env.CROSSMINT_COLLECTION_ID;
+  const collectionId = integrationConfig.crossmintCollectionId;
   if (!collectionId) {
     throw new HttpError(503, 'CROSSMINT_NOT_CONFIGURED', 'CROSSMINT_COLLECTION_IDが未設定です');
   }
@@ -58,7 +60,7 @@ export const crossmintMintProvider: MintProvider = {
     const collectionId = getCollectionId();
     const baseUrl = getBaseUrl(apiKey);
 
-    const res = await fetch(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${input.idempotencyKey}`, {
+    const res = await fetchWithTimeout(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${input.idempotencyKey}`, {
       method: 'PUT',
       headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -81,7 +83,7 @@ export const crossmintMintProvider: MintProvider = {
     const collectionId = getCollectionId();
     const baseUrl = getBaseUrl(apiKey);
 
-    const res = await fetch(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${providerRequestId}`, {
+    const res = await fetchWithTimeout(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${providerRequestId}`, {
       headers: { 'X-API-KEY': apiKey },
     });
 

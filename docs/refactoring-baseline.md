@@ -372,3 +372,62 @@ server/src/modules/checkout/
 ## 結論(Phase 4)
 
 指示書9.5の受入条件(既存API request/response互換・在庫ロック維持・仮引当維持・紹介永久帰属維持・agent_required維持・ゲスト購入維持・クーポン自動適用維持・手入力クーポン失敗時の挙動維持・注文スナップショット維持・全Checkoutテスト成功)をすべて満たした。Phase 5(Config・Adapter統一)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 5: Config・外部Adapter統一(完了報告)
+
+## 事前調査で判明した設計上の前提
+
+このリポジトリはStripe/Resend/外部代理店システム等の**秘密情報(APIキー・HMAC鍵等)をすでに`.env`ではなくDB(`settingsテーブル`、`services/settings.ts`、AES-256-GCM暗号化)で管理する設計**になっている(CLAUDE.md「環境変数」章・`.env.example`に明記済み)。したがって指示書10.1の「Config」が主に指すのは、`.env`側に残る非秘密の起動時設定(`APP_URL`・`JWT_SECRET`・`TERMS_VERSION`・`SETTINGS_ENCRYPTION_KEY`・`DATABASE_URL`等)の集約・起動時検証であると解釈した。
+
+## 10.1 Config
+
+```text
+server/src/shared/config/
+├─ env.ts               … assertRequiredEnv()。起動必須5値(DATABASE_URL/JWT_SECRET/APP_URL/
+│                          TERMS_VERSION/SETTINGS_ENCRYPTION_KEY)を検証し、不足時はエラーメッセージに
+│                          不足変数名を列挙する
+├─ appConfig.ts          … appUrl/termsVersion/port/isProduction/jwtSecret/settingsEncryptionKeyHex/
+│                          cronSecretのgetter
+└─ integrationConfig.ts  … nftMintProvider/nftChain/crossmintCollectionId/blobReadWriteTokenのgetter
+```
+
+`assertRequiredEnv()`は`server/src/index.ts`(実際のプロセス起動点)からのみ呼び出す。`createApp()`自体には組み込まない(`createApp()`は63件のテストファイルから直接呼ばれており、テスト環境固有の値でも動作できる必要があるため)。
+
+`process.env`の直接参照は指示書10.3が「段階的に削減」と明記するとおり、今回は**必須5値の主要な参照箇所**を`appConfig`経由に置き換えた: `services/jwt.ts`(JWT_SECRET)・`lib/settingsCrypto.ts`(SETTINGS_ENCRYPTION_KEY)・`middleware/csrf.ts`・`app.ts`(APP_URL)・`modules/checkout/application/createPendingOrder.usecase.ts`・`services/externalOrderImport.ts`(TERMS_VERSION)。`SENNOKUNI_INTEGRATION_ENABLED`は既存の`services/sennokuniIntegrationConfig.ts`が既に専用の設定モジュール(DB認証情報取得と一体)として機能しているため、`integrationConfig`には重複させなかった。残りの`process.env`直接参照(`CRON_SECRET`・`NODE_ENV`・`PORT`・`BLOB_READ_WRITE_TOKEN`の一部呼び出し箇所等)は今回のスコープ外とし、次項で明記する。
+
+## 10.2 外部Adapter
+
+```text
+server/src/shared/http/
+└─ httpClient.ts  … fetchWithTimeout()。AbortController によるtimeout(既定10秒)・
+                     correlation ID発行・構造化ログ(JSON1行、APIキー等の秘密ヘッダはマスク)・
+                     ネットワーク断/タイムアウトのIntegrationTransportErrorへの正規化
+```
+
+`fetchWithTimeout()`は**レスポンス自体(res.ok・本文)をそのまま呼び出し元へ返す**設計にした。HTTPステータスに基づく成否判定・エラーメッセージの組み立ては各Adapterの既存ロジックのままで、通信レベルの失敗(ネットワーク断・タイムアウト)だけを正規化する。この設計により、生の`fetch()`を`fetchWithTimeout()`へ置き換えるだけで済み、各Adapter固有の業務ロジックを一切変更せずに retrofit できた。
+
+適用したファイル(いずれもタイムアウトなしの生`fetch()`を使っていた):
+
+- `services/externalAgencySystem.ts`(外部代理店システムの階層取得・代理店同期API。フラグなしの実運用コード)
+- `services/agencySso.ts`(代理店SSOのJWKS取得)
+- `services/nftMintProviders/crossmint.ts`(Crossmint Mint API。合わせて`CROSSMINT_COLLECTION_ID`の読み取りも`integrationConfig`経由に統一)
+
+## 対象外(意図的に見送った箇所)
+
+- **Stripe(`lib/stripeClient.ts`)・Resend(`services/mailTemplates.ts`)**: 公式SDK経由の呼び出しであり、SDK自体が既にtimeout/retryを内包する。生fetchの薄いAdapterを重ねる利益がなく、指示書14.4の「Repository/Adapter: 外部APIを隠蔽する」はSDKラッパーの形で既に満たされている。
+- **`services/externalCommonUserClient.ts`・`services/externalReferralClient.ts`・`services/integrationOutboxDispatcher.ts`・`services/oveWalletRewardClient.ts`**: `SENNOKUNI_INTEGRATION_ENABLED`(既定OFF)配下のdormant実装で、実HTTP送信は統合責任者の正式承認まで発生しない。前セッションで既にテストが整備済みであり、今回のPhaseでリライトして回帰リスクを取る理由がない(指示書20章「外部システムとの実接続は少なくともPhase 0/2/3/5の完了後」を踏まえても、実接続を有効化する段階で改めて着手するのが安全)。
+- **`server/src/integrations/{agency-system,common-user-hub,ove-wallet,crossmint}/`への物理的なディレクトリ移動**: 指示書4.1が示す目標構成だが、「すべてを一度に移動しない」という同章の方針に従い、今回はコード内容(timeout・ログ・エラー正規化)の統一を優先し、ファイルの物理移動は見送った(移動自体はimport元の変更を伴うだけで安全性向上には直結しないため)。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)クリーン。
+- `npx vitest run`: 425件全成功(既存418件 + `httpClient.test.ts`4件 + `env.test.ts`3件)。`externalAgencySystem.test.ts`・`crossmint.test.ts`・`agencySso.test.ts`はいずれも**無変更のまま**成功しており、Adapter retrofitが既存の`vi.stubGlobal('fetch', ...)`によるモックとレスポンス解釈ロジックに影響しないことを確認した。
+- `npx tsx src/index.ts`を実際に起動し、`assertRequiredEnv()`によるエラーなく`server listening on port 4000`まで到達することを確認(現在の`.env`が必須5値をすべて満たしているため)。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npx tsc -b --noEmit`(client)・`npm run build --workspace=client`成功。
+
+## 結論(Phase 5)
+
+指示書10.3の受入条件のうち、外部fetchへのtimeout追加・エラー形式の統一(通信レベル)・秘密情報のログ非出力・Adapter単体テスト追加を満たした。`process.env`の直接参照削減は「段階的」の方針どおり必須5値の主要箇所に絞って対応し、残りの箇所・dormant integrations・Stripe/Resend SDKラッパー・`integrations/`ディレクトリへの物理移動は上記のとおり明示的にスコープ外とした。Phase 6(状態遷移Policy)以降は、着手のご指示があり次第対応する。

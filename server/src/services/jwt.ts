@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import { appConfig } from '../shared/config/appConfig';
 
 export interface AuthTokenPayload {
   sub: string;
@@ -7,7 +8,7 @@ export interface AuthTokenPayload {
 }
 
 function getSecret(): string {
-  const secret = process.env.JWT_SECRET;
+  const secret = appConfig.jwtSecret;
   if (!secret) throw new Error('JWT_SECRET is not set');
   return secret;
 }

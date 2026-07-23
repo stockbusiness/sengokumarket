@@ -2,8 +2,12 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import { createApp } from './app';
+import { assertRequiredEnv } from './shared/config/env';
+import { appConfig } from './shared/config/appConfig';
 
-const port = process.env.PORT ? Number(process.env.PORT) : 4000;
+assertRequiredEnv();
+
+const port = appConfig.port;
 const app = createApp();
 
 app.listen(port, () => {

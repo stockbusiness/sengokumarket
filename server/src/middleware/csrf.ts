@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { sendError } from '../lib/apiError';
+import { appConfig } from '../shared/config/appConfig';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
@@ -21,7 +22,7 @@ function parseOrigin(value: string): string | null {
 export function requireSameOrigin(req: Request, res: Response, next: NextFunction) {
   if (SAFE_METHODS.has(req.method)) return next();
 
-  const appUrl = process.env.APP_URL;
+  const appUrl = appConfig.appUrl;
   const appOrigin = appUrl ? parseOrigin(appUrl) : null;
   // 仕様書外の拡張(千ノ国全体連携分析2026-07-21 I-1章の指摘): APP_URL未設定・不正値はCSRF対策
   // 自体を無効化してしまうfail-openだったため、fail-closed(拒否)にする。設定ミスや環境変数の

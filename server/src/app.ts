@@ -22,6 +22,7 @@ import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
 import { requireCronSecret } from './middleware/cronAuth';
 import { sendError } from './lib/apiError';
+import { appConfig } from './shared/config/appConfig';
 
 export function createApp(): Express {
   const app = express();
@@ -29,7 +30,7 @@ export function createApp(): Express {
   // セキュリティヘッダー(X-Content-Type-Options/X-Frame-Options等)。
   // このAppはJSON APIのみを返すためcontentSecurityPolicy/hstsは無効化し、静的サイト側はvercel.jsonで別途設定する。
   app.use(helmet({ contentSecurityPolicy: false, hsts: false }));
-  app.use(cors({ origin: process.env.APP_URL, credentials: true }));
+  app.use(cors({ origin: appConfig.appUrl, credentials: true }));
 
   // Stripe Webhookは署名検証に生ボディが必要なため、express.json()より前に
   // express.raw()付きで登録する(仕様書v1.5 7.3参照。事故多発地帯につき順序厳守)。
