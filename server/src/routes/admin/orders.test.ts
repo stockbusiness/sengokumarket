@@ -54,6 +54,35 @@ describe('管理API: 注文管理', () => {
     expect(res.status).toBe(400);
   });
 
+  describe('不正な状態遷移の拒否(仕様書外の拡張・保守性改善Phase6)', () => {
+    it('refunded→paidは409を返し、DBの状態も変化しない', async () => {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-ADMINTEST-TRANSITION-${Date.now()}`,
+          totalAmount: 10000,
+          originalAmount: 10000,
+          paymentStatus: 'refunded',
+          orderStatus: 'refunded',
+          customerName: 'テスト',
+          customerEmail: `admin-orders-test-transition-${Date.now()}@example.com`,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+
+      const { agent } = await createAdminAgent(app);
+      const res = await agent.put(`/api/admin/orders/${order.id}`).set('Origin', TEST_ORIGIN).send({ orderStatus: 'paid' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('INVALID_ORDER_STATUS_TRANSITION');
+
+      const persisted = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(persisted.orderStatus).toBe('refunded');
+
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+  });
+
   describe('説明責任者の後入力・修正(仕様書外の拡張)', () => {
     it('説明責任者名を後から入力でき、紹介コード等の報酬関連フィールドは変更されない', async () => {
       const { agent } = await createAdminAgent(app);

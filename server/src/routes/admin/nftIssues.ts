@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
-import { NFT_ISSUE_STATUSES as STATUSES } from '@sengoku/contracts';
+import { NFT_ISSUE_STATUSES as STATUSES, type NftIssueStatus } from '@sengoku/contracts';
+import { assertNftIssueTransition } from '../../shared/statusPolicy/nftIssueStatus.policy';
+import { DomainError } from '../../shared/errors/domainError';
 
 const router = Router();
 const TX_HASH_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -50,6 +52,15 @@ router.put('/nft-issues/:id', async (req, res) => {
 
   if (status !== undefined && !STATUSES.includes(status)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
+  }
+
+  if (status !== undefined) {
+    try {
+      assertNftIssueTransition(existing.status as NftIssueStatus, status);
+    } catch (e) {
+      if (e instanceof DomainError) return sendError(res, 409, e.code, e.message);
+      throw e;
+    }
   }
 
   if (status === 'issued') {

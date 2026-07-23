@@ -105,6 +105,22 @@ describe('管理API: NFT発行管理', () => {
     expect(res.body.nftIssues.some((n: { id: string }) => n.id === nftIssueId)).toBe(true);
   });
 
+  describe('不正な状態遷移の拒否(仕様書外の拡張・保守性改善Phase6)', () => {
+    it('issued→wallet_requiredは409を返す(指示書が挙げる不正遷移の例)', async () => {
+      const { agent } = await createAdminAgent(app);
+      const res = await agent
+        .put(`/api/admin/nft-issues/${nftIssueId}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'wallet_required' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('INVALID_NFT_ISSUE_STATUS_TRANSITION');
+
+      const persisted = await prisma.nftIssue.findUniqueOrThrow({ where: { id: nftIssueId } });
+      expect(persisted.status).toBe('issued');
+    });
+  });
+
   describe('再試行・保留(仕様書外の拡張・NFT自動発行)', () => {
     let productId2: string;
 

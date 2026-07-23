@@ -5,7 +5,9 @@ import { buildCsv } from '../../lib/csv';
 import { HttpError } from '../../lib/httpError';
 import { confirmBankTransferPayment } from '../../services/bankTransfer';
 import { matchExplainerName } from '../../services/explainerMatch';
-import { ORDER_STATUSES } from '@sengoku/contracts';
+import { ORDER_STATUSES, type OrderStatus } from '@sengoku/contracts';
+import { assertOrderTransition } from '../../shared/statusPolicy/orderStatus.policy';
+import { DomainError } from '../../shared/errors/domainError';
 
 const router = Router();
 
@@ -146,6 +148,15 @@ router.put('/orders/:id', async (req, res) => {
 
   const existing = await prisma.order.findUnique({ where: { id: req.params.id } });
   if (!existing) return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
+
+  if (orderStatus !== undefined) {
+    try {
+      assertOrderTransition(existing.orderStatus as OrderStatus, orderStatus);
+    } catch (e) {
+      if (e instanceof DomainError) return sendError(res, 409, e.code, e.message);
+      throw e;
+    }
+  }
 
   const explainerMatch =
     typeof explainerName === 'string' ? await matchExplainerName(prisma, explainerName) : null;

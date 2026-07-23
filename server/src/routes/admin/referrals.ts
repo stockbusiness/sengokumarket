@@ -2,7 +2,9 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { buildCsv } from '../../lib/csv';
-import { COMMISSION_STATUSES } from '@sengoku/contracts';
+import { COMMISSION_STATUSES, type CommissionStatus } from '@sengoku/contracts';
+import { assertCommissionTransition } from '../../shared/statusPolicy/commissionStatus.policy';
+import { DomainError } from '../../shared/errors/domainError';
 
 const router = Router();
 
@@ -119,6 +121,15 @@ router.put('/referrals/commissions/:id', async (req, res) => {
 
   const existing = await prisma.commission.findUnique({ where: { id: req.params.id } });
   if (!existing) return sendError(res, 404, 'COMMISSION_NOT_FOUND', '報酬データが見つかりません');
+
+  if (status !== undefined) {
+    try {
+      assertCommissionTransition(existing.status as CommissionStatus, status);
+    } catch (e) {
+      if (e instanceof DomainError) return sendError(res, 409, e.code, e.message);
+      throw e;
+    }
+  }
 
   const now = new Date();
   const updated = await prisma.$transaction(async (tx) => {

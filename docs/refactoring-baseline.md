@@ -431,3 +431,65 @@ server/src/shared/http/
 ## 結論(Phase 5)
 
 指示書10.3の受入条件のうち、外部fetchへのtimeout追加・エラー形式の統一(通信レベル)・秘密情報のログ非出力・Adapter単体テスト追加を満たした。`process.env`の直接参照削減は「段階的」の方針どおり必須5値の主要箇所に絞って対応し、残りの箇所・dormant integrations・Stripe/Resend SDKラッパー・`integrations/`ディレクトリへの物理移動は上記のとおり明示的にスコープ外とした。Phase 6(状態遷移Policy)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 6: 状態遷移Policy(完了報告)
+
+## 事前調査
+
+指示書11.1が挙げる7種類のステータス(OrderStatus/PaymentStatus/CommissionStatus/NftIssueStatus/StripeEventStatus/IntegrationOutboxStatus/CouponUsageStatus)について、実際にどの遷移が使われているかをコード(Stripe Webhook・銀行振込確認・admin route・coupon.ts・stripeEventInbox.ts・integrationOutboxDispatcher.ts)と既存テストを1件ずつ確認したうえで遷移表を定義した(指示書1.7が例示する`paid→pending`・`issued→wallet_required`のような不正遷移を推測ではなく実挙動から拒否対象と確定させるため)。
+
+この調査の過程で、`admin/orders.test.ts`が実際に**`paid→cancelled`(Stripe返金を伴わない「返品対応済み」の手動キャンセル)をAPI経由でテスト済み**であることが判明し、指示書11.2の例(`paid: ['refunded']`のみ)をそのまま採用すると既存の正当な操作を壊すことが分かった。遷移表は指示書の例を出発点としつつ、実際にテストされている操作をすべて許可するように調整した。
+
+## ユーザー判断が必要だった箇所
+
+報酬ステータス(pending→paidを直接許可するか、approvedを必ず経由させるか)は、仕様書5.8が示す運用フロー(CSV出力でpending→approved一括変更→支払後にapproved→paidへ手動変更)を裏付けとしつつも、明示的な禁止は書かれておらず、実務上の判断が必要だったためユーザーに確認した。**「approvedを必ず経由させる」を選択**いただき、pending→paidの直接変更は拒否対象とした。
+
+## 11.1〜11.2 実装
+
+```text
+server/src/shared/errors/domainError.ts        … DomainError(code, message)。Policy共通のエラー型
+server/src/shared/statusPolicy/
+├─ statusTransition.ts             … 7Policy共通の判定ロジック(同一状態への再設定は常に許可)
+├─ orderStatus.policy.ts           … pending→[paid,cancelled] / paid→[refunded,cancelled] / 他終端
+├─ commissionStatus.policy.ts      … pending→[approved,cancelled] / approved→[paid,cancelled,pending] / paid,cancelledは終端
+├─ nftIssueStatus.policy.ts        … wallet_required→ready_to_issue→processing→issued の基本線 +
+│                                     管理画面からの直接issued記録を許可、issuedは終端
+├─ paymentStatus.policy.ts         … 参照用(未組み込み。下記参照)
+├─ stripeEventStatus.policy.ts     … 参照用(未組み込み)
+├─ integrationOutboxStatus.policy.ts … 参照用(未組み込み)
+└─ couponUsageStatus.policy.ts     … 参照用(未組み込み)
+```
+
+## 適用箇所
+
+不正遷移を実際に拒否する形で組み込んだのは、従来「ステータス値そのものの妥当性(`STATUSES.includes()`)」しか検証しておらず、遷移そのものは無制限だった3つの管理画面API(いずれも指示書11.4「管理画面からも不正遷移不可」の対象)のみ:
+
+- `admin/orders.ts` PUT `/orders/:id`(`assertOrderTransition`)
+- `admin/referrals.ts` PUT `/referrals/commissions/:id`(`assertCommissionTransition`)
+- `admin/nftIssues.ts` PUT `/nft-issues/:id`(`assertNftIssueTransition`)
+
+不正遷移は409 `INVALID_*_STATUS_TRANSITION`で拒否する。
+
+## 意図的に組み込まなかった箇所(指示書11.4「Webhook処理に影響しない」を優先)
+
+- **PaymentStatus / StripeEventStatus**: Stripe Webhook・stripeEventInbox.tsの冪等性クレーム処理(条件付きUPDATE)は変更禁止範囲の核心であり、既に独自の防御(status='processing'等をWHERE句に含むアトミックなclaim)を持つ。二重に遷移チェックを追加するとかえって複雑化・リグレッションリスクが増すため、Policyは定義のみで組み込まない。
+- **CouponUsageStatus**: `services/coupon.ts`は在庫のreserved_stockと同じ考え方で行ロック+検証を行う変更禁止範囲のため、同様に組み込まない。
+- **IntegrationOutboxStatus**: 現時点で管理画面からの手動ステータス変更エンドポイント自体が存在しない(読み取り専用)ため、適用先がない。
+- `admin/stripeEvents.ts`の再試行エンドポイントは、既に`existing.status !== 'failed_retryable' && existing.status !== 'failed_terminal'`という専用の事前条件を持っており、これは実質的に指示書11.2と同じ役割を果たしている。二重にPolicyを被せることはせず現状維持とした。
+
+## 11.3 DB制約
+
+既存データを確認したところ、ローカル開発DBでは大半のテーブルが空(テストのafterAllで都度削除されるため)であり、**本番Supabaseのデータをこの環境から検証することはできない**。CHECK制約の追加は新規マイグレーション(本番はVercelが自動適用しないため、これまでと同様Supabase SQL Editorでの手動適用が必要)を伴う操作であり、本番データを未検証のまま追加すると意図せず失敗する可能性があるため、今回は見送った。本番データの値点検後に着手することを推奨する(次のご指示があれば対応する)。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)クリーン。
+- `npx vitest run`: 462件全成功(既存425件 + 7つのPolicyのDomain Unit Test 35件 + 3つの管理画面APIでの不正遷移拒否テスト)。既存の`admin/orders.test.ts`(`paid→cancelled`を含む)・`admin/referrals.test.ts`(`pending→approved`)・`admin/nftIssues.test.ts`(`ready_to_issue→issued`)はいずれも**無変更のまま**成功しており、正常遷移が壊れていないことを確認した。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npx tsc -b --noEmit`(client)・`npm run build --workspace=client`成功(本Phaseはサーバー専用のためclientへの影響なし)。
+
+## 結論(Phase 6)
+
+指示書11.4の受入条件のうち、正常遷移の維持・不正遷移の拒否・APIエラーコードの定義・管理画面からの不正遷移防止・Webhook処理への無影響をすべて満たした。DB CHECK制約(11.3)は本番データ未検証のため見送り、次のご指示があれば対応する。Phase 7(通知モジュール化)以降は、着手のご指示があり次第対応する。

@@ -74,6 +74,47 @@ describe('管理API: 代理店・紹介成果管理', () => {
     expect(order.commissionStatus).toBe('approved');
   });
 
+  describe('不正な状態遷移の拒否(仕様書外の拡張・保守性改善Phase6)', () => {
+    it('pending→paidは409を返す(approvedを必ず経由させる)', async () => {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-REFADMIN-TRANSITION-${Date.now()}`,
+          totalAmount: 20000,
+          originalAmount: 20000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'テスト',
+          customerEmail: `admin-referrals-test-transition-${Date.now()}@example.com`,
+          agencyId,
+          referralCode: 'SGI-TEST',
+          commissionRate: 10,
+          commissionAmount: 2000,
+          commissionStatus: 'pending',
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const commission = await prisma.commission.create({
+        data: { orderId: order.id, agencyId, referralCode: 'SGI-TEST', baseAmount: 20000, commissionRate: 10, commissionAmount: 2000, status: 'pending' },
+      });
+
+      const { agent } = await createAdminAgent(app);
+      const res = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'paid' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('INVALID_COMMISSION_STATUS_TRANSITION');
+
+      const persisted = await prisma.commission.findUniqueOrThrow({ where: { id: commission.id } });
+      expect(persisted.status).toBe('pending');
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+  });
+
   it('CSV出力: 期間内・approved対象で1行出力される', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent
