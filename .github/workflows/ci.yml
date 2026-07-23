@@ -30,7 +30,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/sengoku_ci
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/sengoku_ci
-      JWT_SECRET: ci-test-secret
+      JWT_SECRET: ci-test-secret-value-that-is-long-enough-for-validation
       TERMS_VERSION: 2026-07-01
       APP_URL: http://localhost:5173
       ADMIN_EMAIL: admin@example.com
@@ -51,6 +51,31 @@ jobs:
         working-directory: server
       - run: npx vitest run
         working-directory: server
+      # 残課題指示書Stage1: api/index.ts(Vercelエントリポイント)はserver/tsconfig.jsonの対象外
+      # (rootDir制約でserver/src配下しか含められない)のため、api/**とserver/src/**を横断する
+      # ルートのtsconfig.jsonで別途typecheckする。
+      - run: npm run typecheck:api
+      # 残課題指示書Stage2: packages/contractsをbuildし、serverのdist/index.js起動経路
+      # (node dist/index.js、Vercelは使わないがローカル/将来のデプロイ方式変更に備える)が
+      # コンパイル済み@sengoku/contractsをrequireできることを確認する。
+      - run: npm run build:contracts
+      - run: npm run build --workspace=server
+      - name: dist起動smoke test
+        working-directory: server
+        run: |
+          node dist/index.js &
+          SERVER_PID=$!
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:4000/api/health > /dev/null; then
+              echo "server started successfully from dist/"
+              kill $SERVER_PID
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "server failed to start from dist/ within timeout"
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
 
   client:
     runs-on: ubuntu-latest
@@ -61,4 +86,4 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run build --workspace=client
+      - run: npm run build:client

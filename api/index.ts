@@ -3,5 +3,8 @@
 // ルーティング(app.ts)でパスごとに処理される。ローカル開発では使用しない
 // (ローカルは server/src/index.ts が app.listen() で起動する)。
 import { createApp } from '../server/src/app';
+import { assertRequiredEnv } from '../server/src/shared/config/env';
+
+assertRequiredEnv();
 
 export default createApp();
