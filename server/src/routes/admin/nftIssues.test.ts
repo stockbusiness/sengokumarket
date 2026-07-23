@@ -105,6 +105,15 @@ describe('管理API: NFT発行管理', () => {
     expect(res.body.nftIssues.some((n: { id: string }) => n.id === nftIssueId)).toBe(true);
   });
 
+  it('一覧はページネーション情報(page/pageSize/total)を返す(仕様書外の拡張・保守性改善Phase8)', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/nft-issues');
+    expect(res.status).toBe(200);
+    expect(res.body.page).toBe(1);
+    expect(typeof res.body.pageSize).toBe('number');
+    expect(res.body.total).toBeGreaterThanOrEqual(1);
+  });
+
   describe('不正な状態遷移の拒否(仕様書外の拡張・保守性改善Phase6)', () => {
     it('issued→wallet_requiredは409を返す(指示書が挙げる不正遷移の例)', async () => {
       const { agent } = await createAdminAgent(app);

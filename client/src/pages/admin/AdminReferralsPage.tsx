@@ -9,6 +9,7 @@ import {
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
+import Pagination from '../../components/Pagination';
 import { COMMISSION_STATUSES } from '@sengoku/contracts';
 
 export default function AdminReferralsPage() {
@@ -18,15 +19,27 @@ export default function AdminReferralsPage() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [markApproved, setMarkApproved] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   function loadCommissions() {
-    fetchAdminCommissions(statusFilter || undefined).then((d) => setCommissions(d.commissions));
+    fetchAdminCommissions(page, statusFilter || undefined).then((d) => {
+      setCommissions(d.commissions);
+      setTotal(d.total);
+      setPageSize(d.pageSize);
+    });
   }
 
   useEffect(() => {
     fetchAdminReferralsSummary().then(setSummary);
   }, []);
-  useEffect(loadCommissions, [statusFilter]);
+  useEffect(loadCommissions, [page, statusFilter]);
+
+  function handleStatusFilterChange(value: string) {
+    setStatusFilter(value);
+    setPage(1);
+  }
 
   async function changeStatus(commission: AdminCommission, status: string) {
     await updateAdminCommission(commission.id, { status });
@@ -135,7 +148,7 @@ export default function AdminReferralsPage() {
       <h2>報酬一覧</h2>
       <label>
         ステータスで絞り込み
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <select value={statusFilter} onChange={(e) => handleStatusFilterChange(e.target.value)}>
           <option value="">すべて</option>
           {COMMISSION_STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -149,36 +162,39 @@ export default function AdminReferralsPage() {
           <EmptyState message="該当する報酬データがありません" />
         </div>
       ) : (
-        <div className="admin-table-card">
-          <table>
-            <thead>
-              <tr>
-                <th>注文番号</th>
-                <th>購入者</th>
-                <th>代理店/インフルエンサー</th>
-                <th>報酬率</th>
-                <th>報酬額</th>
-                <th>ステータス</th>
-              </tr>
-            </thead>
-            <tbody>
-              {commissions.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.orderNumber}</td>
-                  <td>{c.customerName}</td>
-                  <td>
-                    {c.agencyName ?? '-'} / {c.influencerName ?? '-'}
-                  </td>
-                  <td>{c.commissionRate}%</td>
-                  <td>{c.commissionAmount.toLocaleString()}円</td>
-                  <td>
-                    <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
-                  </td>
+        <>
+          <div className="admin-table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>注文番号</th>
+                  <th>購入者</th>
+                  <th>代理店/インフルエンサー</th>
+                  <th>報酬率</th>
+                  <th>報酬額</th>
+                  <th>ステータス</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {commissions.map((c) => (
+                  <tr key={c.id}>
+                    <td>{c.orderNumber}</td>
+                    <td>{c.customerName}</td>
+                    <td>
+                      {c.agencyName ?? '-'} / {c.influencerName ?? '-'}
+                    </td>
+                    <td>{c.commissionRate}%</td>
+                    <td>{c.commissionAmount.toLocaleString()}円</td>
+                    <td>
+                      <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
+        </>
       )}
     </div>
   );

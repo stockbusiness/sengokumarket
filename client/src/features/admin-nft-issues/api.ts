@@ -20,8 +20,10 @@ export interface AdminNftIssue {
   nextAttemptAt: string | null;
 }
 
-export function fetchAdminNftIssues(status?: string) {
-  return adminFetch<{ nftIssues: AdminNftIssue[] }>(`/nft-issues${status ? `?status=${status}` : ''}`);
+export function fetchAdminNftIssues(page: number, status?: string) {
+  const q = new URLSearchParams({ page: String(page) });
+  if (status) q.set('status', status);
+  return adminFetch<{ nftIssues: AdminNftIssue[]; total: number; page: number; pageSize: number }>(`/nft-issues?${q.toString()}`);
 }
 
 export interface UpdateNftIssueRequest {

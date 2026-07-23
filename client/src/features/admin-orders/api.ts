@@ -23,8 +23,8 @@ export interface AdminOrder {
   explainerMatched: boolean;
 }
 
-export function fetchAdminOrders() {
-  return adminFetch<{ orders: AdminOrder[] }>('/orders');
+export function fetchAdminOrders(page: number) {
+  return adminFetch<{ orders: AdminOrder[]; total: number; page: number; pageSize: number }>(`/orders?page=${page}`);
 }
 
 export interface UpdateOrderRequest {

@@ -5,6 +5,7 @@ import { buildCsv } from '../../lib/csv';
 import { COMMISSION_STATUSES, type CommissionStatus } from '@sengoku/contracts';
 import { assertCommissionTransition } from '../../shared/statusPolicy/commissionStatus.policy';
 import { DomainError } from '../../shared/errors/domainError';
+import { parsePagination } from '../../shared/pagination/parsePagination';
 
 const router = Router();
 
@@ -85,12 +86,19 @@ router.get('/referrals/orders', async (req, res) => {
 
 router.get('/referrals/commissions', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const { page, pageSize, skip, take } = parsePagination(req.query);
 
-  const commissions = await prisma.commission.findMany({
-    where: status ? { status } : undefined,
-    include: { order: true, agency: true, influencer: true },
-    orderBy: { createdAt: 'desc' },
-  });
+  const where = status ? { status } : undefined;
+  const [commissions, total] = await Promise.all([
+    prisma.commission.findMany({
+      where,
+      include: { order: true, agency: true, influencer: true },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    }),
+    prisma.commission.count({ where }),
+  ]);
 
   res.json({
     commissions: commissions.map((c) => ({
@@ -108,6 +116,9 @@ router.get('/referrals/commissions', async (req, res) => {
       paidAt: c.paidAt,
       adminNote: c.adminNote,
     })),
+    total,
+    page,
+    pageSize,
   });
 });
 

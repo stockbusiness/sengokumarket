@@ -103,6 +103,15 @@ describe('管理API: Stripe Webhookイベント一覧・手動再試行(仕様�
     expect(res.body.stripeEvents.every((e: { status: string }) => e.status === 'failed_retryable')).toBe(true);
   });
 
+  it('一覧はページネーション情報(page/pageSize/total)を返す(仕様書外の拡張・保守性改善Phase8)', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/stripe-events');
+    expect(res.status).toBe(200);
+    expect(res.body.page).toBe(1);
+    expect(typeof res.body.pageSize).toBe('number');
+    expect(typeof res.body.total).toBe('number');
+  });
+
   it('不正なstatusは400になる', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent.get('/api/admin/stripe-events?status=not_a_status');

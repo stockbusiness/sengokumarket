@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchAdminAuditLogs, type AdminAuditLogEntry } from '../../lib/adminApi';
 import EmptyState from '../../components/EmptyState';
+import Pagination from '../../components/Pagination';
 
 function formatBody(body: unknown): string {
   if (body === null || body === undefined || (typeof body === 'object' && Object.keys(body).length === 0)) return '-';
@@ -21,8 +22,6 @@ export default function AdminAuditLogsPage() {
       setPageSize(d.pageSize);
     });
   }, [page]);
-
-  const totalPages = Math.max(Math.ceil(total / pageSize), 1);
 
   return (
     <div>
@@ -65,22 +64,7 @@ export default function AdminAuditLogsPage() {
               </tbody>
             </table>
           </div>
-          <div className="admin-pagination">
-            <button type="button" className="btn-secondary btn-small" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-              前へ
-            </button>
-            <span>
-              {page} / {totalPages}ページ({total}件)
-            </span>
-            <button
-              type="button"
-              className="btn-secondary btn-small"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              次へ
-            </button>
-          </div>
+          <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
         </>
       )}
     </div>

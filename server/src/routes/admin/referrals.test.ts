@@ -168,3 +168,60 @@ describe('管理API: 代理店・紹介成果管理', () => {
     expect(res.text).not.toContain('SG-REFADMIN');
   });
 });
+
+describe('報酬一覧のページネーション(仕様書外の拡張・保守性改善Phase8)', () => {
+  const codeMarker = `PAGETEST-${Date.now()}`;
+  const TOTAL_COMMISSIONS = 55;
+
+  beforeAll(async () => {
+    const agency = await prisma.agency.create({
+      data: { name: `commission-pagetest代理店-${Date.now()}`, code: `CPGTEST-${Date.now()}` },
+    });
+    for (let i = 0; i < TOTAL_COMMISSIONS; i++) {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-CPGTEST-${i}-${Date.now()}`,
+          totalAmount: 1000,
+          originalAmount: 1000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'ページテスト',
+          customerEmail: `commission-pagetest-${i}-${Date.now()}@example.com`,
+          agencyId: agency.id,
+          referralCode: codeMarker,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      await prisma.commission.create({
+        data: { orderId: order.id, agencyId: agency.id, referralCode: codeMarker, baseAmount: 1000, commissionRate: 10, commissionAmount: 100, status: 'pending' },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.commission.deleteMany({ where: { referralCode: codeMarker } });
+    await prisma.order.deleteMany({ where: { referralCode: codeMarker } });
+    await prisma.$disconnect();
+  });
+
+  it('既定のpageSize(50)で1ページ目にはpageSize件、totalには全件数が入る', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/referrals/commissions').set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.commissions.length).toBe(50);
+    expect(res.body.page).toBe(1);
+    expect(res.body.pageSize).toBe(50);
+    expect(res.body.total).toBeGreaterThanOrEqual(TOTAL_COMMISSIONS);
+  });
+
+  it('page=2を指定すると2ページ目の残り件数が返る', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/referrals/commissions').query({ page: 2 }).set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.page).toBe(2);
+    expect(res.body.commissions.length).toBeGreaterThan(0);
+  });
+});

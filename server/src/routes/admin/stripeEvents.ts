@@ -5,6 +5,7 @@ import { getStripeClient } from '../../lib/stripeClient';
 import { processStripeEvent } from '../stripeWebhook';
 import { claimStripeEventForManualRetry, markStripeEventFailed, markStripeEventSucceeded } from '../../services/stripeEventInbox';
 import { STRIPE_EVENT_STATUSES as STATUSES } from '@sengoku/contracts';
+import { parsePagination } from '../../shared/pagination/parsePagination';
 
 const router = Router();
 
@@ -16,13 +17,14 @@ router.get('/stripe-events', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
   }
 
-  const events = await prisma.stripeEvent.findMany({
-    where: status ? { status } : undefined,
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  });
+  const { page, pageSize, skip, take } = parsePagination(req.query);
+  const where = status ? { status } : undefined;
+  const [events, total] = await Promise.all([
+    prisma.stripeEvent.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }),
+    prisma.stripeEvent.count({ where }),
+  ]);
 
-  res.json({ stripeEvents: events });
+  res.json({ stripeEvents: events, total, page, pageSize });
 });
 
 // failed_retryable/failed_terminalのイベントを、Stripeから最新のイベント内容を取得し直して

@@ -9,6 +9,7 @@ import {
 import StatusBadge from '../../components/StatusBadge';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
+import Pagination from '../../components/Pagination';
 import { ORDER_STATUSES } from '@sengoku/contracts';
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
@@ -16,11 +17,18 @@ type StatusMessage = { type: 'success' | 'error'; text: string };
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   function load() {
-    fetchAdminOrders().then((d) => setOrders(d.orders));
+    fetchAdminOrders(page).then((d) => {
+      setOrders(d.orders);
+      setTotal(d.total);
+      setPageSize(d.pageSize);
+    });
   }
-  useEffect(load, []);
+  useEffect(load, [page]);
 
   function notify(type: StatusMessage['type'], text: string) {
     setStatusMessage({ type, text });
@@ -71,6 +79,7 @@ export default function AdminOrdersPage() {
           <EmptyState message="まだ注文がありません" />
         </div>
       ) : (
+        <>
         <div className="admin-table-card">
           <table>
             <thead>
@@ -150,6 +159,8 @@ export default function AdminOrdersPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
+        </>
       )}
     </div>
   );

@@ -42,6 +42,10 @@ describe('管理API: 連携Outbox一覧(仕様書外の拡張・千ノ国全体�
     const res = await agent.get('/api/admin/integration-outbox');
     expect(res.status).toBe(200);
     expect(res.body.outboxEvents.some((e: { correlationId: string }) => e.correlationId === correlationId)).toBe(true);
+    // 仕様書外の拡張(保守性改善Phase8): ページネーション情報を返す。
+    expect(res.body.page).toBe(1);
+    expect(typeof res.body.pageSize).toBe('number');
+    expect(res.body.total).toBeGreaterThanOrEqual(1);
 
     const filtered = await agent.get('/api/admin/integration-outbox?status=pending');
     expect(filtered.status).toBe(200);

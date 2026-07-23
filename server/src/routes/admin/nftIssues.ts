@@ -4,6 +4,7 @@ import { sendError } from '../../lib/apiError';
 import { NFT_ISSUE_STATUSES as STATUSES, type NftIssueStatus } from '@sengoku/contracts';
 import { assertNftIssueTransition } from '../../shared/statusPolicy/nftIssueStatus.policy';
 import { DomainError } from '../../shared/errors/domainError';
+import { parsePagination } from '../../shared/pagination/parsePagination';
 
 const router = Router();
 const TX_HASH_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -13,12 +14,19 @@ const HOLD_DURATION_MS = 100 * 365 * 24 * 60 * 60 * 1000;
 
 router.get('/nft-issues', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+  const { page, pageSize, skip, take } = parsePagination(req.query);
 
-  const nftIssues = await prisma.nftIssue.findMany({
-    where: status ? { status } : undefined,
-    include: { order: true, product: true, variant: true },
-    orderBy: { createdAt: 'desc' },
-  });
+  const where = status ? { status } : undefined;
+  const [nftIssues, total] = await Promise.all([
+    prisma.nftIssue.findMany({
+      where,
+      include: { order: true, product: true, variant: true },
+      orderBy: { createdAt: 'desc' },
+      skip,
+      take,
+    }),
+    prisma.nftIssue.count({ where }),
+  ]);
 
   res.json({
     nftIssues: nftIssues.map((issue) => ({
@@ -40,6 +48,9 @@ router.get('/nft-issues', async (req, res) => {
       providerRequestId: issue.providerRequestId,
       nextAttemptAt: issue.nextAttemptAt,
     })),
+    total,
+    page,
+    pageSize,
   });
 });
 

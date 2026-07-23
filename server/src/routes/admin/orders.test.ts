@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
@@ -239,5 +239,62 @@ describe('管理API: 注文管理', () => {
 
       await prisma.order.delete({ where: { id: order.id } });
     });
+  });
+});
+
+describe('注文一覧のページネーション(仕様書外の拡張・保守性改善Phase8)', () => {
+  const emailMarker = `admin-orders-pagetest-${Date.now()}`;
+  const TOTAL_ORDERS = 55;
+
+  beforeAll(async () => {
+    for (let i = 0; i < TOTAL_ORDERS; i++) {
+      await prisma.order.create({
+        data: {
+          orderNumber: `SG-PAGETEST-${i}-${Date.now()}`,
+          totalAmount: 1000,
+          originalAmount: 1000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: `ページテスト${i}`,
+          customerEmail: `${emailMarker}-${i}@example.com`,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+    }
+  });
+
+  afterAll(async () => {
+    await prisma.order.deleteMany({ where: { customerEmail: { contains: emailMarker } } });
+    await prisma.$disconnect();
+  });
+
+  it('既定のpageSize(50)で1ページ目にはpageSize件、totalには全件数が入る', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/orders').set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders.length).toBe(50);
+    expect(res.body.page).toBe(1);
+    expect(res.body.pageSize).toBe(50);
+    expect(res.body.total).toBeGreaterThanOrEqual(TOTAL_ORDERS);
+  });
+
+  it('page=2を指定すると2ページ目の残り件数が返る', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/orders').query({ page: 2 }).set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.page).toBe(2);
+    expect(res.body.orders.length).toBeGreaterThan(0);
+  });
+
+  it('CSV出力(export.csv)はページネーションされず全件出力される', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/orders/export.csv').set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    const rowCount = res.text.trim().split('\n').length - 1; // ヘッダー行を除く
+    expect(rowCount).toBeGreaterThanOrEqual(TOTAL_ORDERS);
   });
 });

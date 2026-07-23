@@ -8,6 +8,7 @@ import {
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
+import Pagination from '../../components/Pagination';
 import { NFT_ISSUE_STATUSES as STATUSES } from '@sengoku/contracts';
 
 export default function AdminNftIssuesPage() {
@@ -16,11 +17,23 @@ export default function AdminNftIssuesPage() {
   const [drafts, setDrafts] = useState<Record<string, { tokenId: string; transactionHash: string }>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [pageSize, setPageSize] = useState(50);
 
   function load() {
-    fetchAdminNftIssues(statusFilter || undefined).then((d) => setNftIssues(d.nftIssues));
+    fetchAdminNftIssues(page, statusFilter || undefined).then((d) => {
+      setNftIssues(d.nftIssues);
+      setTotal(d.total);
+      setPageSize(d.pageSize);
+    });
   }
-  useEffect(load, [statusFilter]);
+  useEffect(load, [page, statusFilter]);
+
+  function handleStatusFilterChange(value: string) {
+    setStatusFilter(value);
+    setPage(1);
+  }
 
   function draftFor(issue: AdminNftIssue) {
     return drafts[issue.id] ?? { tokenId: issue.tokenId ?? '', transactionHash: issue.transactionHash ?? '' };
@@ -73,7 +86,7 @@ export default function AdminNftIssuesPage() {
 
       <label>
         ステータスで絞り込み
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+        <select value={statusFilter} onChange={(e) => handleStatusFilterChange(e.target.value)}>
           <option value="">すべて</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
@@ -91,6 +104,7 @@ export default function AdminNftIssuesPage() {
           <EmptyState message="該当するNFT発行データがありません" />
         </div>
       ) : (
+        <>
         <div className="admin-table-card">
           <table>
             <thead>
@@ -163,6 +177,8 @@ export default function AdminNftIssuesPage() {
             </tbody>
           </table>
         </div>
+        <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
+        </>
       )}
     </div>
   );

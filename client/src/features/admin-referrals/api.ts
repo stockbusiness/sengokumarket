@@ -60,8 +60,10 @@ export interface AdminCommission {
   adminNote: string | null;
 }
 
-export function fetchAdminCommissions(status?: string) {
-  return adminFetch<{ commissions: AdminCommission[] }>(`/referrals/commissions${status ? `?status=${status}` : ''}`);
+export function fetchAdminCommissions(page: number, status?: string) {
+  const q = new URLSearchParams({ page: String(page) });
+  if (status) q.set('status', status);
+  return adminFetch<{ commissions: AdminCommission[]; total: number; page: number; pageSize: number }>(`/referrals/commissions?${q.toString()}`);
 }
 
 export function updateAdminCommission(id: string, payload: { status?: string; adminNote?: string }) {

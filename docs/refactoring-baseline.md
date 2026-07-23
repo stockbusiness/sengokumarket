@@ -561,3 +561,62 @@ server/src/modules/notifications/
 ## 結論(Phase 7)
 
 指示書12.3の受入条件のうち、現行メール内容を大きく変更しない・顧客名商品名銀行情報のエスケープ・リンクURLの正しさ・送信失敗で業務トランザクションを巻き戻さない・テンプレートsnapshot test追加をすべて満たした。特にHTMLエスケープの欠如は実際のセキュリティ上の欠陥であり、本Phaseで修正した。Notification Outbox対応は新規テーブルを伴うため見送り、理由を明記した。Phase 8(性能改善)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 8: 性能改善(完了報告・全Phase完了)
+
+## 13.1 代理店階層のN+1計測
+
+`resolveAgencyHierarchyChain()`は階層を1段ずつ`findUnique`で辿るためN+1になりうるが、指示書13.1は「性能問題が確認された場合のみ」CTE等を採用する方針のため、まず実測した。
+
+階層の深さを変えながら20回ずつ実行した平均応答時間(ローカルPostgreSQL、`prisma.$transaction`込み):
+
+| 階層深さ | 平均応答時間 |
+|---:|---:|
+| 3(実運用想定: アドバイザー/ディレクター/エージェントの3階層) | 3.83ms |
+| 10 | 9.59ms |
+| 20(`MAX_AGENCY_HIERARCHY_DEPTH`の上限値) | 16.60ms |
+
+実運用で想定される深さ(3)は4ms未満、理論上の最大深さ(20)でも17ms未満であり、チェックアウト1回あたり一度だけ実行されることを踏まえると性能問題ではないと判断した。**recursive CTE・Closure Table・Materialized Pathへの書き換えは行わない**(指示書13.1の条件どおり、問題が確認されなかったため不採用)。将来、代理店階層が事業拡大で著しく深くなった場合に再計測することを推奨する。
+
+## 13.2 管理画面一覧のページネーション
+
+指示書が挙げる6つの対象のうち、`admin/auditLogs.ts`(監査ログ)は既に`page`/`pageSize`/`total`によるページネーションが実装済みだった。これを参照実装とし、共通ロジックを`shared/pagination/parsePagination.ts`に抽出したうえで、残り5つに同じ規約で適用した。
+
+| 対象 | 変更前 | 変更後 | クライアント画面 |
+|---|---|---|---|
+| orders(注文管理) | 上限なしの全件取得 | page/pageSize/total | `AdminOrdersPage.tsx`にページャー追加 |
+| commissions(報酬) | 上限なしの全件取得 | page/pageSize/total | `AdminReferralsPage.tsx`にページャー追加 |
+| NFT issues | 上限なしの全件取得 | page/pageSize/total | `AdminNftIssuesPage.tsx`にページャー追加 |
+| Stripe events | 固定`take: 200`(ページ制御なし) | page/pageSize/total | クライアント画面が存在しないためサーバーのみ |
+| Outbox events | 固定`take: 200`(ページ制御なし) | page/pageSize/total | クライアント画面が存在しないためサーバーのみ |
+
+**CSV出力(`/orders/export.csv`・`/referrals/export.csv`)はページネーション対象から明確に除外し、従来どおり全件出力を維持した**(指示書13.3「CSV出力維持」)。テストで55件のデータに対しCSVの出力行数が全件(pageSizeの50件を超える)であることを確認済み。
+
+クライアント側は既存の`AdminAuditLogsPage.tsx`のページャーUI(前へ/次へ・「N / Mページ(T件)」表示)をそのまま流用するため、共通コンポーネント`client/src/components/Pagination.tsx`を新設し、`AdminAuditLogsPage.tsx`自身も含めて4画面すべてがこの1コンポーネントを使うよう統一した(既存の重複コードも解消)。
+
+## 13.3 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)クリーン。
+- `npx vitest run`: 494件全成功(既存487件 + ページネーション関連の新規テスト7件)。既存のstatusフィルタ・不正遷移テスト等はすべて無変更のまま成功。
+- 実データ(注文55件・報酬55件)を使い、1ページ目がpageSize件・2ページ目に残りが表示されること、CSV出力は全件のままであることをテストで確認。
+- ローカルでdev server(server:4000/client:5173)を起動し、実際に管理者アカウントでログインしてPlaywrightで確認: `/admin/orders`で60件の注文に対し「1 / 2ページ(60件)」と表示され、「次へ」クリックで2ページ目(異なる注文)に切り替わることを実際のブラウザ操作で確認した。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npm run build --workspace=client`成功。
+
+## 結論(Phase 8)
+
+指示書13.3の受入条件(既存表示互換・CSV出力維持・DBクエリ数削減・response time計測結果を文書化)をすべて満たした。代理店階層のCTE化は実測の結果、性能問題が確認されなかったため見送った(指示書自身の条件どおり)。
+
+---
+
+# 全Phase完了
+
+Phase 0(安全網・ベースライン計測)からPhase 8(性能改善)まで、指示書の実施順序(0→1→2→3→4→5→6→7→8)どおりすべて完了した。各Phaseで「変更禁止範囲」(決済・在庫・紹介・報酬・NFT/ウォレット・Outbox・ID再採番)には一切手を入れず、既存のテストスイートは各Phaseの節目で全件成功を維持しながら進めた。
+
+調査の過程で実際に発見・修正した不具合・セキュリティ上の欠陥:
+- Phase 3: 代理店連携APIの部分成功バグ(login_email競合時に代理店だけ作成されてしまう)
+- Phase 7: 通知メールのHTMLエスケープ欠如(HTMLインジェクション可能な状態)
+
+新規テーブル・マイグレーションを伴う項目(Notification Outbox、DB CHECK制約、`integrations/`ディレクトリへの物理移動等)は、いずれもリスク・スコープの観点から意図的に見送り、本ファイルの各Phaseのセクションに理由を明記した。今後これらに着手する場合は、着手のご指示をいただければ対応する。

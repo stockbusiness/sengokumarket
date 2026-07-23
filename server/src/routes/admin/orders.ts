@@ -8,6 +8,7 @@ import { matchExplainerName } from '../../services/explainerMatch';
 import { ORDER_STATUSES, type OrderStatus } from '@sengoku/contracts';
 import { assertOrderTransition } from '../../shared/statusPolicy/orderStatus.policy';
 import { DomainError } from '../../shared/errors/domainError';
+import { parsePagination } from '../../shared/pagination/parsePagination';
 
 const router = Router();
 
@@ -57,9 +58,13 @@ function serializeOrder(order: {
   };
 }
 
-router.get('/orders', async (_req, res) => {
-  const orders = await prisma.order.findMany({ orderBy: { createdAt: 'desc' } });
-  res.json({ orders: orders.map(serializeOrder) });
+router.get('/orders', async (req, res) => {
+  const { page, pageSize, skip, take } = parsePagination(req.query);
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({ orderBy: { createdAt: 'desc' }, skip, take }),
+    prisma.order.count(),
+  ]);
+  res.json({ orders: orders.map(serializeOrder), total, page, pageSize });
 });
 
 // 仕様書外の拡張: 注文一覧のCSVエクスポート。
