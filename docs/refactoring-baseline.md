@@ -316,3 +316,59 @@ server/src/modules/agencies/
 ## 結論(Phase 3)
 
 指示書8.7の受入条件のうち、既存API request/response互換・部分成功なし(今回新たに修正)・メール失敗でDB更新を巻き戻さない・同一イベント再送で重複作成しない・循環代理店を拒否・pending parentが後続登録で解決する、を満たした。対応外イベントの監査可能な永続化(8.6)は上記のとおり今回のスコープ外とした。Phase 4(Checkoutモジュール化)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 4: Checkoutモジュール化(完了報告)
+
+## 9.2 分割構成
+
+`server/src/services/checkout.ts`(315行、入力検証・在庫行ロック・在庫仮引当・購入者解決・紹介帰属・sales_model判定・注文番号生成・金額計算・説明担当者照合・注文/明細作成・クーポン予約が単一ファイルに集中)を、指示書9.2の構成どおり分割した。
+
+```text
+server/src/modules/checkout/
+├─ application/
+│  ├─ createPendingOrder.usecase.ts       … 全体のオーケストレーション(138行)
+│  └─ cancelOrderReservation.usecase.ts   … Stripeセッション作成失敗時の補償処理(21行)
+├─ domain/
+│  ├─ checkoutInput.ts                    … リクエストボディの形式検証(48行)
+│  ├─ stockAvailability.policy.ts         … 在庫可否判定(Prisma非依存、18行)
+│  ├─ salesModel.policy.ts                … agent_required判定(Prisma非依存、25行)
+│  ├─ orderPricing.service.ts             … 割引前合計金額の算出(10行)
+│  └─ checkout.types.ts                   … 共有型
+└─ infrastructure/
+   ├─ checkoutItem.repository.ts          … FOR UPDATE行ロック・在庫仮引当/解放(77行)
+   ├─ purchaserAccount.repository.ts      … 購入者解決・ゲスト作成・紹介帰属の永続化(55行)
+   ├─ orderWriter.repository.ts           … 注文・明細の作成、クーポン価格の反映(115行)
+   └─ couponReservation.adapter.ts        … 既存services/coupon.tsへの薄いAdapter(24行)
+```
+
+紹介帰属の解決自体(`resolveReferral`/`resolveReferralByAttribution`)・クーポンの検証/予約ロジック自体(`services/coupon.ts`)は指示書9.3のとおり**変更せず**、Checkout側のオーケストレーション(いつ・どの順番で呼ぶか)だけを`createPendingOrder.usecase.ts`に集約した。
+
+## 9.4 トランザクション境界
+
+指示書9.4「`createPendingOrder.usecase.ts`の外側で1つのPrismaトランザクションを維持する」を踏襲し、`prisma.$transaction`は`createPendingOrder.usecase.ts`にのみ存在する。`checkoutItem.repository.ts`・`purchaserAccount.repository.ts`・`orderWriter.repository.ts`・`couponReservation.adapter.ts`はいずれも独自にトランザクションを開始せず、呼び出し元から渡された`tx`のみを使う。
+
+## 互換性の維持
+
+`server/src/services/checkout.ts`は削除せず、新モジュールへの**互換re-exportバレル**として残した(指示書18.1「新モジュールを互換Facade経由で呼び出す」)。
+
+理由: `services/checkout.ts`からのimportはPhase3の代理店連携(参照元がapp.tsのみ)と異なり、本体コード(`routes/checkout.ts`)に加えテストファイル5件(`checkout.test.ts`・`internalCron.test.ts`・`stripeWebhook.test.ts`・`stripeWebhook.coupon.test.ts`・`stripeWebhook.mail.test.ts`)からも直接`createPendingOrder`が使われており、Phase1の`adminApi.ts`と同様、既存の呼び出し元を一切変更せずに済む方式を採用した。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)クリーン。
+- `npx vitest run`: 418件全成功(既存410件 + Domain Unit Test 8件)。`checkout.test.ts`(在庫仮引当・オーバーセル防止・agent_required・紹介永久帰属・階層記録・説明責任者・銀行振込)・`stripeWebhook*.test.ts`・`internalCron.test.ts`はすべて**無変更のまま**成功しており、既存API request/response・在庫ロック・仮引当・紹介永久帰属・agent_required・ゲスト購入・クーポン自動適用・注文スナップショットのいずれも既存挙動を維持していることを確認した。
+- Domain Unit Test(指示書15.1「stock availability」「sales model」)を新規追加: `stockAvailability.policy.test.ts`(在庫充足/不足/未公開/存在しない商品)・`salesModel.policy.test.ts`(agent_required充足/未充足/direct_allowed)、いずれもDBなしで実行。
+- `npx prisma migrate deploy`: 変更なし(今回はスキーマ変更なし)。
+- `npx tsc -b --noEmit`(client)・`npm run build --workspace=client`成功(本Phaseはサーバー専用のためclientへの影響なし)。
+
+## ファイル行数の変化
+
+| ファイル | Phase 0時点 | Phase 4後 |
+|---|---:|---:|
+| `server/src/services/checkout.ts` | 314〜315 | 5行(互換re-exportバレルのみ)。実装は`modules/checkout/`へ分割、最大ファイルは`createPendingOrder.usecase.ts`の138行 |
+
+## 結論(Phase 4)
+
+指示書9.5の受入条件(既存API request/response互換・在庫ロック維持・仮引当維持・紹介永久帰属維持・agent_required維持・ゲスト購入維持・クーポン自動適用維持・手入力クーポン失敗時の挙動維持・注文スナップショット維持・全Checkoutテスト成功)をすべて満たした。Phase 5(Config・Adapter統一)以降は、着手のご指示があり次第対応する。
