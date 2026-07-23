@@ -3,7 +3,6 @@ import {
   createAdminReferralLink,
   fetchAdminAgencies,
   fetchAdminInfluencers,
-  fetchAdminLandingOptions,
   fetchAdminReferralLinks,
   updateAdminReferralLinkStatus,
   type AdminReferralLink,
@@ -18,7 +17,6 @@ const NONE_INFLUENCER = '__none__';
 export default function AdminReferralLinksPage() {
   const [agencies, setAgencies] = useState<{ id: string; name: string }[]>([]);
   const [influencers, setInfluencers] = useState<{ id: string; name: string }[]>([]);
-  const [landingOptions, setLandingOptions] = useState<{ path: string; label: string }[]>([]);
   const [links, setLinks] = useState<AdminReferralLink[]>([]);
 
   const [agencySelection, setAgencySelection] = useState('');
@@ -27,7 +25,6 @@ export default function AdminReferralLinksPage() {
   const [influencerSelection, setInfluencerSelection] = useState(NONE_INFLUENCER);
   const [newInfluencerName, setNewInfluencerName] = useState('');
   const [commissionRate, setCommissionRate] = useState('');
-  const [landingPath, setLandingPath] = useState('/products/council-nft');
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<AdminReferralLink | null>(null);
   const [copied, setCopied] = useState(false);
@@ -38,7 +35,6 @@ export default function AdminReferralLinksPage() {
 
   useEffect(() => {
     fetchAdminAgencies().then((d) => setAgencies(d.agencies));
-    fetchAdminLandingOptions().then((d) => setLandingOptions(d.options));
     loadLinks();
   }, []);
 
@@ -75,7 +71,6 @@ export default function AdminReferralLinksPage() {
               ? null
               : { id: influencerSelection },
         commission_rate: commissionRate ? Number(commissionRate) : null,
-        landing_path: landingPath,
       });
       setCreated(result.referralLink);
       loadLinks();
@@ -148,18 +143,6 @@ export default function AdminReferralLinksPage() {
         <label>
           報酬率(任意。空欄なら自動継承)
           <input type="number" value={commissionRate} onChange={(e) => setCommissionRate(e.target.value)} />
-        </label>
-
-        <label>
-          ランディング先
-          <select value={landingPath} onChange={(e) => setLandingPath(e.target.value)}>
-            <option value="/products/council-nft">/products/council-nft(デフォルト)</option>
-            {landingOptions.map((o) => (
-              <option key={o.path} value={o.path}>
-                {o.label}({o.path})
-              </option>
-            ))}
-          </select>
         </label>
 
         {error && <p className="checkout-error">{error}</p>}

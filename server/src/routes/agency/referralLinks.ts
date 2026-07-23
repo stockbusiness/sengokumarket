@@ -24,14 +24,6 @@ router.get('/influencers', async (req, res) => {
   res.json({ influencers });
 });
 
-router.get('/referral-links/landing-options', async (_req, res) => {
-  const products = await prisma.product.findMany({
-    where: { status: 'published' },
-    select: { slug: true, name: true },
-  });
-  res.json({ options: products.map((p) => ({ path: `/products/${p.slug}`, label: p.name })) });
-});
-
 // 仕様書外の拡張(クーポン機能): 発行時に選択できる、この代理店が利用可能なクーポンの一覧。
 router.get('/coupons/available', async (req, res) => {
   const agencyId = req.authUser!.agencyId!;
@@ -99,13 +91,15 @@ router.post('/referral-links', async (req, res) => {
   const {
     influencer,
     commission_rate: commissionRate,
-    landing_path: landingPathRaw,
     coupon_id: couponId,
     coupon_auto_apply: couponAutoApplyRaw,
   } = req.body ?? {};
 
   const influencerInput = influencer as InfluencerInput | null | undefined;
-  const landingPath = isNonEmptyString(landingPathRaw) ? landingPathRaw : '/products/council-nft';
+  // 仕様書外の拡張: 商品ごとの個別リンクではなく、商品一覧ページへ統一する(2026-07-22)。
+  // 特定商品のslugへ直接紐づけると、その商品が非公開・削除・リネームされた際に
+  // 既発行済みのリンクが軒並み無効になってしまうため。
+  const landingPath = '/products';
   const couponAutoApply = couponAutoApplyRaw !== false;
 
   if (

@@ -300,15 +300,10 @@ export function fetchAdminReferralLinks() {
   return adminFetch<{ referralLinks: AdminReferralLink[] }>('/referral-links');
 }
 
-export function fetchAdminLandingOptions() {
-  return adminFetch<{ options: { path: string; label: string }[] }>('/referral-links/landing-options');
-}
-
 export interface CreateReferralLinkPayload {
   agency: { id: string } | { new_name: string; default_commission_rate?: number };
   influencer: { id: string } | { new_name: string } | null;
   commission_rate: number | null;
-  landing_path: string;
 }
 
 export function createAdminReferralLink(payload: CreateReferralLinkPayload) {

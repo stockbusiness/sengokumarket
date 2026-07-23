@@ -42,14 +42,6 @@ router.get('/referral-links', async (_req, res) => {
   });
 });
 
-router.get('/referral-links/landing-options', async (_req, res) => {
-  const products = await prisma.product.findMany({
-    where: { status: 'published' },
-    select: { slug: true, name: true },
-  });
-  res.json({ options: products.map((p) => ({ path: `/products/${p.slug}`, label: p.name })) });
-});
-
 interface AgencyInput {
   id?: string;
   new_name?: string;
@@ -57,7 +49,7 @@ interface AgencyInput {
 }
 
 router.post('/referral-links', async (req, res) => {
-  const { agency, influencer, commission_rate: commissionRate, landing_path: landingPathRaw } = req.body ?? {};
+  const { agency, influencer, commission_rate: commissionRate } = req.body ?? {};
 
   const agencyInput = agency as AgencyInput | undefined;
   if (!agencyInput || (!isNonEmptyString(agencyInput.id) && !isNonEmptyString(agencyInput.new_name))) {
@@ -65,7 +57,10 @@ router.post('/referral-links', async (req, res) => {
   }
 
   const influencerInput = influencer as InfluencerInput | null | undefined;
-  const landingPath = isNonEmptyString(landingPathRaw) ? landingPathRaw : '/products/council-nft';
+  // 仕様書外の拡張: 商品ごとの個別リンクではなく、商品一覧ページへ統一する(2026-07-22)。
+  // 特定商品のslugへ直接紐づけると、その商品が非公開・削除・リネームされた際に
+  // 既発行済みのリンクが軒並み無効になってしまうため。
+  const landingPath = '/products';
 
   if (
     commissionRate !== null &&

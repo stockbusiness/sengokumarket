@@ -31,12 +31,14 @@ describe('管理API: 紹介リンク発行', () => {
         agency: { new_name: `${marker}代理店`, default_commission_rate: 25 },
         influencer: { new_name: `${marker}インフルエンサー` },
         commission_rate: null,
-        landing_path: '/products/council-nft',
       });
 
     expect(res.status).toBe(201);
     expect(res.body.referralLink.code).toMatch(/^SGI\d{3,}$/);
     expect(res.body.referralLink.url).toContain(`ref=${res.body.referralLink.code}`);
+    // 仕様書外の拡張(2026-07-22): 商品ごとの個別リンクではなく商品一覧ページへ統一する
+    // (特定商品のslugが変更・非公開になっても既発行済みのリンクが壊れないようにするため)。
+    expect(res.body.referralLink.url).toContain('/products?ref=');
     expect(res.body.referralLink.resolvedCommissionRate).toBe(25);
     expect(res.body.referralLink.status).toBe('active');
 

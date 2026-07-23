@@ -49,11 +49,13 @@ describe('代理店ポータル: 紹介URL発行', () => {
     const created = await agent
       .post('/api/agency/referral-links')
       .set('Origin', TEST_ORIGIN)
-      .send({ influencer: { new_name: 'agency-portal-test-influencer' }, commission_rate: null, landing_path: '/products/council-nft' });
+      .send({ influencer: { new_name: 'agency-portal-test-influencer' }, commission_rate: null });
 
     expect(created.status).toBe(201);
     expect(created.body.referralLink.code).toMatch(/^SGI\d+/);
     expect(created.body.referralLink.resolvedCommissionRate).toBe(10);
+    // 仕様書外の拡張(2026-07-22): 商品ごとの個別リンクではなく商品一覧ページへ統一する。
+    expect(created.body.referralLink.url).toContain('/products?ref=');
 
     const list = await agent.get('/api/agency/referral-links');
     expect(list.status).toBe(200);
@@ -71,13 +73,13 @@ describe('代理店ポータル: 紹介URL発行', () => {
     const forbidden = await agentA
       .post('/api/agency/referral-links')
       .set('Origin', TEST_ORIGIN)
-      .send({ influencer: { id: influencerB.id }, commission_rate: null, landing_path: '/products/council-nft' });
+      .send({ influencer: { id: influencerB.id }, commission_rate: null });
     expect(forbidden.status).toBe(404);
 
     const createdB = await agentB
       .post('/api/agency/referral-links')
       .set('Origin', TEST_ORIGIN)
-      .send({ influencer: null, commission_rate: null, landing_path: '/products/council-nft' });
+      .send({ influencer: null, commission_rate: null });
     expect(createdB.status).toBe(201);
 
     const listA = await agentA.get('/api/agency/referral-links');

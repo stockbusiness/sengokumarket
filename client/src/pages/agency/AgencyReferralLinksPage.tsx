@@ -3,7 +3,6 @@ import {
   createAgencyReferralLink,
   fetchAgencyAvailableCoupons,
   fetchAgencyInfluencers,
-  fetchAgencyLandingOptions,
   fetchAgencyReferralLinks,
   type AgencyAvailableCoupon,
   type AgencyReferralLink,
@@ -25,7 +24,6 @@ function lineShareUrl(url: string): string {
 
 export default function AgencyReferralLinksPage() {
   const [influencers, setInfluencers] = useState<{ id: string; name: string }[]>([]);
-  const [landingOptions, setLandingOptions] = useState<{ path: string; label: string }[]>([]);
   const [coupons, setCoupons] = useState<AgencyAvailableCoupon[]>([]);
   const [links, setLinks] = useState<AgencyReferralLink[] | null>(null);
   const [autoCreating, setAutoCreating] = useState(false);
@@ -34,7 +32,6 @@ export default function AgencyReferralLinksPage() {
   const [influencerSelection, setInfluencerSelection] = useState(NONE_INFLUENCER);
   const [newInfluencerName, setNewInfluencerName] = useState('');
   const [commissionRate, setCommissionRate] = useState('');
-  const [landingPath, setLandingPath] = useState('/products/council-nft');
   const [couponSelection, setCouponSelection] = useState(NONE_COUPON);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<AgencyReferralLink | null>(null);
@@ -50,7 +47,6 @@ export default function AgencyReferralLinksPage() {
 
   useEffect(() => {
     fetchAgencyInfluencers().then((d) => setInfluencers(d.influencers));
-    fetchAgencyLandingOptions().then((d) => setLandingOptions(d.options));
     fetchAgencyAvailableCoupons().then((d) => setCoupons(d.coupons));
 
     // 初めて代理店ポータルを開いた場合、複雑な設定なしで使える紹介URLを自動で1つ発行しておく。
@@ -59,7 +55,7 @@ export default function AgencyReferralLinksPage() {
       if (existing.length === 0 && !autoCreateAttempted.current) {
         autoCreateAttempted.current = true;
         setAutoCreating(true);
-        createAgencyReferralLink({ influencer: null, commission_rate: null, landing_path: '/products/council-nft' })
+        createAgencyReferralLink({ influencer: null, commission_rate: null })
           .then(() => loadLinks())
           .finally(() => setAutoCreating(false));
       }
@@ -81,7 +77,6 @@ export default function AgencyReferralLinksPage() {
               ? null
               : { id: influencerSelection },
         commission_rate: commissionRate ? Number(commissionRate) : null,
-        landing_path: landingPath,
         coupon_id: couponSelection === NONE_COUPON ? null : couponSelection,
       });
       setCreated(result.referralLink);
@@ -152,18 +147,6 @@ export default function AgencyReferralLinksPage() {
           <label>
             報酬率(任意。空欄なら自動継承)
             <input type="number" value={commissionRate} onChange={(e) => setCommissionRate(e.target.value)} />
-          </label>
-
-          <label>
-            ランディング先
-            <select value={landingPath} onChange={(e) => setLandingPath(e.target.value)}>
-              <option value="/products/council-nft">/products/council-nft(デフォルト)</option>
-              {landingOptions.map((o) => (
-                <option key={o.path} value={o.path}>
-                  {o.label}({o.path})
-                </option>
-              ))}
-            </select>
           </label>
 
           {coupons.length > 0 && (

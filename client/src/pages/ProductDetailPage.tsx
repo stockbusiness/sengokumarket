@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { fetchProduct, type ProductDetail } from '../lib/api';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { ApiError, fetchProduct, type ProductDetail } from '../lib/api';
 import { useCart } from '../context/CartContext';
+import { getEffectiveReferralCode } from '../lib/referral';
 
 export default function ProductDetailPage() {
   const { idOrSlug } = useParams<{ idOrSlug: string }>();
+  const navigate = useNavigate();
   const { addItem } = useCart();
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -23,9 +25,19 @@ export default function ProductDetailPage() {
         setVariantId(data.product.variants[0]?.id ?? '');
         setActiveImageIndex(0);
       })
-      .catch((e) => setError(e.message))
+      .catch((e) => {
+        // 仕様書外の拡張(2026-07-22): 商品ごとの個別リンクは統一先(/products)へ移行済みだが、
+        // 既に配布済みの旧リンク(削除・非公開・リネームされた商品を指すもの)を開いた場合、
+        // エラー画面で行き止まりにせず、紹介コードを保持したまま商品一覧へ誘導する。
+        if (e instanceof ApiError && e.code === 'PRODUCT_NOT_FOUND') {
+          const ref = getEffectiveReferralCode();
+          navigate(ref ? `/products?ref=${encodeURIComponent(ref)}` : '/products', { replace: true });
+          return;
+        }
+        setError(e.message);
+      })
       .finally(() => setLoading(false));
-  }, [idOrSlug]);
+  }, [idOrSlug, navigate]);
 
   if (loading) return <p>読み込み中です...</p>;
   if (error) return <p>読み込みに失敗しました: {error}</p>;
