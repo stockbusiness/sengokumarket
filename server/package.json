@@ -18,6 +18,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@sengoku/contracts": "*",
     "@prisma/client": "^5.22.0",
     "@vercel/blob": "^2.6.1",
     "bcryptjs": "^3.0.3",

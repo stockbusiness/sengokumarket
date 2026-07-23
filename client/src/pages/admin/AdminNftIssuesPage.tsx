@@ -8,8 +8,7 @@ import {
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
-
-const STATUSES = ['wallet_required', 'ready_to_issue', 'processing', 'issued', 'failed', 'cancelled'];
+import { NFT_ISSUE_STATUSES as STATUSES } from '@sengoku/contracts';
 
 export default function AdminNftIssuesPage() {
   const [nftIssues, setNftIssues] = useState<AdminNftIssue[]>([]);

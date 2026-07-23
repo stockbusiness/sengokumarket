@@ -6,7 +6,7 @@ export default function StatusSelect({
   onChange,
 }: {
   value: string;
-  options: string[];
+  options: readonly string[];
   onChange: (value: string) => void;
 }) {
   return (

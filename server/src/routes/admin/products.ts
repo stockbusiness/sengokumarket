@@ -4,13 +4,9 @@ import multer from 'multer';
 import { put } from '@vercel/blob';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
+import { ITEM_TYPES, PRODUCT_STATUSES as STATUSES, SALES_MODELS } from '@sengoku/contracts';
 
 const router = Router();
-
-const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
-const STATUSES = ['draft', 'published', 'archived'];
-// 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
-const SALES_MODELS = ['direct_allowed', 'agent_required', 'hybrid'];
 
 // 仕様書外の拡張: 商品画像アップロード。Vercelのサーバーレス実行環境はローカルディスクが
 // 永続化されないため、ディスクに書かず(memoryStorage)Vercel Blobへ直接アップロードする。

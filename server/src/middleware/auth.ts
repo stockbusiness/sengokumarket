@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { sendError } from '../lib/apiError';
+import { ADMIN_ROLES } from '@sengoku/contracts';
 
 export interface AuthenticatedUser {
   id: string;
@@ -27,14 +28,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
-const ADMIN_ROLES = ['admin', 'admin_viewer', 'staff'];
-
 // 仕様書外の拡張: 管理者権限を「admin(通常)」「admin_viewer(閲覧専用)」「staff(日次業務のみ)」に分ける。
 // いずれも管理画面自体へのアクセスは許可し、書き込み系操作の制限はrestrictAdminViewerToReadOnly、
 // staffが利用できない機能の制限はforbidStaffで一括して弾く(ルート個別にチェックを書かない)。
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   requireAuth(req, res, () => {
-    if (!ADMIN_ROLES.includes(req.authUser?.role ?? '')) {
+    if (!(ADMIN_ROLES as readonly string[]).includes(req.authUser?.role ?? '')) {
       return sendError(res, 403, 'FORBIDDEN', '管理者のみ利用できます');
     }
     next();

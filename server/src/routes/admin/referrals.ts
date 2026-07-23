@@ -2,10 +2,9 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { buildCsv } from '../../lib/csv';
+import { COMMISSION_STATUSES } from '@sengoku/contracts';
 
 const router = Router();
-
-const COMMISSION_STATUSES = ['pending', 'approved', 'paid', 'cancelled'];
 
 router.get('/referrals/summary', async (_req, res) => {
   const paidOrders = await prisma.order.findMany({
@@ -158,7 +157,7 @@ router.get('/referrals/export.csv', async (req, res) => {
 
   const requestedStatuses = typeof req.query.status === 'string' ? req.query.status.split(',') : ['pending', 'approved'];
   // cancelledは常に対象外。paidはデフォルト除外でオプションのみ含められる(仕様書v1.5 9.7)。
-  const statuses = requestedStatuses.filter((s) => COMMISSION_STATUSES.includes(s) && s !== 'cancelled');
+  const statuses = requestedStatuses.filter((s) => (COMMISSION_STATUSES as readonly string[]).includes(s) && s !== 'cancelled');
 
   const toDateExclusive = new Date(to);
   toDateExclusive.setDate(toDateExclusive.getDate() + 1);

@@ -2,11 +2,12 @@
 // 保存される金額(basePrice/variant.price)は常に実際の決済金額(税込)であり、
 // この変換はあくまで入力時の利便性のためのもの(仕様書v1.5 コーディング規約「金額は
 // すべてINTEGER(円)」を維持し、税別入力時は税込金額に変換してから送信する)。
-export const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
-export const STATUSES = ['draft', 'published', 'archived'];
-// 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
-export const SALES_MODELS = ['direct_allowed', 'agent_required', 'hybrid'] as const;
-export const SALES_MODEL_LABELS: Record<string, string> = {
+import { ITEM_TYPES, PRODUCT_STATUSES as STATUSES, SALES_MODELS, type SalesModel } from '@sengoku/contracts';
+
+// 保守性改善Phase 2: フロント・バック重複を避けるため@sengoku/contractsから再exportする
+// (このファイルを直接importしている既存箇所を変更せずに済むようにするため)。
+export { ITEM_TYPES, STATUSES, SALES_MODELS };
+export const SALES_MODEL_LABELS: Record<SalesModel, string> = {
   direct_allowed: '直販可能(代理店なしで購入可)',
   agent_required: '代理店経由必須(担当代理店確定が必要)',
   hybrid: '直販・代理店経由の併用',

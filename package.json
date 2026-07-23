@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "workspaces": [
     "server",
-    "client"
+    "client",
+    "packages/contracts"
   ],
   "scripts": {
     "dev:server": "npm run dev --workspace=server",

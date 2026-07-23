@@ -5,10 +5,9 @@ import { buildCsv } from '../../lib/csv';
 import { HttpError } from '../../lib/httpError';
 import { confirmBankTransferPayment } from '../../services/bankTransfer';
 import { matchExplainerName } from '../../services/explainerMatch';
+import { ORDER_STATUSES } from '@sengoku/contracts';
 
 const router = Router();
-
-const ORDER_STATUSES = ['pending', 'paid', 'cancelled', 'refunded'];
 
 function serializeOrder(order: {
   id: string;

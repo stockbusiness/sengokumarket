@@ -9,8 +9,7 @@ import {
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
-
-const COMMISSION_STATUSES = ['pending', 'approved', 'paid', 'cancelled'];
+import { COMMISSION_STATUSES } from '@sengoku/contracts';
 
 export default function AdminReferralsPage() {
   const [summary, setSummary] = useState<AdminReferralSummary | null>(null);

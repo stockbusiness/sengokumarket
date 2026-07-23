@@ -1,10 +1,11 @@
 import { adminFetch, adminSend } from '../../shared/api/adminClient';
+import type { AdminRole } from '@sengoku/contracts';
 
 export interface AdminUser {
   id: string;
   name: string;
   email: string;
-  role: 'admin' | 'admin_viewer' | 'staff';
+  role: AdminRole;
   createdAt: string;
 }
 

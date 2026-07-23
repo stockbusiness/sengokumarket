@@ -187,3 +187,66 @@ client/src/app/routes/agencyRoutes.tsx     … 代理店ポータル
 ## 結論(Phase 1)
 
 指示書6.5の受入条件(画面・API動作に変更なし・staffへの管理画面リンク表示・server側認可は変更しない・adminApi.tsは互換re-exportのみ・client build成功・主要管理画面のsmoke test成功)をすべて満たした。Phase 2(共有Contracts追加)以降は、着手のご指示があり次第対応する。
+
+---
+
+# Phase 2: 共有Contracts追加(完了報告)
+
+## 7章方針に沿った実装
+
+指示書7.2「初期実装: 依存ライブラリを増やさず、まずTypeScriptの型と`as const`定数だけを共有する」を採用。ビルドステップなしの新規ワークスペース`packages/contracts`を追加した(`main`/`types`とも`src/index.ts`を直接指す。dist生成なし)。
+
+```text
+packages/contracts/src/auth.ts         … USER_ROLES / ADMIN_ROLES / FULL_ADMIN_ROLES
+packages/contracts/src/product.ts      … ITEM_TYPES / PRODUCT_STATUSES / SALES_MODELS
+packages/contracts/src/order.ts        … ORDER_STATUSES / COMMISSION_STATUSES / COUPON_USAGE_STATUSES
+packages/contracts/src/payment.ts      … PAYMENT_STATUSES / STRIPE_EVENT_STATUSES
+packages/contracts/src/nft.ts          … NFT_ISSUE_STATUSES
+packages/contracts/src/integration.ts  … INTEGRATION_OUTBOX_STATUSES
+packages/contracts/src/index.ts        … barrel re-export
+```
+
+Vercelの実デプロイ経路(`api/index.ts`が`server/src/app.ts`をTypeScript原文のままesbuildで束ねる方式であり、`server`独自の`tsc`ビルド成果物`dist/`はデプロイに使われていない)を確認済みのため、ビルドステップを持たないパッケージでも本番・開発いずれの経路でも問題なく解決できると判断した。dev(`tsx`)・vitest・client(Vite)・server(`tsc --noEmit`)の4経路すべてで動作確認済み。
+
+## 重複解消した箇所
+
+サーバー・クライアント間で内容が完全一致していた状態定数・ロール定数を、以下の11箇所で`@sengoku/contracts`からの単一importに統一した。
+
+| 定数 | 統一した箇所 |
+|---|---|
+| `ITEM_TYPES` / `PRODUCT_STATUSES` / `SALES_MODELS` | `server/src/routes/admin/products.ts`、`server/src/services/csvImport.ts`、`client/src/lib/productPricing.ts`(既存の再export形式で維持) |
+| `ORDER_STATUSES` | `server/src/routes/admin/orders.ts`、`client/src/pages/admin/AdminOrdersPage.tsx` |
+| `COMMISSION_STATUSES` | `server/src/routes/admin/referrals.ts`、`client/src/pages/admin/AdminReferralsPage.tsx` |
+| `NFT_ISSUE_STATUSES` | `server/src/routes/admin/nftIssues.ts`、`client/src/pages/admin/AdminNftIssuesPage.tsx` |
+| `ADMIN_ROLES` / `FULL_ADMIN_ROLES` | `server/src/routes/admin/adminUsers.ts`、`server/src/middleware/auth.ts`、`client/src/app/permissions.ts`、`client/src/features/admin-users/api.ts`(`AdminUser.role`の型) |
+| `STRIPE_EVENT_STATUSES` | `server/src/routes/admin/stripeEvents.ts` |
+| `INTEGRATION_OUTBOX_STATUSES` | `server/src/routes/admin/integrationOutbox.ts` |
+
+`COUPON_USAGE_STATUSES`・`PAYMENT_STATUSES`は契約定義のみ追加し、消費側(`server/src/services/coupon.ts`、決済系サービス)は今回あえて変更していない(下記「対象外」を参照)。
+
+## ドリフト発見と対応
+
+型を突き合わせる過程で以下の食い違いを発見し、指示書7章の想定どおり「型を合わせる前に実際の仕様を確認」した:
+
+- `OrderStatus`(`orders.order_status`、4値: pending/paid/cancelled/refunded)と`PaymentStatus`(`orders.payment_status`、5値: pending/paid/failed/refunded/expired)は名称が紛らわしいが別概念であり、統合しなかった(それぞれ`order.ts`/`payment.ts`に分離定義し、コメントで明記)。
+- `server/src/routes/integrations/agencies.ts:245`のログイン済みロール判定用の3値リストは、`ADMIN_ROLES`と値が近いが業務的に異なる概念のため、あえて統一対象から除外した(コメントで理由を明記)。
+- `readonly`タプルを`Array.prototype.includes`に渡す際、値側が`any`ではなく明示的に`string`型の場合は`(X as readonly string[]).includes(...)`のキャストが必要になる箇所が6箇所あり(`middleware/auth.ts`、`admin/integrationOutbox.ts`、`admin/referrals.ts`、`admin/stripeEvents.ts`、`services/csvImport.ts`×2)、いずれも動作を変えずに型エラーのみ解消した。あわせて`StatusSelect`コンポーネントの`options`propを`string[]`から`readonly string[]`に緩和した(`AdminOrdersPage`等3箇所で`readonly`配列をそのまま渡せるようにするため)。
+- `server/prisma/schema.prisma`の`User.role`列コメントが`staff`ロールの記載漏れだったため、ドキュメントのみ修正した(挙動変更なし)。
+
+## 対象外(意図的に見送った箇所)
+
+指示書の「低リスク」の範囲を超えるため、Phase 2では以下のコア決済・在庫・報酬ロジックファイルには手を入れていない(inline文字列比較のまま維持):
+
+- `server/src/services/checkout.ts`、`stripeWebhookHandlers.ts`、`bankTransfer.ts`(Phase 4: Checkoutモジュール化の対象)
+- `server/src/services/coupon.ts`(`CouponUsageStatus`のinline比較はそのまま)
+- `server/src/services/stripeEventInbox.ts`、`integrationOutboxDispatcher.ts`(冪等性・Outboxのコア状態機械)
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)いずれもクリーン。
+- `npx vitest run`: 405件全成功(Phase 0/1と同数、リグレッションなし)。
+- `npm run build --workspace=client`成功。
+
+## 結論(Phase 2)
+
+指示書7章の受入条件(ビルドステップなしでの型・定数共有、既存の重複定義を実際の値と突き合わせて統一、コアの決済・在庫・報酬ロジックは変更しない)を満たした。Phase 3(代理店連携モジュール化)以降は、着手のご指示があり次第対応する。

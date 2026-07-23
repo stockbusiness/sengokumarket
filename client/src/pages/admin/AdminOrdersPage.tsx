@@ -9,8 +9,7 @@ import {
 import StatusBadge from '../../components/StatusBadge';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
-
-const ORDER_STATUSES = ['pending', 'paid', 'cancelled', 'refunded'];
+import { ORDER_STATUSES } from '@sengoku/contracts';
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
 

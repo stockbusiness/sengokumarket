@@ -4,16 +4,15 @@ import { sendError } from '../../lib/apiError';
 import { getStripeClient } from '../../lib/stripeClient';
 import { processStripeEvent } from '../stripeWebhook';
 import { claimStripeEventForManualRetry, markStripeEventFailed, markStripeEventSucceeded } from '../../services/stripeEventInbox';
+import { STRIPE_EVENT_STATUSES as STATUSES } from '@sengoku/contracts';
 
 const router = Router();
-
-const STATUSES = ['processing', 'succeeded', 'failed_retryable', 'failed_terminal'];
 
 // 仕様書外の拡張(千ノ国全体統合契約2026-07-21・受入条件9「部分失敗後に管理画面またはジョブで
 // 再実行できる」): Stripe Webhookの処理状況を一覧・監視するための管理画面API。
 router.get('/stripe-events', async (req, res) => {
   const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-  if (status !== undefined && !STATUSES.includes(status)) {
+  if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
   }
 

@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
+import { NFT_ISSUE_STATUSES as STATUSES } from '@sengoku/contracts';
 
 const router = Router();
-
-const STATUSES = ['wallet_required', 'ready_to_issue', 'processing', 'issued', 'failed', 'cancelled'];
 const TX_HASH_RE = /^0x[a-fA-F0-9]{64}$/;
 // 保留(cronの再試行対象から外す)は新規ステータスを増やさず、next_attempt_atを遠い未来に
 // 設定することで表現する(仕様書外の拡張。nftMintProcessing.tsのバックオフと同じ仕組みを流用)。

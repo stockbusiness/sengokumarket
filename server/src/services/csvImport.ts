@@ -1,8 +1,6 @@
 import { parse } from 'csv-parse/sync';
 import { prisma } from '../lib/prisma';
-
-const ITEM_TYPES = ['nft', 'physical', 'service', 'membership', 'fee'];
-const STATUSES = ['draft', 'published', 'archived'];
+import { ITEM_TYPES, PRODUCT_STATUSES as STATUSES } from '@sengoku/contracts';
 
 const HEADER_MAP: Record<string, string> = {
   商品名: 'name',
@@ -61,12 +59,12 @@ function validateRow(row: Partial<ParsedRow>, line: number): { data: ParsedRow |
   if (!row.category) errors.push('カテゴリは必須です');
   // 商品タイプは誤ってnft_issuesが作られる事故を防ぐため必須(仕様書v1.5 5.6)
   if (!row.itemType) errors.push('商品タイプは必須です');
-  else if (!ITEM_TYPES.includes(row.itemType)) errors.push(`商品タイプが不正です(${row.itemType})`);
+  else if (!(ITEM_TYPES as readonly string[]).includes(row.itemType)) errors.push(`商品タイプが不正です(${row.itemType})`);
   if (!row.variantName) errors.push('バリエーション名は必須です');
   if (!row.sku) errors.push('SKUは必須です(重複時の更新キーとして使用するため)');
   if (!row.price || !/^\d+$/.test(row.price)) errors.push('価格は0以上の整数で入力してください');
   if (!row.stock || !/^\d+$/.test(row.stock)) errors.push('在庫数は0以上の整数で入力してください');
-  if (row.status && !STATUSES.includes(row.status)) errors.push(`公開ステータスが不正です(${row.status})`);
+  if (row.status && !(STATUSES as readonly string[]).includes(row.status)) errors.push(`公開ステータスが不正です(${row.status})`);
 
   if (errors.length > 0) return { data: null, errors };
 

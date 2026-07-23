@@ -6,11 +6,9 @@ import { sendError } from '../../lib/apiError';
 import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../../lib/validation';
 import { createPasswordResetToken } from '../../services/passwordReset';
 import { sendAdminAccountSetupEmail } from '../../services/mailTemplates';
+import { ADMIN_ROLES, type AdminRole } from '@sengoku/contracts';
 
 const router = Router();
-
-const ADMIN_ROLES = ['admin', 'admin_viewer', 'staff'] as const;
-type AdminRole = (typeof ADMIN_ROLES)[number];
 
 const ROLE_LABEL: Record<AdminRole, string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
 
