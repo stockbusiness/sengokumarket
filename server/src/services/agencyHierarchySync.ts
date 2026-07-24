@@ -72,9 +72,11 @@ export async function syncAgencyHierarchyFromExternalSystem(): Promise<AgencyHie
     const agency = await prisma.agency.findUnique({ where: { externalId: approvedNode.code } });
     if (!agency) continue;
 
+    // 残課題指示書Stage11: role・agencyIdはJWTペイロードにスナップショットされるため、
+    // 変更後は旧Cookieを即座に無効化できるようsessionVersionも合わせてインクリメントする。
     await prisma.user.update({
       where: { id: user.id },
-      data: { role: 'agency', agencyId: agency.id, agencyApplicationSubmittedAt: null },
+      data: { role: 'agency', agencyId: agency.id, agencyApplicationSubmittedAt: null, sessionVersion: { increment: 1 } },
     });
     applicationsApproved += 1;
   }

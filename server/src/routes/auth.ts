@@ -87,7 +87,7 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
     return created;
   });
 
-  const token = signAuthToken({ sub: user.id, role: user.role });
+  const token = signAuthToken({ sub: user.id, role: user.role, sessionVersion: user.sessionVersion });
   setAuthCookie(res, token);
   res.status(201).json({ user: publicUser(user) });
 
@@ -115,7 +115,12 @@ router.post('/auth/login', async (req, res) => {
   }
 
   await recordLoginSuccess(email, ip);
-  const token = signAuthToken({ sub: user.id, role: user.role, agencyId: user.agencyId ?? undefined });
+  const token = signAuthToken({
+    sub: user.id,
+    role: user.role,
+    agencyId: user.agencyId ?? undefined,
+    sessionVersion: user.sessionVersion,
+  });
   setAuthCookie(res, token);
   res.json({ user: publicUser(user) });
 });
@@ -139,7 +144,12 @@ router.post('/auth/agency-sso', agencySsoLimiter, async (req, res) => {
   const user = await prisma.user.findUnique({ where: { id: result.userId } });
   if (!user) return sendError(res, 401, 'agency_not_linked', '代理店ポータルとの連携が見つかりません');
 
-  const jwt = signAuthToken({ sub: user.id, role: user.role, agencyId: user.agencyId ?? undefined });
+  const jwt = signAuthToken({
+    sub: user.id,
+    role: user.role,
+    agencyId: user.agencyId ?? undefined,
+    sessionVersion: user.sessionVersion,
+  });
   setAuthCookie(res, jwt);
   res.json({ user: publicUser(user), returnTo: result.returnTo });
 });

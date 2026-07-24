@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { sendError } from '../lib/apiError';
+import { prisma } from '../lib/prisma';
 import { ADMIN_ROLES } from '@sengoku/contracts';
 
 export interface AuthenticatedUser {
@@ -16,7 +17,11 @@ declare module 'express-serve-static-core' {
   }
 }
 
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
+// 残課題指示書Stage11: JWTはCookieの有効期間中(7日)ずっと有効なままなので、role変更・
+// agencyId変更・パスワード変更・アカウント停止・強制ログアウトを即座に反映できない。
+// トークンの検証だけで済ませず、リクエストごとにDBの最新状態と照合し、発行時点から
+// 何か変わっていれば旧Cookieを無効化する。
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.[AUTH_COOKIE_NAME];
   const payload = typeof token === 'string' ? verifyAuthToken(token) : null;
 
@@ -24,7 +29,31 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
     return sendError(res, 401, 'UNAUTHENTICATED', 'ログインが必要です');
   }
 
-  req.authUser = { id: payload.sub, role: payload.role, agencyId: payload.agencyId };
+  let user;
+  try {
+    user = await prisma.user.findUnique({ where: { id: payload.sub }, include: { agency: true } });
+  } catch (e) {
+    console.error('requireAuth: セッション確認のためのDB照合に失敗しました', e);
+    return sendError(res, 500, 'INTERNAL_ERROR', '認証確認に失敗しました');
+  }
+
+  if (!user) {
+    return sendError(res, 401, 'SESSION_REVOKED', 'セッションが無効になりました。再度ログインしてください');
+  }
+
+  // agencyIdが実際に設定されている場合のみ、その代理店のstatusを照合する
+  // (role='agency'でもagencyId未設定の異常系ではagency自体が存在しないため対象外)。
+  const sessionStillValid =
+    user.role === payload.role &&
+    (user.agencyId ?? undefined) === payload.agencyId &&
+    user.sessionVersion === payload.sessionVersion &&
+    (!user.agencyId || user.agency?.status === 'active');
+
+  if (!sessionStillValid) {
+    return sendError(res, 401, 'SESSION_REVOKED', 'セッションが無効になりました。再度ログインしてください');
+  }
+
+  req.authUser = { id: user.id, role: user.role, agencyId: user.agencyId ?? undefined };
   next();
 }
 

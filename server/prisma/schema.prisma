@@ -66,6 +66,10 @@ model User {
   passwordHash String   @map("password_hash")
   role         String   @default("user") // user | admin | admin_viewer(閲覧専用管理者。仕様書外の拡張) | staff(仕様書外の拡張) | agency
   agencyId     String?  @map("agency_id") @db.Uuid // role=agencyの場合のみ設定(仕様書外の拡張: 代理店ポータルログイン)
+  // 仕様書外の拡張(残課題指示書Stage11): JWTの即時失効用。role・agencyId変更、パスワード変更、
+  // アカウント停止、強制ログアウト時にインクリメントする。JWT発行時にスナップショットし、
+  // requireAuthでDBの最新値と照合することで、旧Cookieを即座に無効化する。
+  sessionVersion Int    @default(1) @map("session_version")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 

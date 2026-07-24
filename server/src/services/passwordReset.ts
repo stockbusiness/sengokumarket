@@ -43,9 +43,11 @@ export async function consumePasswordResetToken(token: string, newPassword: stri
       return false;
     }
 
+    // 残課題指示書Stage11: パスワード変更後は旧Cookieを即座に無効化するため、
+    // sessionVersionを合わせてインクリメントする。
     await tx.user.update({
       where: { id: record.userId },
-      data: { passwordHash: await bcrypt.hash(newPassword, 10) },
+      data: { passwordHash: await bcrypt.hash(newPassword, 10), sessionVersion: { increment: 1 } },
     });
     await tx.passwordResetToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
     return true;

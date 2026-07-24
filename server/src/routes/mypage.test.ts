@@ -375,7 +375,13 @@ describe('マイページAPI', () => {
         .post('/api/auth/register')
         .set('Origin', ORIGIN)
         .send({ name: '既に代理店太郎', email, password: 'password123' });
-      await prisma.user.update({ where: { id: registerRes.body.user.id }, data: { role: 'agency' } });
+      // 残課題指示書Stage11: role変更後は旧Cookieが即座に無効化されるため、この直接更新
+      // (実運用の権限変更相当)の後は再ログインして最新roleを反映したCookieを取り直す。
+      await prisma.user.update({
+        where: { id: registerRes.body.user.id },
+        data: { role: 'agency', sessionVersion: { increment: 1 } },
+      });
+      await agencyRoleAgent.post('/api/auth/login').set('Origin', ORIGIN).send({ email, password: 'password123' });
 
       const res = await agencyRoleAgent.post('/api/mypage/agency-application').set('Origin', ORIGIN);
       expect(res.status).toBe(400);

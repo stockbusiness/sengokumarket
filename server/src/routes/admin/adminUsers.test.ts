@@ -135,6 +135,31 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     expect(res.body.error.code).toBe('ADMIN_USER_NOT_FOUND');
   });
 
+  // 残課題指示書Stage11: JWT即時失効。この機能自体の効果(旧Cookieが実際に失効すること)は
+  // auth.test.tsの「残課題指示書Stage11」describeで確認する。ここではエンドポイント単体の挙動のみ。
+  it('強制ログアウトAPIは対象アカウントのsessionVersionを進める', async () => {
+    const { agent } = await createAdminAgent(app);
+    const { userId: viewerUserId } = await createViewerAgent('強制ログアウト対象太郎');
+
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: viewerUserId } });
+    const res = await agent.post(`/api/admin/admin-users/${viewerUserId}/force-logout`).set('Origin', TEST_ORIGIN).send({});
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: viewerUserId } });
+    expect(after.sessionVersion).toBe(before.sessionVersion + 1);
+  });
+
+  it('存在しないアカウントへの強制ログアウトは404になる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .post('/api/admin/admin-users/00000000-0000-0000-0000-000000000000/force-logout')
+      .set('Origin', TEST_ORIGIN)
+      .send({});
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('ADMIN_USER_NOT_FOUND');
+  });
+
   it('自分自身のアカウントは削除できない', async () => {
     const { agent, userId } = await createAdminAgent(app);
     const res = await agent.delete(`/api/admin/admin-users/${userId}`).set('Origin', TEST_ORIGIN);

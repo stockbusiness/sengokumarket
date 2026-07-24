@@ -79,8 +79,25 @@ router.put('/admin-users/:id/role', async (req, res) => {
     return sendError(res, 400, 'CANNOT_CHANGE_OWN_ROLE', '自分自身の権限は変更できません。別の管理者に依頼してください');
   }
 
-  const updated = await prisma.user.update({ where: { id: target.id }, data: { role } });
+  // 残課題指示書Stage11: 権限変更後は旧Cookieを即座に無効化するため、sessionVersionを
+  // 合わせてインクリメントする。
+  const updated = await prisma.user.update({
+    where: { id: target.id },
+    data: { role, sessionVersion: { increment: 1 } },
+  });
   res.json({ adminUser: { id: updated.id, name: updated.name, email: updated.email, role: updated.role, createdAt: updated.createdAt } });
+});
+
+// 仕様書外の拡張(残課題指示書Stage11): 不正利用の疑い等で、パスワード変更を待たずに
+// 特定の管理者アカウントの既存セッションを即座に全て無効化する。
+router.post('/admin-users/:id/force-logout', async (req, res) => {
+  const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!target || !ADMIN_ROLES.includes(target.role as AdminRole)) {
+    return sendError(res, 404, 'ADMIN_USER_NOT_FOUND', '管理者アカウントが見つかりません');
+  }
+
+  await prisma.user.update({ where: { id: target.id }, data: { sessionVersion: { increment: 1 } } });
+  res.json({ success: true });
 });
 
 // 仕様書外の拡張: メール未達等でパスワード設定リンクが届いていない場合に、

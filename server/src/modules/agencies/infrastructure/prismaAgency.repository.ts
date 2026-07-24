@@ -125,7 +125,9 @@ export async function findReferredByAgencyId(db: Db, email: string): Promise<str
 }
 
 export function promoteUserToAgency(db: Db, userId: string, agencyId: string) {
-  return db.user.update({ where: { id: userId }, data: { role: 'agency', agencyId } });
+  // 残課題指示書Stage11: role・agencyIdはJWTペイロードにスナップショットされるため、
+  // 変更後は旧Cookieを即座に無効化できるようsessionVersionも合わせてインクリメントする。
+  return db.user.update({ where: { id: userId }, data: { role: 'agency', agencyId, sessionVersion: { increment: 1 } } });
 }
 
 export async function createAgencyLoginUser(db: Db, data: { name: string; email: string; agencyId: string }) {

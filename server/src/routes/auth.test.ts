@@ -2,9 +2,12 @@ import crypto from 'crypto';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 import { setSetting } from '../services/settings';
+import { generateAgencyCode } from '../services/referralCodeGenerator';
+import { createAdminAgent } from '../test/adminAgent';
 
 const app = createApp();
 const ORIGIN = 'http://localhost:5173';
@@ -346,5 +349,135 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+// 残課題指示書Stage11: JWT即時失効。role・agencyId変更、パスワード変更、代理店停止、
+// 強制ログアウトの直後に、発行済みの旧Cookieが即座に無効化されることを確認する。
+describe('残課題指示書Stage11: JWT即時失効', () => {
+  afterAll(async () => {
+    await prisma.passwordResetToken.deleteMany({ where: { user: { email: { contains: 'session-revocation-test' } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'session-revocation-test' } } });
+    await prisma.agency.deleteMany({ where: { name: { contains: 'session-revocation-test' } } });
+    await prisma.$disconnect();
+  });
+
+  it('パスワード変更後、旧Cookieでログイン必須APIへアクセスできない', async () => {
+    const email = `session-revocation-test-pw-${Date.now()}@example.com`;
+    const user = await prisma.user.create({
+      data: { name: 'x', email, passwordHash: await bcrypt.hash('old-password1', 10), role: 'user' },
+    });
+    const agent = request.agent(app);
+    await agent.post('/api/auth/login').set('Origin', ORIGIN).send({ email, password: 'old-password1' });
+
+    const before = await agent.get('/api/auth/me');
+    expect(before.status).toBe(200);
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    await prisma.passwordResetToken.create({
+      data: { userId: user.id, tokenHash, expiresAt: new Date(Date.now() + 3600_000) },
+    });
+
+    const confirmRes = await request(app)
+      .post('/api/auth/password-reset/confirm')
+      .set('Origin', ORIGIN)
+      .send({ token, newPassword: 'new-password1' });
+    expect(confirmRes.status).toBe(200);
+
+    const after = await agent.get('/api/auth/me');
+    expect(after.status).toBe(401);
+    expect(after.body.error.code).toBe('SESSION_REVOKED');
+  });
+
+  it('管理者降格後、旧Cookieで管理APIへアクセスできない', async () => {
+    const { agent: operatorAgent } = await createAdminAgent(app);
+    const targetEmail = `session-revocation-test-admin-${Date.now()}@example.com`;
+    const target = await prisma.user.create({
+      data: { name: '降格対象', email: targetEmail, passwordHash: await bcrypt.hash('targetpassword1', 10), role: 'admin' },
+    });
+
+    const targetAgent = request.agent(app);
+    await targetAgent.post('/api/auth/login').set('Origin', ORIGIN).send({ email: targetEmail, password: 'targetpassword1' });
+
+    const before = await targetAgent.get('/api/admin/dashboard');
+    expect(before.status).toBe(200);
+
+    const demoteRes = await operatorAgent
+      .put(`/api/admin/admin-users/${target.id}/role`)
+      .set('Origin', ORIGIN)
+      .send({ role: 'staff' });
+    expect(demoteRes.status).toBe(200);
+
+    const after = await targetAgent.get('/api/admin/dashboard');
+    expect(after.status).toBe(401);
+    expect(after.body.error.code).toBe('SESSION_REVOKED');
+  });
+
+  it('強制ログアウト後、旧Cookieでログイン必須APIへアクセスできない', async () => {
+    const { agent: operatorAgent } = await createAdminAgent(app);
+    const targetEmail = `session-revocation-test-forcelogout-${Date.now()}@example.com`;
+    const target = await prisma.user.create({
+      data: { name: '強制ログアウト対象', email: targetEmail, passwordHash: await bcrypt.hash('targetpassword1', 10), role: 'staff' },
+    });
+
+    const targetAgent = request.agent(app);
+    await targetAgent.post('/api/auth/login').set('Origin', ORIGIN).send({ email: targetEmail, password: 'targetpassword1' });
+
+    const before = await targetAgent.get('/api/auth/me');
+    expect(before.status).toBe(200);
+
+    const forceLogoutRes = await operatorAgent
+      .post(`/api/admin/admin-users/${target.id}/force-logout`)
+      .set('Origin', ORIGIN)
+      .send({});
+    expect(forceLogoutRes.status).toBe(200);
+
+    const after = await targetAgent.get('/api/auth/me');
+    expect(after.status).toBe(401);
+    expect(after.body.error.code).toBe('SESSION_REVOKED');
+  });
+
+  it('代理店が停止(inactive)されると、旧Cookieで代理店APIへアクセスできない', async () => {
+    const agency = await prisma.$transaction(async (tx) => {
+      const code = await generateAgencyCode(tx);
+      return tx.agency.create({ data: { name: 'session-revocation-test-agency', code, defaultCommissionRate: 10 } });
+    });
+    const email = `session-revocation-test-agencyuser-${Date.now()}@example.com`;
+    await prisma.user.create({
+      data: {
+        name: '代理店ユーザー',
+        email,
+        passwordHash: await bcrypt.hash('agencypassword1', 10),
+        role: 'agency',
+        agencyId: agency.id,
+      },
+    });
+
+    const agent = request.agent(app);
+    await agent.post('/api/auth/login').set('Origin', ORIGIN).send({ email, password: 'agencypassword1' });
+
+    const before = await agent.get('/api/agency/orders');
+    expect(before.status).toBe(200);
+
+    await prisma.agency.update({ where: { id: agency.id }, data: { status: 'inactive' } });
+
+    const after = await agent.get('/api/agency/orders');
+    expect(after.status).toBe(401);
+    expect(after.body.error.code).toBe('SESSION_REVOKED');
+  });
+
+  it('正常ログインは維持される(role・agencyId・sessionVersionが変わらなければ継続してアクセスできる)', async () => {
+    const email = `session-revocation-test-normal-${Date.now()}@example.com`;
+    await prisma.user.create({
+      data: { name: '通常', email, passwordHash: await bcrypt.hash('password123', 10), role: 'user' },
+    });
+    const agent = request.agent(app);
+    await agent.post('/api/auth/login').set('Origin', ORIGIN).send({ email, password: 'password123' });
+
+    const res1 = await agent.get('/api/auth/me');
+    const res2 = await agent.get('/api/auth/me');
+    expect(res1.status).toBe(200);
+    expect(res2.status).toBe(200);
   });
 });
