@@ -12,7 +12,6 @@ import { sendPasswordResetEmail } from '../services/mailTemplates';
 import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
 import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
-import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJobDispatcher';
 import { dbRateLimit } from '../middleware/dbRateLimit';
 
 const router = Router();
@@ -106,8 +105,10 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
   const token = signAuthToken({ sub: user.id, role: user.role, sessionVersion: user.sessionVersion });
   setAuthCookie(res, token);
   res.status(201).json({ user: publicUser(user) });
-
-  await triggerImmediateOrderLinkingDispatch();
+  // 本番安定化指示書Stage1: common_user_id解決ジョブは登録と同一トランザクションで既に
+  // 永続化済み(enqueueCommonUserResolveJob)。以前はレスポンス送信後にベストエフォートで
+  // 即時ディスパッチを試みていたが、レスポンス送信後もサーバーレス関数の実行が外部API待ちで
+  // 延びてしまうため廃止した。処理はCron(またはFeature Flag有効時の管理者による明示的な再送)に委ねる。
 });
 
 router.post('/auth/login', async (req, res) => {

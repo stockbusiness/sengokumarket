@@ -3,6 +3,7 @@ import request from 'supertest';
 import { createApp } from '../../../app';
 import { prisma } from '../../../lib/prisma';
 import { setSetting } from '../../../services/settings';
+import { dispatchPendingNotifications } from '../../notifications/application/dispatchNotificationOutbox.usecase';
 
 // 残課題指示書Stage3: 通知の送信はnotification_outbox_events経由のDispatcherが
 // modules/notifications/infrastructure/resend.adapter.tsを直接呼ぶため、
@@ -23,6 +24,12 @@ describe('外部代理店システム連携API', () => {
   });
 
   afterAll(async () => {
+    // 本番安定化指示書Stage1: 通知の即時ディスパッチをHTTP応答経路から除去したことで、
+    // このテストが作った通知がpendingのまま残りうる。他のテストファイルの
+    // dispatchPendingNotifications呼び出し(バッチ処理)へ混入しないよう明示的に削除する。
+    await prisma.notificationOutboxEvent.deleteMany({
+      where: { recipient: { contains: 'integration-agency-test' } },
+    });
     await prisma.passwordResetToken.deleteMany({ where: { user: { email: { contains: 'integration-agency-test' } } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'integration-agency-test' } } });
     await prisma.agency.deleteMany({ where: { externalId: { contains: 'integration-test' } } });
@@ -196,15 +203,24 @@ describe('外部代理店システム連携API', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.login_provisioned).toBe(true);
-    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }));
+    // 本番安定化指示書Stage1: 通知の即時ディスパッチはHTTP応答経路から廃止したため、
+    // このAPIレスポンスの時点ではまだ送信されていない(notification_outbox_eventsへ
+    // pendingとして記録されているだけ)。実際の送信はCron(dispatchPendingNotifications)が
+    // 後で行う。
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
 
     const user = await prisma.user.findUnique({ where: { email: loginEmail } });
     expect(user?.role).toBe('agency');
     expect(user?.agencyId).toBe(res.body.id);
 
-    const outboxEvent = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: loginEmail } });
-    expect(outboxEvent?.eventType).toBe('agency_account_setup');
-    expect(outboxEvent?.status).toBe('succeeded');
+    const outboxEventBeforeDispatch = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: loginEmail } });
+    expect(outboxEventBeforeDispatch?.eventType).toBe('agency_account_setup');
+    expect(outboxEventBeforeDispatch?.status).toBe('pending');
+
+    await dispatchPendingNotifications();
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }));
+    const outboxEventAfterDispatch = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: loginEmail } });
+    expect(outboxEventAfterDispatch?.status).toBe('succeeded');
 
     // 同じ代理店に対して再度login_emailを送っても二重作成されない
     sendViaResendOrThrow.mockClear();
@@ -248,10 +264,17 @@ describe('外部代理店システム連携API', () => {
     expect(res.status).toBe(201);
     expect(res.body.login_provisioned).toBe(true);
     expect(res.body.parent_external_id).toBe(referrerExternalId);
-    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }));
+    // 本番安定化指示書Stage1: 通知の即時ディスパッチはHTTP応答経路から廃止したため、
+    // このAPIレスポンスの時点ではまだ送信されていない。
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
 
+    const outboxEventBeforeDispatch = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: memberEmail } });
+    expect(outboxEventBeforeDispatch?.eventType).toBe('agency_access_granted');
+    expect(outboxEventBeforeDispatch?.status).toBe('pending');
+
+    await dispatchPendingNotifications();
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }));
     const outboxEvent = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: memberEmail } });
-    expect(outboxEvent?.eventType).toBe('agency_access_granted');
     expect(outboxEvent?.status).toBe('succeeded');
 
     const updatedMember = await prisma.user.findUnique({ where: { id: member.id } });

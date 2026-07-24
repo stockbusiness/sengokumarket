@@ -5,7 +5,6 @@ import { sendIntegrationError } from '../../../lib/apiError';
 import { isKnownAgencyLifecycleEvent } from '../domain/agencyEvent.policy';
 import { AgencyLoginConflictError, AgencyValidationError } from '../domain/agency.types';
 import { findAgencyDetail, listAgencies } from '../infrastructure/prismaAgency.repository';
-import { triggerImmediateNotificationDispatch } from '../../notifications/application/dispatchNotificationOutbox.usecase';
 import { upsertAgency } from '../application/upsertAgency.usecase';
 import { parseUpsertRequestBody } from './agencyIntegration.schema';
 import { presentAgency, presentAgencyDetail } from './agencyIntegration.presenter';
@@ -46,10 +45,11 @@ router.post('/', async (req, res) => {
 
   try {
     const result = await upsertAgency(parsed.input);
-    // 通知(パスワード設定案内・アクセス許可通知)は既にnotification_outbox_eventsへ
-    // 記録済み(残課題指示書Stage3)。ここではベストエフォートで即時ディスパッチを試みるのみで、
-    // 失敗してもレスポンスは成功のまま返す(cronが後で再送する)。
-    await triggerImmediateNotificationDispatch();
+    // 本番安定化指示書Stage1: 通知(パスワード設定案内・アクセス許可通知)は既に
+    // notification_outbox_eventsへ記録済み(残課題指示書Stage3)。以前はここでベストエフォートの
+    // 即時ディスパッチを試みていたが、Resend側の遅延・障害が外部システムからのこのAPI呼び出し
+    // (サーバー間連携)自体を待たせてしまうため廃止した。処理はCron(またはFeature Flag有効時の
+    // 管理者による明示的な再送)に委ねる。
 
     res.status(result.created ? 201 : 200).json({
       ok: true,

@@ -16,6 +16,14 @@ vi.mock('../services/stripeCheckout', () => ({
   })),
 }));
 
+// 本番安定化指示書Stage1: HTTP経路からDispatcherを分離したことの回帰確認用。
+// 将来この呼び出しがうっかり復活していないかをspyで検知する。
+const triggerImmediateOrderLinkingDispatch = vi.fn(async () => {});
+vi.mock('../services/orderLinkingJobDispatcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/orderLinkingJobDispatcher')>();
+  return { ...actual, triggerImmediateOrderLinkingDispatch: () => triggerImmediateOrderLinkingDispatch() };
+});
+
 const app = createApp();
 
 describe('POST /api/checkout/create-session', () => {
@@ -211,6 +219,55 @@ describe('POST /api/checkout/create-session', () => {
     expect(order.referrerName).toBe('テストインフルエンサー');
     expect(order.agencyId).toBe(agencyId);
     expect(order.influencerId).toBe(influencerId);
+  });
+
+  // 本番安定化指示書Stage1: HTTP経路からDispatcherを分離。Checkoutは注文仮作成・在庫仮引当・
+  // common_user_id解決/referral captureのJob作成までを完了してレスポンスを返すのみとし、
+  // 外部APIの応答を待たない。ここでは即時ディスパッチ関数が呼ばれないこと、応答後もJobが
+  // pendingのまま残ることを確認する(外部APIが応答不能でもCheckoutレスポンスが遅延しない
+  // ことの回帰確認)。専用の商品・バリエーションを使い、他テストと在庫を分け合わない。
+  it('Checkoutは即時ディスパッチ関数を呼ばず、外部APIが応答不能でもレスポンスが遅延しない。Jobは応答後もpendingのまま残る', async () => {
+    const decoupledProduct = await prisma.product.create({
+      data: {
+        name: 'テスト商品(Stage1分離確認用)',
+        slug: `test-checkout-decoupled-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    const decoupledVariant = await prisma.productVariant.create({
+      data: { productId: decoupledProduct.id, name: 'テストA', price: 10000, stock: 2, reservedStock: 0 },
+    });
+
+    triggerImmediateOrderLinkingDispatch.mockClear();
+    const email = `decoupled-checkout-test-${Date.now()}@example.com`;
+
+    const startedAt = Date.now();
+    const res = await request(app)
+      .post('/api/checkout/create-session')
+      .set('Origin', 'http://localhost:5173')
+      .set('Cookie', referralCookieHeader())
+      .send({ ...baseCustomer, customerEmail: email, items: [{ variantId: decoupledVariant.id, quantity: 1 }] });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(res.status).toBe(201);
+    // 外部API呼び出しを一切待たないため、注文仮作成処理自体はミリ秒〜低百ミリ秒で終わるはず。
+    expect(elapsedMs).toBeLessThan(5000);
+    expect(triggerImmediateOrderLinkingDispatch).not.toHaveBeenCalled();
+
+    const orderLinkingJobs = await prisma.orderLinkingJob.findMany({ where: { orderId: res.body.orderId } });
+    expect(orderLinkingJobs.length).toBeGreaterThan(0);
+    expect(orderLinkingJobs.every((j) => j.status === 'pending')).toBe(true);
+
+    // このテスト専用に作った商品・注文の後片付け(ユーザーはメールアドレスが'checkout-test'を
+    // 含むためファイル全体のafterAllで削除される)。
+    await prisma.orderLinkingJob.deleteMany({ where: { orderId: res.body.orderId } });
+    await prisma.orderItem.deleteMany({ where: { orderId: res.body.orderId } });
+    await prisma.order.delete({ where: { id: res.body.orderId } });
+    await prisma.productVariant.delete({ where: { id: decoupledVariant.id } });
+    await prisma.product.delete({ where: { id: decoupledProduct.id } });
   });
 
   // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15.2): sales_model=agent_requiredの商品。

@@ -10,7 +10,6 @@ import { generateOrderNumber } from './orderNumber';
 import { createNftIssuesForOrder, createCommissionForOrder } from './orderFulfillment';
 import { createPasswordResetToken } from './passwordReset';
 import { sendGuestPasswordSetupEmail } from './mailTemplates';
-import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 
 type Tx = Prisma.TransactionClient;
 
@@ -160,7 +159,9 @@ export async function createExternalOrder(input: ExternalOrderInput): Promise<Or
     }
   }
 
-  await triggerImmediateNftMintProcessing();
+  // 本番安定化指示書Stage1: NFT発行行(nft_issues)はimportOne内で既に作成済み。以前は
+  // ここでベストエフォートの即時Mint実行を試みていたが、管理者のこの登録操作自体が
+  // 外部Mint API待ちで遅延してしまうため廃止した。処理はCronに委ねる。
 
   return order;
 }
@@ -304,7 +305,9 @@ export async function importExternalOrdersFromCsv(content: string, dryRun: boole
         console.error('guest password setup email dispatch failed', { orderId: order.id, error: e });
       }
     }
-    await triggerImmediateNftMintProcessing();
+    // 本番安定化指示書Stage1: NFT発行行は各注文の取り込み処理内で既に作成済み。以前は
+    // ここでベストエフォートの即時Mint実行を試みていたが、CSV一括取り込みという1回の
+    // 管理者操作が外部Mint API待ちで遅延してしまうため廃止した。処理はCronに委ねる。
   }
 
   const errorCount = results.filter((r) => r.action === 'error').length;

@@ -4,10 +4,7 @@ import { findOrderForEvent } from './orderLookup';
 import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
 import { sendCartAbandonedEmail } from './mailTemplates';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
-import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 import { enqueueEntitlementEvents } from './integrationOutbox';
-import { triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
-import { triggerImmediateOutboxDispatch } from './integrationOutboxDispatcher';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -52,16 +49,11 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   // (sendPostPaymentEmails内部で例外は握りつぶし済み)。
   await sendPostPaymentEmails(result.order, result.items);
 
-  // 仕様書外の拡張(NFT自動発行): cronの実行間隔(Vercelプランによっては日次)を待たせないよう、
-  // 決済確定直後にベストエフォートで発行処理を試みる(失敗時はcronがセーフティネットとして拾う)。
-  await triggerImmediateNftMintProcessing();
-  // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)等のorder_linking_jobs
-  // も同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
-  await triggerImmediateOrderLinkingDispatch();
-  // 仕様書外の拡張(残課題指示書Stage7): entitlement.granted等のintegration_outbox_eventsも
-  // 同様にベストエフォートで即時ディスパッチする(cronは日次のため、backoffの初期値5分との
-  // 乖離を埋める。失敗してもcronが後で再送する)。
-  await triggerImmediateOutboxDispatch();
+  // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
+  // 上記トランザクション内で既に永続化済み。以前はここでベストエフォートの即時ディスパッチを
+  // 試みていたが、外部Mint API・代理店API・OVE等の遅延がStripe Webhookの応答自体を
+  // 遅延させてしまう(Stripeのリトライ・タイムアウトを誘発しうる)ため廃止した。処理はCron
+  // (またはFeature Flag有効時の管理者による明示的な再送)に委ねる。
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {
@@ -203,7 +195,8 @@ export async function handleChargeRefunded(event: Stripe.Event) {
     }
   });
 
-  // 仕様書外の拡張(残課題指示書Stage7): entitlement.revokedのcommit直後にもベストエフォートで
-  // 即時ディスパッチを試みる(cronは日次のため、backoffの初期値5分との乖離を埋める)。
-  await triggerImmediateOutboxDispatch();
+  // 本番安定化指示書Stage1: entitlement.revokedは上記トランザクション内で既に永続化済み。
+  // 以前はここでベストエフォートの即時ディスパッチを試みていたが、Stripe Webhookの応答を
+  // 外部APIの遅延に晒すことになるため廃止した。処理はCron(またはFeature Flag有効時の
+  // 管理者による明示的な再送)に委ねる。
 }

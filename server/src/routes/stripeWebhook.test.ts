@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import Stripe from 'stripe';
 import { createApp } from '../app';
@@ -6,6 +6,25 @@ import { prisma } from '../lib/prisma';
 import { createPendingOrder } from '../services/checkout';
 import { setSetting } from '../services/settings';
 import { hashPayload } from '../services/stripeEventInbox';
+
+// 本番安定化指示書Stage1: Stripe Webhookの応答経路から外部API待ちの同期ディスパッチを
+// 除去したことの回帰確認用。将来これらの呼び出しがうっかり復活していないかをspyで検知する。
+const triggerImmediateNftMintProcessing = vi.fn(async () => {});
+const triggerImmediateOrderLinkingDispatch = vi.fn(async () => {});
+const triggerImmediateOutboxDispatch = vi.fn(async () => {});
+
+vi.mock('../services/nftMintProcessing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/nftMintProcessing')>();
+  return { ...actual, triggerImmediateNftMintProcessing: () => triggerImmediateNftMintProcessing() };
+});
+vi.mock('../services/orderLinkingJobDispatcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/orderLinkingJobDispatcher')>();
+  return { ...actual, triggerImmediateOrderLinkingDispatch: () => triggerImmediateOrderLinkingDispatch() };
+});
+vi.mock('../services/integrationOutboxDispatcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/integrationOutboxDispatcher')>();
+  return { ...actual, triggerImmediateOutboxDispatch: () => triggerImmediateOutboxDispatch() };
+});
 
 const app = createApp();
 const WEBHOOK_SECRET = 'whsec_test_dummy_secret_for_local_tests';
@@ -153,6 +172,87 @@ describe('POST /api/stripe/webhook', () => {
 
     const variantAfterRetry = await prisma.productVariant.findUniqueOrThrow({ where: { id: nftVariantId } });
     expect(variantAfterRetry.stock).toBe(8);
+  });
+
+  // 本番安定化指示書Stage1: HTTP経路からDispatcherを分離。Webhookは決済確定・在庫確定・
+  // NFT発行行/報酬/Job/Outbox作成までを完了して200を返すのみとし、外部Mint API・代理店連携API・
+  // OVE送信を待たない。ここでは(1)Webhook処理中に即時ディスパッチ関数が一切呼ばれないこと、
+  // (2)応答後もJob/NFT発行行が処理前の状態のまま残ること、を確認する
+  // (Mint停止中でもWebhookが待たされないことの回帰確認)。
+  it('Webhookは即時ディスパッチ関数を呼ばず、外部API・Mint停止中でも応答が遅延しない。Job/NFT発行行は応答後もpendingのまま残る', async () => {
+    // 共有フィクスチャ(nftVariantId)は他のテストと在庫を分け合っているため、この専用テストでは
+    // 自前の商品・バリエーションを使う(在庫の奪い合いを避ける)。
+    const decoupledProduct = await prisma.product.create({
+      data: {
+        name: 'Webhookテスト評議員証(Stage1分離確認用)',
+        slug: `webhook-test-decoupled-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 20000,
+        status: 'published',
+      },
+    });
+    const decoupledVariant = await prisma.productVariant.create({
+      data: { productId: decoupledProduct.id, name: '通常', price: 20000, stock: 5, reservedStock: 0 },
+    });
+
+    const email = `webhook-test-decoupled-${Date.now()}@example.com`;
+    const { order: createdOrder } = await createPendingOrder({
+      customerName: 'Webhookテスト太郎',
+      customerEmail: email,
+      customerPhone: '090-0000-0000',
+      customerPostalCode: '100-0001',
+      customerAddress: '東京都千代田区1-1-1',
+      agreedToTerms: true,
+      items: [{ variantId: decoupledVariant.id, quantity: 1 }],
+    });
+    const sessionId = `cs_test_${Math.random().toString(36).slice(2)}`;
+    await prisma.order.update({ where: { id: createdOrder.id }, data: { stripeSessionId: sessionId } });
+    const order = createdOrder;
+    const paymentIntentId = `pi_test_${Math.random().toString(36).slice(2)}`;
+    const eventId = `evt_test_decoupled_${Date.now()}`;
+
+    triggerImmediateNftMintProcessing.mockClear();
+    triggerImmediateOrderLinkingDispatch.mockClear();
+    triggerImmediateOutboxDispatch.mockClear();
+
+    const startedAt = Date.now();
+    const res = await postWebhook({
+      id: eventId,
+      type: 'checkout.session.completed',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: sessionId, payment_intent: paymentIntentId, metadata: { order_id: order.id } } },
+    });
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(res.status).toBe(200);
+    // 外部API呼び出しを一切待たないため、決済確定処理自体はミリ秒〜低百ミリ秒で終わるはず
+    // (Mint API等が数秒〜数十秒応答しない状況を仮に再現しても、これらの関数を呼ばなくなった
+    // 以上、応答時間には反映されない)。
+    expect(elapsedMs).toBeLessThan(5000);
+
+    expect(triggerImmediateNftMintProcessing).not.toHaveBeenCalled();
+    expect(triggerImmediateOrderLinkingDispatch).not.toHaveBeenCalled();
+    expect(triggerImmediateOutboxDispatch).not.toHaveBeenCalled();
+
+    // NFT発行行(wallet_required)・注文紐付けJob(common_user_resolve等)は、応答後も
+    // 処理前の状態のまま残る(Cronまたは管理者の明示的な再送を待つ)。
+    const nftIssues = await prisma.nftIssue.findMany({ where: { orderId: order.id } });
+    expect(nftIssues.length).toBeGreaterThan(0);
+    expect(nftIssues.every((n) => n.status === 'wallet_required')).toBe(true);
+
+    const orderLinkingJobs = await prisma.orderLinkingJob.findMany({ where: { orderId: order.id } });
+    expect(orderLinkingJobs.every((j) => j.status === 'pending')).toBe(true);
+
+    // このテスト専用に作った商品・注文の後片付け(共有フィクスチャのafterAllには含まれないため)。
+    // ユーザー・password_reset_tokenはメールアドレスが'webhook-test'を含むため、
+    // ファイル全体のafterAllで削除される(ON DELETE RESTRICTのため削除順を崩さない)。
+    await prisma.orderLinkingJob.deleteMany({ where: { orderId: order.id } });
+    await prisma.nftIssue.deleteMany({ where: { orderId: order.id } });
+    await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productVariant.delete({ where: { id: decoupledVariant.id } });
+    await prisma.product.delete({ where: { id: decoupledProduct.id } });
   });
 
   it('item_type != nft の商品ではnft_issuesが作られない', async () => {

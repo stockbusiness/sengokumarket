@@ -12,7 +12,6 @@ import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { resolveReferral } from '../services/referral';
 import { validateCoupon } from '../services/coupon';
-import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJobDispatcher';
 
 const router = Router();
 
@@ -61,11 +60,10 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
     const { order, items } = await createPendingOrder(input);
     orderId = order.id;
 
-    // 仕様書外の拡張(千ノ国全体連携・残課題指示書Stage4対応): common_user_id解決・referral
-    // captureのジョブは注文作成と同一トランザクションで既に永続化済み(createPendingOrder内)。
-    // ここではベストエフォートで即時ディスパッチを試みるのみで、失敗してもレスポンスは
-    // 成功のまま返す(cronが後で再送する)。Feature Flag無効時(既定)は即座に何もしない。
-    await triggerImmediateOrderLinkingDispatch();
+    // 本番安定化指示書Stage1: common_user_id解決・referral captureのジョブは注文作成と
+    // 同一トランザクションで既に永続化済み(createPendingOrder内)。以前はここでベストエフォートの
+    // 即時ディスパッチを試みていたが、外部APIの遅延がCheckoutレスポンスをそのまま遅延させて
+    // しまうため廃止した。処理はCron(またはFeature Flag有効時の管理者による明示的な再送)に委ねる。
 
     if (input.paymentMethod === 'bank_transfer') {
       const config = await getBankTransferConfig();

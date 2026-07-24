@@ -3,9 +3,6 @@ import { HttpError } from '../lib/httpError';
 import { getSetting, setSetting } from './settings';
 import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
 import { cancelCouponUsage } from './coupon';
-import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
-import { triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
-import { triggerImmediateOutboxDispatch } from './integrationOutboxDispatcher';
 
 // 仕様書外の拡張: 銀行振込(手動確認型)決済。
 // Stripeとは異なり決済の即時確認手段がないため、注文は「振込待ち」のpending状態で作成し、
@@ -60,14 +57,11 @@ export async function confirmBankTransferPayment(orderId: string) {
   });
 
   await sendPostPaymentEmails(result.order, result.items);
-  // 仕様書外の拡張(NFT自動発行): Stripe決済確定時と同様、cronを待たずベストエフォートで即時実行する。
-  await triggerImmediateNftMintProcessing();
-  // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)等のorder_linking_jobs
-  // も同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
-  await triggerImmediateOrderLinkingDispatch();
-  // 仕様書外の拡張(残課題指示書Stage7): entitlement.granted等のintegration_outbox_eventsも
-  // 同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
-  await triggerImmediateOutboxDispatch();
+  // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
+  // 上記トランザクション内(applyPaidOrderSideEffects)で既に永続化済み。以前はここで
+  // ベストエフォートの即時ディスパッチを試みていたが、管理者の入金確認操作(この関数の
+  // 呼び出し元)が外部API待ちで遅延してしまうため廃止した。処理はCron(またはFeature Flag
+  // 有効時の管理者による明示的な再送)に委ねる。
   return result;
 }
 
