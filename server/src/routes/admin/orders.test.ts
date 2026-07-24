@@ -10,7 +10,16 @@ describe('管理API: 注文管理', () => {
   let originalReferralCode: string | null;
 
   afterAll(async () => {
-    await prisma.order.deleteMany({ where: { customerEmail: { contains: 'admin-orders-test' } } });
+    // order_items/nft_issues/commissionsはordersへON DELETE RESTRICTのFKを持つため、
+    // 先に子行を削除してからでないとordersの削除が外部キー制約違反になる。
+    const orderIds = (await prisma.order.findMany({
+      where: { customerEmail: { contains: 'admin-orders-test' } },
+      select: { id: true },
+    })).map((o) => o.id);
+    await prisma.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.nftIssue.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.commission.deleteMany({ where: { orderId: { in: orderIds } } });
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'admin-test' } } });
     await prisma.$disconnect();
   });
