@@ -38,6 +38,21 @@ model LoginAttempt {
   @@map("login_attempts")
 }
 
+// 残課題指示書Stage12: express-rate-limitの既定MemoryStoreはプロセスごとに独立しており、
+// Vercelの複数サーバーレスインスタンス間で回数が共有されない(login_attemptsと同じ問題)。
+// IP・対象識別子(メールアドレス・クーポンコード等)を組み合わせた汎用の固定ウィンドウ
+// カウンタとしてDBに永続化することで、インスタンスをまたいでも同じキーなら同一の
+// 回数として扱われるようにする。login_attemptsとは目的(アカウントロック vs 一般的な
+// リクエスト頻度制限)が異なるため、あえて統合せず別テーブルとする。
+model RateLimitBucket {
+  bucketKey   String   @id @map("bucket_key")
+  windowStart DateTime @map("window_start")
+  count       Int      @default(0)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("rate_limit_buckets")
+}
+
 // 仕様書外の拡張: 管理者・代理店ポータルによる状態変更操作(価格変更・報酬ステータス変更・
 // 注文状態変更等)の監査ログ。誰が・いつ・どのAPIに対して・どんな内容で操作したかを記録する。
 // usersへの物理FKは張らない(退会等でユーザーが削除されてもログ自体は残す)。

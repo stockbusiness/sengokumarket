@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
@@ -14,18 +13,35 @@ import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
 import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
 import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJobDispatcher';
+import { dbRateLimit } from '../middleware/dbRateLimit';
 
 const router = Router();
 
+// 残課題指示書Stage12: 複数Vercelインスタンス間で回数が共有されるDB永続化型のレート制限に
+// 差し替える(express-rate-limitの既定MemoryStoreはインスタンスごとに独立していた)。
 // 大量アカウント作成・パスワード再設定メール送信の踏み台化を防ぐ(仕様書外の拡張)。
-const registerLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
-const passwordResetRequestLimiter = rateLimit({
+const registerLimiter = dbRateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+  scope: 'register',
+  identify: (req) => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : undefined),
 });
-const agencySsoLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false });
+const passwordResetRequestLimiter = dbRateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  scope: 'password-reset-request',
+  identify: (req) => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : undefined),
+});
+// トークン総当たり対策。トークン自体を識別子にすると攻撃者の目的(異なるトークンを大量に
+// 試す)と矛盾するため、IPのみで制限する。
+const passwordResetConfirmLimiter = dbRateLimit({ windowMs: 15 * 60 * 1000, limit: 20, scope: 'password-reset-confirm' });
+const agencySsoLimiter = dbRateLimit({ windowMs: 15 * 60 * 1000, limit: 30, scope: 'agency-sso' });
+// loginはisLocked/recordLoginFailure(login_attemptsテーブル、メールアドレス+IP単位)で
+// 既にDB永続化・複数インスタンス間で共有される形のレート制限が掛かっている
+// (express-rate-limitのMemoryStore問題は元々login以外の箇所の話であり、loginはこの
+// 仕組みにより残課題指示書Stage12の受入条件を既に満たしている)。重ねて広いIP単位の
+// 上限を掛けると、同一IPを共有する複数ユーザー(社内ネットワーク等)からの正常なログインを
+// 過剰にブロックしてしまうため、あえて追加しない。
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -179,7 +195,7 @@ router.post('/auth/password-reset/request', passwordResetRequestLimiter, async (
 });
 
 // ゲスト購入時のパスワード設定リンクと共用のエンドポイント(仕様書v1.5 4.9 / 6.10)。
-router.post('/auth/password-reset/confirm', async (req, res) => {
+router.post('/auth/password-reset/confirm', passwordResetConfirmLimiter, async (req, res) => {
   const { token, newPassword } = req.body ?? {};
   if (!isNonEmptyString(token) || !isNonEmptyString(newPassword) || newPassword.length < 8) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'トークンと8文字以上の新しいパスワードを指定してください');

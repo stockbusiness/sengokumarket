@@ -1,16 +1,18 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import { dbRateLimit } from '../middleware/dbRateLimit';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
 
 const router = Router();
 
-// コード総当たりによるマスタ列挙を防ぐ(仕様書v1.5 13章)
-const resolveLimiter = rateLimit({
+// 残課題指示書Stage12: 複数Vercelインスタンス間で回数が共有されるDB永続化型のレート制限に
+// 差し替える。コード総当たりによるマスタ列挙を防ぐ(仕様書v1.5 13章)。特定の紹介コードへ
+// 試行が集中するのを防ぐため、コード自体も識別子に加える。
+const resolveLimiter = dbRateLimit({
   windowMs: 60 * 1000,
   limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+  scope: 'referral-resolve',
+  identify: (req) => (typeof req.query.code === 'string' ? req.query.code.toUpperCase() : undefined),
 });
 
 router.get('/referrals/resolve', resolveLimiter, async (req, res) => {

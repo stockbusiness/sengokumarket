@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import { dbRateLimit } from '../middleware/dbRateLimit';
 import { sendError } from '../lib/apiError';
 import { HttpError } from '../lib/httpError';
 import { cancelOrderReservation, createPendingOrder, validateCreatePendingOrderInput } from '../services/checkout';
@@ -16,10 +16,23 @@ import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJo
 
 const router = Router();
 
-// 在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ(仕様書外の拡張)。
-const createSessionLimiter = rateLimit({ windowMs: 5 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
-// クーポンコード総当たり対策(仕様書16.2)。
-const couponValidateLimiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+// 残課題指示書Stage12: 複数Vercelインスタンス間で回数が共有されるDB永続化型のレート制限に
+// 差し替える。在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ
+// (仕様書外の拡張)。customerEmailがあればIPに加えて識別子として使う。
+const createSessionLimiter = dbRateLimit({
+  windowMs: 5 * 60 * 1000,
+  limit: 20,
+  scope: 'checkout-create-session',
+  identify: (req) => (typeof req.body?.customerEmail === 'string' ? req.body.customerEmail.toLowerCase() : undefined),
+});
+// クーポンコード総当たり対策(仕様書16.2)。特定のクーポンコードへ大量に試行が集中するのを
+// 防ぐため、コード自体も識別子に加える。
+const couponValidateLimiter = dbRateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  scope: 'coupon-validate',
+  identify: (req) => (typeof req.body?.couponCode === 'string' ? req.body.couponCode.toUpperCase() : undefined),
+});
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;

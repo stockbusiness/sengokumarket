@@ -21,6 +21,7 @@ import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
 import { requireCronSecret } from './middleware/cronAuth';
+import { dbRateLimit } from './middleware/dbRateLimit';
 import { sendError } from './lib/apiError';
 import { appConfig } from './shared/config/appConfig';
 
@@ -45,7 +46,14 @@ export function createApp(): Express {
 
   // 外部の代理店システムからのサーバー間API連携。Cookie/Originに依存しないAPIキー認証のため、
   // ブラウザCookieセッション向けのOrigin検証(requireSameOrigin)より前に登録する(仕様書外の拡張)。
-  app.use('/api/integrations/agencies', requireAgencyApiKey, integrationAgenciesRouter);
+  // 残課題指示書Stage12: APIキーは呼び出し元全体で共有される1本のため、対象識別子はIPのみとする。
+  const agencyIntegrationLimiter = dbRateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    scope: 'agency-integration',
+    errorFormat: 'integration',
+  });
+  app.use('/api/integrations/agencies', requireAgencyApiKey, agencyIntegrationLimiter, integrationAgenciesRouter);
 
   // Vercel Cronからの呼び出し。Cookie/Originに依存しないため同様にrequireSameOriginより前段に置く(仕様書外の拡張)。
   app.use('/api/internal/cron', requireCronSecret, internalCronRouter);
