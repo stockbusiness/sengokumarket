@@ -10,7 +10,7 @@ import StatusBadge from '../../components/StatusBadge';
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
 import Pagination from '../../components/Pagination';
-import { ORDER_STATUSES } from '@sengoku/contracts';
+import { ORDER_STATUS_TRANSITIONS, type OrderStatus } from '@sengoku/contracts';
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
 
@@ -35,9 +35,13 @@ export default function AdminOrdersPage() {
     setTimeout(() => setStatusMessage((cur) => (cur?.text === text ? null : cur)), 4000);
   }
 
-  async function changeStatus(order: AdminOrder, orderStatus: string) {
-    await updateAdminOrder(order.id, { orderStatus });
-    load();
+  async function changeStatus(order: AdminOrder, orderStatus: OrderStatus) {
+    try {
+      await updateAdminOrder(order.id, { orderStatus });
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '注文ステータスの更新に失敗しました');
+    }
   }
 
   async function handleConfirmBankTransfer(order: AdminOrder) {
@@ -74,12 +78,13 @@ export default function AdminOrdersPage() {
       {statusMessage && (
         <p className={statusMessage.type === 'success' ? 'checkout-success' : 'checkout-error'}>{statusMessage.text}</p>
       )}
-      {orders.length === 0 ? (
+      {total === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="まだ注文がありません" />
         </div>
       ) : (
         <>
+        {orders.length > 0 && (
         <div className="admin-table-card">
           <table>
             <thead>
@@ -121,7 +126,11 @@ export default function AdminOrdersPage() {
                     )}
                   </td>
                   <td>
-                    <StatusSelect value={o.orderStatus} options={ORDER_STATUSES} onChange={(v) => changeStatus(o, v)} />
+                    <StatusSelect
+                      value={o.orderStatus as OrderStatus}
+                      transitions={ORDER_STATUS_TRANSITIONS}
+                      onChange={(v) => changeStatus(o, v)}
+                    />
                   </td>
                   <td>{o.referralCode ?? '-'}</td>
                   <td>
@@ -159,6 +168,7 @@ export default function AdminOrdersPage() {
             </tbody>
           </table>
         </div>
+        )}
         <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
         </>
       )}

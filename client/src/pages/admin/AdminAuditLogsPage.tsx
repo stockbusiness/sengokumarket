@@ -28,12 +28,13 @@ export default function AdminAuditLogsPage() {
       <h1>監査ログ</h1>
       <p>管理者・代理店ポータルによる登録・変更・削除操作の履歴です(閲覧のみの操作は含まれません)。</p>
 
-      {logs.length === 0 ? (
+      {total === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="操作履歴がありません" />
         </div>
       ) : (
         <>
+          {logs.length > 0 && (
           <div className="admin-table-card">
             <table>
               <thead>
@@ -64,6 +65,7 @@ export default function AdminAuditLogsPage() {
               </tbody>
             </table>
           </div>
+          )}
           <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
         </>
       )}

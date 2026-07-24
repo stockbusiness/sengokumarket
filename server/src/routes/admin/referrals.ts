@@ -149,7 +149,11 @@ router.put('/referrals/commissions/:id', async (req, res) => {
       data: {
         status: status ?? undefined,
         adminNote: typeof adminNote === 'string' ? adminNote : undefined,
-        approvedAt: status === 'approved' && !existing.approvedAt ? now : undefined,
+        // 残課題指示書Stage9: approved→pendingでapproved_atを解除しないと、再承認時に古い日時が
+        // 残ってしまう。pending遷移時はnullへ戻し、再度approvedになった時点で新しい日時を設定する。
+        // cancelled/paidへの遷移ではapproved_atをそのまま残す(いつ承認されていたかという
+        // 監査証跡を、支払済み報酬に注記を残す仕様書v1.5の方針と同様に保持する判断)。
+        approvedAt: status === 'approved' ? (existing.approvedAt ?? now) : status === 'pending' ? null : undefined,
         paidAt: status === 'paid' && !existing.paidAt ? now : undefined,
       },
     });

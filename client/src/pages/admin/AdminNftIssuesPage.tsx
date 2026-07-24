@@ -9,7 +9,7 @@ import {
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
 import Pagination from '../../components/Pagination';
-import { NFT_ISSUE_STATUSES as STATUSES } from '@sengoku/contracts';
+import { NFT_ISSUE_STATUSES as STATUSES, NFT_ISSUE_STATUS_TRANSITIONS, type NftIssueStatus } from '@sengoku/contracts';
 
 export default function AdminNftIssuesPage() {
   const [nftIssues, setNftIssues] = useState<AdminNftIssue[]>([]);
@@ -50,9 +50,14 @@ export default function AdminNftIssuesPage() {
     }
   }
 
-  async function changeStatus(issue: AdminNftIssue, status: string) {
-    await updateAdminNftIssue(issue.id, { status });
-    load();
+  async function changeStatus(issue: AdminNftIssue, status: NftIssueStatus) {
+    setError(null);
+    try {
+      await updateAdminNftIssue(issue.id, { status });
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'NFT発行ステータスの更新に失敗しました');
+    }
   }
 
   // 仕様書外の拡張(NFT自動発行): 外部Mint APIへの自動送信を今すぐ再試行/一時的に止める。
@@ -99,12 +104,13 @@ export default function AdminNftIssuesPage() {
       {error && <p className="checkout-error">{error}</p>}
       {message && <p>{message}</p>}
 
-      {nftIssues.length === 0 ? (
+      {total === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="該当するNFT発行データがありません" />
         </div>
       ) : (
         <>
+        {nftIssues.length > 0 && (
         <div className="admin-table-card">
           <table>
             <thead>
@@ -128,7 +134,11 @@ export default function AdminNftIssuesPage() {
                   </td>
                   <td>{issue.walletAddress ?? '-'}</td>
                   <td>
-                    <StatusSelect value={issue.status} options={STATUSES} onChange={(v) => changeStatus(issue, v)} />
+                    <StatusSelect
+                      value={issue.status as NftIssueStatus}
+                      transitions={NFT_ISSUE_STATUS_TRANSITIONS}
+                      onChange={(v) => changeStatus(issue, v)}
+                    />
                   </td>
                   <td>
                     <input
@@ -177,6 +187,7 @@ export default function AdminNftIssuesPage() {
             </tbody>
           </table>
         </div>
+        )}
         <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
         </>
       )}

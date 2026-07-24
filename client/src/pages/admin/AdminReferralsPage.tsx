@@ -10,11 +10,12 @@ import {
 import StatusSelect from '../../components/StatusSelect';
 import EmptyState from '../../components/EmptyState';
 import Pagination from '../../components/Pagination';
-import { COMMISSION_STATUSES } from '@sengoku/contracts';
+import { COMMISSION_STATUSES, COMMISSION_STATUS_TRANSITIONS, type CommissionStatus } from '@sengoku/contracts';
 
 export default function AdminReferralsPage() {
   const [summary, setSummary] = useState<AdminReferralSummary | null>(null);
   const [commissions, setCommissions] = useState<AdminCommission[]>([]);
+  const [statusError, setStatusError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -41,9 +42,14 @@ export default function AdminReferralsPage() {
     setPage(1);
   }
 
-  async function changeStatus(commission: AdminCommission, status: string) {
-    await updateAdminCommission(commission.id, { status });
-    loadCommissions();
+  async function changeStatus(commission: AdminCommission, status: CommissionStatus) {
+    setStatusError(null);
+    try {
+      await updateAdminCommission(commission.id, { status });
+      loadCommissions();
+    } catch (e) {
+      setStatusError(e instanceof Error ? e.message : '報酬ステータスの更新に失敗しました');
+    }
   }
 
   function handleExport() {
@@ -157,12 +163,14 @@ export default function AdminReferralsPage() {
           ))}
         </select>
       </label>
-      {commissions.length === 0 ? (
+      {statusError && <p className="checkout-error">{statusError}</p>}
+      {total === 0 ? (
         <div className="admin-table-card">
           <EmptyState message="該当する報酬データがありません" />
         </div>
       ) : (
         <>
+          {commissions.length > 0 && (
           <div className="admin-table-card">
             <table>
               <thead>
@@ -186,13 +194,18 @@ export default function AdminReferralsPage() {
                     <td>{c.commissionRate}%</td>
                     <td>{c.commissionAmount.toLocaleString()}円</td>
                     <td>
-                      <StatusSelect value={c.status} options={COMMISSION_STATUSES} onChange={(v) => changeStatus(c, v)} />
+                      <StatusSelect
+                        value={c.status as CommissionStatus}
+                        transitions={COMMISSION_STATUS_TRANSITIONS}
+                        onChange={(v) => changeStatus(c, v)}
+                      />
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          )}
           <Pagination page={page} total={total} pageSize={pageSize} onPageChange={setPage} />
         </>
       )}

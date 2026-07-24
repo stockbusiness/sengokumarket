@@ -115,6 +115,150 @@ describe('管理API: 代理店・紹介成果管理', () => {
     });
   });
 
+  // 残課題指示書Stage9: approved_at整合。approved→pendingでapproved_atが解除され、
+  // 再度approvedにすると新しい日時が設定されることを確認する。
+  describe('approved_at整合(残課題指示書Stage9)', () => {
+    async function createTestCommission() {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-REFADMIN-APPROVEDAT-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          totalAmount: 20000,
+          originalAmount: 20000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'テスト',
+          customerEmail: `admin-referrals-test-approvedat-${Date.now()}@example.com`,
+          agencyId,
+          referralCode: 'SGI-TEST',
+          commissionRate: 10,
+          commissionAmount: 2000,
+          commissionStatus: 'pending',
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const commission = await prisma.commission.create({
+        data: { orderId: order.id, agencyId, referralCode: 'SGI-TEST', baseAmount: 20000, commissionRate: 10, commissionAmount: 2000, status: 'pending' },
+      });
+      return { order, commission };
+    }
+
+    it('pending→approvedでapproved_atが設定される', async () => {
+      const { order, commission } = await createTestCommission();
+      const { agent } = await createAdminAgent(app);
+
+      const res = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'approved' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.commission.approvedAt).not.toBeNull();
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+
+    it('approved→pendingでapproved_atが解除され、再度approvedにすると新しい日時が設定される', async () => {
+      const { order, commission } = await createTestCommission();
+      const { agent } = await createAdminAgent(app);
+
+      const approvedRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'approved' });
+      const firstApprovedAt = approvedRes.body.commission.approvedAt;
+      expect(firstApprovedAt).not.toBeNull();
+
+      const pendingRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'pending' });
+      expect(pendingRes.status).toBe(200);
+      expect(pendingRes.body.commission.approvedAt).toBeNull();
+
+      // DBへも実際にnullが反映されていることを確認する(レスポンスのみでなく)。
+      const afterPending = await prisma.commission.findUniqueOrThrow({ where: { id: commission.id } });
+      expect(afterPending.approvedAt).toBeNull();
+
+      // わずかでも時刻が進むようにしてから再承認し、新しい日時になることを確認する。
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const reApprovedRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'approved' });
+      expect(reApprovedRes.body.commission.approvedAt).not.toBeNull();
+      expect(new Date(reApprovedRes.body.commission.approvedAt).getTime()).toBeGreaterThan(new Date(firstApprovedAt).getTime());
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+
+    it('approved→paidでpaid_atが設定され、approved_atは(監査証跡として)保持される', async () => {
+      const { order, commission } = await createTestCommission();
+      const { agent } = await createAdminAgent(app);
+
+      const approvedRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'approved' });
+      const approvedAt = approvedRes.body.commission.approvedAt;
+
+      const paidRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'paid' });
+
+      expect(paidRes.status).toBe(200);
+      expect(paidRes.body.commission.paidAt).not.toBeNull();
+      expect(paidRes.body.commission.approvedAt).toBe(approvedAt);
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+
+    it('paidは終端状態のため変更不可(409)', async () => {
+      const { order, commission } = await createTestCommission();
+      const { agent } = await createAdminAgent(app);
+
+      await agent.put(`/api/admin/referrals/commissions/${commission.id}`).set('Origin', TEST_ORIGIN).send({ status: 'approved' });
+      await agent.put(`/api/admin/referrals/commissions/${commission.id}`).set('Origin', TEST_ORIGIN).send({ status: 'paid' });
+
+      const res = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'pending' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error.code).toBe('INVALID_COMMISSION_STATUS_TRANSITION');
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+
+    it('approved→cancelledではapproved_atをクリアせず保持する(業務仕様として決定・監査証跡)', async () => {
+      const { order, commission } = await createTestCommission();
+      const { agent } = await createAdminAgent(app);
+
+      const approvedRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'approved' });
+      const approvedAt = approvedRes.body.commission.approvedAt;
+
+      const cancelledRes = await agent
+        .put(`/api/admin/referrals/commissions/${commission.id}`)
+        .set('Origin', TEST_ORIGIN)
+        .send({ status: 'cancelled' });
+
+      expect(cancelledRes.status).toBe(200);
+      expect(cancelledRes.body.commission.approvedAt).toBe(approvedAt);
+
+      await prisma.commission.delete({ where: { id: commission.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+  });
+
   it('CSV出力: 期間内・approved対象で1行出力される', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent
