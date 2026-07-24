@@ -27,6 +27,10 @@ export const SETTING_KEYS = [
   // 仕様書外の拡張: Outbox dispatcherが送信先ごとに参照する接続先URL(未設定の送信先はスキップする)。
   'integration_endpoint_sengoku_passport',
   'integration_endpoint_ai_art_school',
+  // 仕様書外の拡張(残課題指示書Stage7・9.2「正式URL」): 送信先ごとのイベント受信path。
+  // 未設定時は暫定path(/shopping/webhook)を使う(既存の挙動を変えないデフォルト)。
+  'integration_endpoint_path_sengoku_passport',
+  'integration_endpoint_path_ai_art_school',
   // 仕様書外の拡張: OVE Walletは共通契約と異なる独自HMAC方式(X-OVE-*)を使うため、
   // 認証情報を分離して保持する(千ノ国全体統合実装報告書の既知の未対応事項を踏まえた設計)。
   'ove_wallet_base_url',

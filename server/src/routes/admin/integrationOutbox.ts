@@ -3,6 +3,7 @@ import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { INTEGRATION_OUTBOX_STATUSES as STATUSES } from '@sengoku/contracts';
 import { parsePagination } from '../../shared/pagination/parsePagination';
+import { retryOutboxEvent } from '../../services/integrationOutboxDispatcher';
 
 const router = Router();
 
@@ -23,6 +24,15 @@ router.get('/integration-outbox', async (req, res) => {
   ]);
 
   res.json({ outboxEvents: events, total, page, pageSize });
+});
+
+// 残課題指示書Stage7・9.2「手動再送」: dead/failed/blocked/pendingイベントの手動再送。
+router.post('/integration-outbox/:id/retry', async (req, res) => {
+  const result = await retryOutboxEvent(req.params.id);
+  if (!result.ok) {
+    return sendError(res, 404, 'NOT_FOUND', '再送可能なイベントが見つかりません');
+  }
+  res.json(result);
 });
 
 export default router;

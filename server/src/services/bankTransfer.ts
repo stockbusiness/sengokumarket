@@ -5,6 +5,7 @@ import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfill
 import { cancelCouponUsage } from './coupon';
 import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 import { triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
+import { triggerImmediateOutboxDispatch } from './integrationOutboxDispatcher';
 
 // 仕様書外の拡張: 銀行振込(手動確認型)決済。
 // Stripeとは異なり決済の即時確認手段がないため、注文は「振込待ち」のpending状態で作成し、
@@ -64,6 +65,9 @@ export async function confirmBankTransferPayment(orderId: string) {
   // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)等のorder_linking_jobs
   // も同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
   await triggerImmediateOrderLinkingDispatch();
+  // 仕様書外の拡張(残課題指示書Stage7): entitlement.granted等のintegration_outbox_eventsも
+  // 同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
+  await triggerImmediateOutboxDispatch();
   return result;
 }
 

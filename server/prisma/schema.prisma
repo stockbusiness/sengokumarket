@@ -425,6 +425,12 @@ model IntegrationOutboxEvent {
   // 仕様書外の拡張(残課題指示書Stage6): 必須ID(product_integration_rulesで設定)が未解決のため
   // 送信を保留した理由(例: common_user_unresolved)。status='blocked'の間のみ設定される。
   blockedReason        String?   @map("blocked_reason")
+  // 仕様書外の拡張(残課題指示書Stage7): claim所有権をprocessing_tokenで明示化する
+  // (Stripe Event Inbox・notification_outbox_events・order_linking_jobsと同じ設計)。
+  // success/failure更新もこのtokenの一致を条件にすることで、staleなprocessing回収と
+  // 実際の送信完了が競合しても、古い方が新しい結果を上書きしない。
+  processingToken      String?   @map("processing_token")
+  processingStartedAt  DateTime? @map("processing_started_at")
   nextAttemptAt        DateTime? @map("next_attempt_at")
   processedAt          DateTime? @map("processed_at")
   createdAt            DateTime  @default(now()) @map("created_at")
@@ -432,9 +438,32 @@ model IntegrationOutboxEvent {
   // (クラッシュ等で放置された行)を検知するために使う。NFT自動発行の既存のstale検知パターンを踏襲。
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
+  attempts IntegrationEventAttempt[]
+
   @@index([status])
   @@index([destinationSystemKey])
   @@map("integration_outbox_events")
+}
+
+// 仕様書外の拡張(残課題指示書Stage7・9.2「試行履歴」): 送信の実施記録。1回の送信試行
+// (成功・失敗いずれも)につき1行作成する。blocked(送信を試みずに保留した回)は「試行」では
+// ないためここには記録しない。
+model IntegrationEventAttempt {
+  id              String    @id @default(uuid()) @db.Uuid
+  outboxEventId   String    @map("outbox_event_id") @db.Uuid
+  attemptNumber   Int       @map("attempt_number")
+  startedAt       DateTime  @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+  httpStatus      Int?      @map("http_status")
+  result          String // succeeded | failed
+  error           String?
+  processingToken String?   @map("processing_token")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  outboxEvent IntegrationOutboxEvent @relation(fields: [outboxEventId], references: [id])
+
+  @@index([outboxEventId])
+  @@map("integration_event_attempts")
 }
 
 // 仕様書外の拡張(残課題指示書Stage4): checkout.tsが行っていたfire-and-forget(`void

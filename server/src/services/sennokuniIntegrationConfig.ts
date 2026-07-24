@@ -54,3 +54,17 @@ export async function getIntegrationEndpointBaseUrl(destinationSystemKey: string
   const value = await getSetting(key);
   return value ? value.replace(/\/+$/, '') : null;
 }
+
+// 仕様書外の拡張(残課題指示書Stage7・9.2「正式URL」): 送信先ごとのイベント受信path。
+// 正式契約が確定していない間の暫定値として'/shopping/webhook'を既定にする(未設定時のみ)。
+const PROVISIONAL_INTEGRATION_EVENT_PATH = '/shopping/webhook';
+
+export async function getIntegrationEndpointPath(destinationSystemKey: string): Promise<string> {
+  const key = ({
+    'sengoku-passport': 'integration_endpoint_path_sengoku_passport',
+    'ai-art-school': 'integration_endpoint_path_ai_art_school',
+  } as const)[destinationSystemKey as 'sengoku-passport' | 'ai-art-school'];
+  if (!key) return PROVISIONAL_INTEGRATION_EVENT_PATH;
+  const value = await getSetting(key);
+  return value || PROVISIONAL_INTEGRATION_EVENT_PATH;
+}

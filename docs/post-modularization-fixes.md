@@ -447,20 +447,138 @@ OVE Wallet宛の`entitlement.granted`送信成功時、`sendToOveWallet()`は送
 
 ---
 
-# 動作確認(Stage 1〜6 共通)
+# Stage 7: Integration Outbox Dispatcher強化(完了報告・P0完了)
 
-- `npx vitest run`(server): 547件全成功。
+## 問題
+
+現行Dispatcherは、1バッチ最大50件・1件あたりtimeout 8秒・順次処理・staleなprocessing行の
+pending復帰は備えていたが、以下が不足していた: processing_tokenによるclaim所有権の明示化、
+送信先ごとの同時実行上限、Function実行時間の監視、cron頻度(日次)とbackoff初期値(5分)の
+乖離、試行履歴の記録、管理画面からの手動再送、`/shopping/webhook`のコード固定。
+
+## 対応(9.2の必須実装をすべて実装)
+
+### 所有権(processing_token)
+
+`IntegrationOutboxEvent`に`processing_token`/`processing_started_at`を追加(Stripe Event
+Inbox・notification_outbox_events・order_linking_jobsと同じ設計)。claim・成功・失敗いずれの
+更新も`WHERE status='processing' AND processing_token=<token>`を条件にすることで、
+staleとして再クレームされた後の「古い処理」が、新しくclaimした側の結果を上書きできないように
+した(9.3「古い処理が新しい結果を上書きしない」)。stale検知も`updated_at`から
+`processing_started_at`基準に変更した。
+
+### batch(件数・送信先ごとの上限)
+
+`BATCH_LIMIT`を50→10へ縮小し、新たに`PER_DESTINATION_BATCH_LIMIT`(5件)を導入。1回の
+dispatch呼び出しで同一`destination_system_key`からclaimする件数を上限までに抑え、1つの
+送信先へ集中しすぎないようにした。
+
+### 実行時間
+
+`dispatchPendingOutboxEvents()`の実行開始時刻を記録し、ループの各反復で経過時間を確認、
+環境変数`INTEGRATION_OUTBOX_TIME_BUDGET_MS`(既定8000ms、都度読み直すためデプロイし直さず
+調整可能)を超えたら新規claimを打ち切る(claim済みでない行はpending/blockedのまま残り、
+次回のdispatchで再評価される)。
+
+### 再試行(cron頻度とbackoffの整合)
+
+Vercel Hobbyプランはcronの実行頻度が1日1回に制限される(既存の全crons設定が daily・時間帯
+分散になっているのは、この制約を前提とした設計と判断した)。指示書自身が「Vercelプラン上
+不可能な場合はQueueまたは別Workerを使う」という代替を示しているが、本リポジトリ内で
+実現できる代替はないため、**cronのスケジュール自体は変更せず**、決済確定・返金の直後に
+ベストエフォートで即時ディスパッチする`triggerImmediateOutboxDispatch()`を新設し、
+`stripeWebhookHandlers.ts`(決済確定・全額返金)・`bankTransfer.ts`(入金確認)から呼び出す
+よう変更した(NFT自動発行・Stage3〜5で確立した「即時実行+cronセーフティネット」と同じ方式)。
+これにより、実際にはほとんどの送信がcronを待たずに完了し、cronは主に「取りこぼし・
+失敗時の再試行」のためのセーフティネットとして機能する。**cronの実行間隔自体を5〜10分に
+短縮するには、実際のVercelプランがそれをサポートしているかの確認が必要**であり、今回は
+確認できないため見送った(Pro以上のプランであれば`vercel.json`のスケジュールを変更するだけで
+対応可能)。
+
+### 試行履歴
+
+新規テーブル`integration_event_attempts`(`outbox_event_id`・`attempt_number`・`started_at`・
+`finished_at`・`http_status`・`result`・`error`・`processing_token`)を追加し、実際に送信を
+試みた回(成功・失敗いずれも)を1行記録するようにした。blocked(Stage6・必須ID未解決による
+保留)は「送信を試みていない」ため記録対象外。HTTPステータスを試行履歴へ残せるよう、
+`OutboxSendError`(httpStatusを保持するカスタムエラー)を新設した。
+
+### 手動再送
+
+`POST /api/admin/integration-outbox/:id/retry`を追加。dead/failed/blocked/pendingいずれの
+状態からも条件付きUPDATEでclaimし、通常のdispatchと同じ経路(reconcile→blocked判定→送信→
+試行履歴記録)で1件処理する。**Feature Flag無効時は手動再送であっても実送信を行わない**
+(「Flag無効時は常にdormant」という原則を管理操作にも一貫させるため、実装時に明示的に
+ガードを追加した)。
+
+### 正式URL
+
+送信先ごとのイベント受信pathをコード固定せず、設定値(`integration_endpoint_path_sengoku_passport`
+/ `integration_endpoint_path_ai_art_school`、未設定時は暫定値`/shopping/webhook`にフォール
+バック)から取得するようにした。HMAC署名対象pathと実送信pathは同じ変数を使うことで、
+必ず一致するようにしている(9.3受入条件)。
+
+## 開発中に見つけた実バグ(修正済み)
+
+- **`||`によるfalsy-zero判定バグ**: `INTEGRATION_OUTBOX_TIME_BUDGET_MS=0`(時間予算を使い切って
+  いる状態をテストする際の値)を`Number(value) || 8000`で判定すると、`0`はfalsyのため常に
+  既定値8000へフォールバックしてしまい、時間予算が事実上機能しない状態になっていた。
+  `Number.isFinite`による判定に修正した(実際にテストで再現・確認した上で修正)。
+
+## 対象外(意図的に見送った箇所)
+
+- **cronの実行間隔自体の短縮**: 上記の通り、Vercelプランの制約確認ができないため見送った。
+  即時ディスパッチによる緩和で実運用上の影響は限定的と判断している。
+- **`integration_event_attempts`を閲覧する専用の管理画面API**: 試行履歴テーブル自体は今回
+  追加したが、一覧・詳細表示用のAPIは追加していない(現状、`product_integration_rules`同様、
+  管理画面からの参照手段を持たないテーブルとして扱う)。障害調査時はDBを直接参照する運用と
+  し、必要になった時点で別途追加する。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)クリーン。
+- `npx vitest run`: 556件全成功(既存547件 + Stage7関連の新規テスト9件)。
+  - 「送信先ごとのpath設定を使い、HMAC署名対象pathと実送信pathが一致する」
+  - 「送信成功・失敗の両方でintegration_event_attemptsに試行履歴が記録される(http_status含む)」
+  - 「古いprocessing_tokenでの更新は、既に別tokenでclaimされた行を上書きしない」
+  - 「送信先ごとの同時実行上限(5件)を超える件数は1回のdispatchでclaimしない」
+  - 「時間予算を使い切っている場合は新規claimを行わない」
+  - 管理API側: 「Feature Flag無効時は手動再送しても404」「dead状態のイベントを再送でき
+    成功すればsucceededになる」「存在しないIDは404」「閲覧専用管理者は403」
+  をそれぞれ確認した。既存のdispatcherテスト(ove-wallet grant/revoke・HMAC送信・
+  stale再クレーム・最大試行回数超過等)はすべて無変更のまま成功しており、processing_token
+  導入・batch制限縮小後も既存の送信ロジックに影響がないことを確認した。
+- 新規マイグレーション(追加のみ、既存データへの影響なし): `integration_outbox_events`へ
+  `processing_token`/`processing_started_at`、新規テーブル`integration_event_attempts`。
+- `npx prisma migrate status`: 適用済み、pending migrationなし。
+- `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
+- `npm run build:client`成功。
+
+---
+
+# 動作確認(Stage 1〜7 共通)
+
+- `npx vitest run`(server): 556件全成功。
 - `npx tsc --noEmit`(server)・`npm run typecheck:api`・`npx tsc -b --noEmit`(client): すべてクリーン。
 - `npm run build:client`: 成功。
 - `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
 - `npx prisma migrate status`: 適用済み、pending migrationなし。
 
-## 結論(Stage 1〜6)
+## 結論(Stage 1〜7・P0全件完了)
 
-指示書のP0のうちStage 1(Vercel Config検証)・Stage 2(packages/contracts build可能化)・
-Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の永続ジョブ化)・Stage 5(referral
-confirmのタイミング修正・purchase側)・Stage 6(共通ID未解決イベントの送信保留)を完了した。
-決済・在庫・紹介・報酬・NFT/ウォレット・Outboxの変更禁止範囲には手を入れていない。
-`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。Stage 5のregistration側(新規機能追加が
-必要と判明)はユーザー確認の上で見送り、次のご指示があれば対応する。Stage 7(Integration
-Outbox Dispatcher強化)以降は、着手のご指示があり次第対応する。
+指示書のP0(Stage 1〜7)をすべて完了した: Stage 1(Vercel Config検証)・Stage 2
+(packages/contracts build可能化)・Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の
+永続ジョブ化)・Stage 5(referral confirmのタイミング修正・purchase側)・Stage 6(共通ID
+未解決イベントの送信保留)・Stage 7(Integration Outbox Dispatcher強化)。
+
+決済・在庫・紹介・報酬・NFT/ウォレット・Outboxの変更禁止範囲には一切手を入れていない。
+`SENNOKUNI_INTEGRATION_ENABLED`は全Stageを通じて`false`のまま維持した。
+
+意図的に見送った項目とその理由(いずれも本ファイルの各Stageのセクションに詳細を記載):
+- Stage 5のregistration側confirm: このシステムに「会員登録時点での紹介コード帰属」という
+  概念自体が存在せず、新規機能追加が必要と判明したため、ユーザーに確認の上で見送った。
+- 全額返金時のconfirm取消契約(Stage 5): 外部契約のevent種別がまだ確定していないため見送った。
+- product_integration_rulesの必須ID設定・cronの実行間隔短縮(Stage 6・7): 前者は既存の
+  同テーブルに管理画面が無いことと整合させ、後者はVercelプランの制約確認ができないため見送った。
+
+P1(Stage 8〜12)・basePrice仕様判断は、着手のご指示があり次第対応する。

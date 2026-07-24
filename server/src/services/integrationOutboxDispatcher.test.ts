@@ -30,6 +30,14 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
   afterEach(async () => {
     vi.unstubAllGlobals();
     process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
+    delete process.env.INTEGRATION_OUTBOX_TIME_BUDGET_MS;
+    const eventIds = (
+      await prisma.integrationOutboxEvent.findMany({
+        where: { correlationId: { startsWith: correlationPrefix } },
+        select: { id: true },
+      })
+    ).map((e) => e.id);
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: eventIds } } });
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: { startsWith: correlationPrefix } } });
     await prisma.setting.deleteMany({
       where: {
@@ -78,6 +86,11 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
         data: {
           status: overrides.status ?? undefined,
           attemptCount: overrides.attemptCount ?? undefined,
+          // staleなprocessing行を模擬する場合、実際のdispatcherと同じくprocessing_token/
+          // processing_started_atも設定されている状態にする(残課題指示書Stage7で
+          // stale判定がupdated_atからprocessing_started_at基準に変わったため)。
+          processingToken: overrides.status === 'processing' ? 'stale-test-token' : undefined,
+          processingStartedAt: overrides.updatedAtOverride ?? undefined,
         },
       });
       if (overrides.updatedAtOverride) {
@@ -235,6 +248,132 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
     expect(row.status).toBe('succeeded');
   });
+
+  // 残課題指示書Stage7・9.2「正式URL」: pathをコード固定せず送信先ごとの設定値にする。
+  it('送信先ごとのpath設定(integration_endpoint_path_*)を使い、HMAC署名対象pathと実送信pathが一致する', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/v2/webhook/entitlements');
+
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const correlationId = `${correlationPrefix}custom-path-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.succeeded).toBe(1);
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://passport.example.com/v2/webhook/entitlements');
+
+    await prisma.setting.deleteMany({ where: { key: 'integration_endpoint_path_sengoku_passport' } });
+  });
+
+  // 残課題指示書Stage7・9.2「試行履歴」: 実際に送信を試みた回をintegration_event_attemptsへ記録する。
+  it('送信成功・失敗の両方でintegration_event_attemptsに試行履歴が記録される(http_status含む)', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+
+    const failCorrelationId = `${correlationPrefix}attempt-fail-${Date.now()}`;
+    await createEvent({ correlationId: failCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    await dispatchPendingOutboxEvents();
+
+    const failedEvent = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: failCorrelationId } });
+    const failedAttempts = await prisma.integrationEventAttempt.findMany({ where: { outboxEventId: failedEvent.id } });
+    expect(failedAttempts).toHaveLength(1);
+    expect(failedAttempts[0]).toMatchObject({ attemptNumber: 1, result: 'failed', httpStatus: 503 });
+    expect(failedAttempts[0].startedAt).toBeTruthy();
+    expect(failedAttempts[0].finishedAt).toBeTruthy();
+
+    vi.unstubAllGlobals();
+    const okCorrelationId = `${correlationPrefix}attempt-ok-${Date.now()}`;
+    await createEvent({ correlationId: okCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+
+    await dispatchPendingOutboxEvents();
+    const okEvent = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: okCorrelationId } });
+    const okAttempts = await prisma.integrationEventAttempt.findMany({ where: { outboxEventId: okEvent.id } });
+    expect(okAttempts).toHaveLength(1);
+    expect(okAttempts[0]).toMatchObject({ attemptNumber: 1, result: 'succeeded', httpStatus: null });
+  });
+
+  // 残課題指示書Stage7・9.3「古い処理が新しい結果を上書きしない」: processing_tokenの一致を
+  // 条件にした更新のため、失効したtoken(stale再クレーム前の古いclaim)による書き込みは無視される。
+  it('古いprocessing_tokenでの更新は、既に別tokenでclaimされた行を上書きしない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const correlationId = `${correlationPrefix}stale-token-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-staletoken-1' });
+    const original = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+
+    // 別のdispatcherインスタンスが既にこの行を新しいtokenでclaim・成功させた状況を模擬する。
+    await prisma.integrationOutboxEvent.update({
+      where: { id: original.id },
+      data: { status: 'succeeded', processingToken: null, processingStartedAt: null, processedAt: new Date() },
+    });
+
+    // 元のprocessing_token(失効済み)を使った更新は、現在の行の状態(status='succeeded'・
+    // processingToken=null)と一致しないため、何も更新されないはず。
+    const staleUpdate = await prisma.integrationOutboxEvent.updateMany({
+      where: { id: original.id, status: 'processing', processingToken: 'this-token-no-longer-matches' },
+      data: { status: 'dead', lastError: '古いtokenからの書き込み(発生してはいけない)' },
+    });
+    expect(staleUpdate.count).toBe(0);
+
+    const after = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: original.id } });
+    expect(after.status).toBe('succeeded');
+    expect(after.lastError).toBeNull();
+  });
+
+  // 残課題指示書Stage7・9.2「batch」: 送信先ごとの同時実行上限を超えた分は次回以降に持ち越す。
+  it('送信先ごとの同時実行上限(PER_DESTINATION_BATCH_LIMIT=5)を超える件数は1回のdispatchでclaimしない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_perdest' });
+    const prefix = `${correlationPrefix}perdest-${Date.now()}`;
+    for (let i = 0; i < 8; i++) {
+      await createEvent({ correlationId: `${prefix}-${i}`, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: `oi-perdest-${i}` });
+    }
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    // 8件enqueueしたが、送信先ごとの上限(5件)までしかclaimされない。
+    expect(result.claimed).toBe(5);
+    const remainingPending = await prisma.integrationOutboxEvent.count({
+      where: { correlationId: { startsWith: prefix }, status: 'pending' },
+    });
+    expect(remainingPending).toBe(3);
+    // 片付けは共通のafterEach(correlationPrefix一致)がintegration_event_attempts→
+    // integration_outbox_eventsの順で行う。
+  });
+
+  // 残課題指示書Stage7・9.2「実行時間」: Functionの残り時間に余裕がない場合は新規claimを停止する。
+  it('時間予算(INTEGRATION_OUTBOX_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    process.env.INTEGRATION_OUTBOX_TIME_BUDGET_MS = '0';
+    const correlationId = `${correlationPrefix}timebudget-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-timebudget-1' });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.claimed).toBe(0);
+    expect(grantRewardMock).not.toHaveBeenCalled();
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    expect(row.status).toBe('pending');
+
+    delete process.env.INTEGRATION_OUTBOX_TIME_BUDGET_MS;
+  });
 });
 
 // 残課題指示書Stage6: 共通ID未解決イベントの送信保留。実際の注文・商品・ルールを使い、
@@ -256,6 +395,13 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
     });
     // 各テストが作成したイベント・注文・商品を都度片付け、次のテストのdispatch結果へ
     // 再claimされて混入しないようにする(blocked行は毎回再評価対象に含まれるため特に重要)。
+    const stage6EventIds = (
+      await prisma.integrationOutboxEvent.findMany({
+        where: { payload: { path: ['product_code'], equals: 'STAGE6-TEST' } },
+        select: { id: true },
+      })
+    ).map((e) => e.id);
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: stage6EventIds } } });
     await prisma.integrationOutboxEvent.deleteMany({ where: { payload: { path: ['product_code'], equals: 'STAGE6-TEST' } } });
     await prisma.orderItem.deleteMany({ where: { product: { name: { startsWith: productNamePrefix } } } });
     await prisma.order.deleteMany({ where: { customerEmail: { contains: productNamePrefix } } });

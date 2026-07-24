@@ -7,6 +7,7 @@ import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 import { enqueueEntitlementEvents } from './integrationOutbox';
 import { triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
+import { triggerImmediateOutboxDispatch } from './integrationOutboxDispatcher';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -57,6 +58,10 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)等のorder_linking_jobs
   // も同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
   await triggerImmediateOrderLinkingDispatch();
+  // 仕様書外の拡張(残課題指示書Stage7): entitlement.granted等のintegration_outbox_eventsも
+  // 同様にベストエフォートで即時ディスパッチする(cronは日次のため、backoffの初期値5分との
+  // 乖離を埋める。失敗してもcronが後で再送する)。
+  await triggerImmediateOutboxDispatch();
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {
@@ -197,4 +202,8 @@ export async function handleChargeRefunded(event: Stripe.Event) {
       }
     }
   });
+
+  // 仕様書外の拡張(残課題指示書Stage7): entitlement.revokedのcommit直後にもベストエフォートで
+  // 即時ディスパッチを試みる(cronは日次のため、backoffの初期値5分との乖離を埋める)。
+  await triggerImmediateOutboxDispatch();
 }
