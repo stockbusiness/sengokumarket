@@ -121,10 +121,12 @@ describe('管理API: 商品管理', () => {
     expect(res.body.product.variants[0].stock).toBe(20);
   });
 
-  // 実際に決済で使われるのはバリエーションのpriceであり(basePriceは一覧表示用)、
-  // 価格編集時にバリエーションのpriceが追従しないと表示価格と請求額がずれるバグの回帰テスト。
-  it('basePriceを変更すると既存バリエーションのpriceも追従して更新される', async () => {
+  // basePriceは一覧表示用の代表(最安)価格に過ぎず、実際に決済で使われるのはバリエーションごとの
+  // priceである(残課題指示書第15章・バリエーション別価格へ移行)。basePriceの変更が既存の
+  // バリエーションpriceを巻き込んで書き換えないことの回帰テスト。
+  it('basePriceを変更しても既存バリエーションのpriceは変更されない', async () => {
     const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
+    const originalVariantPrice = product.variants[0].price;
 
     const res = await agent
       .put(`/api/admin/products/${product.id}`)
@@ -133,10 +135,23 @@ describe('管理API: 商品管理', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.product.basePrice).toBe(27500);
-    expect(res.body.product.variants[0].price).toBe(27500);
+    expect(res.body.product.variants[0].price).toBe(originalVariantPrice);
 
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: product.variants[0].id } });
-    expect(variant.price).toBe(27500);
+    expect(variant.price).toBe(originalVariantPrice);
+  });
+
+  it('バリエーションごとに個別の価格を指定して更新できる', async () => {
+    const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
+
+    const res = await agent
+      .put(`/api/admin/products/${product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ variants: [{ id: product.variants[0].id, price: 33000 }] });
+
+    expect(res.status).toBe(200);
+    expect(res.body.product.variants[0].price).toBe(33000);
+    expect(res.body.product.basePrice).not.toBe(33000);
   });
 
   it('sales_modelを更新できる', async () => {

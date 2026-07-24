@@ -77,7 +77,7 @@ export default function ProductDetailPage() {
         <div className="product-detail__info">
           <h1 className="product-detail__name">{product.name}</h1>
           <p className="product-detail__price">
-            {product.basePrice.toLocaleString()}円<span>(税込)</span>
+            {(selectedVariant?.price ?? product.basePrice).toLocaleString()}円<span>(税込)</span>
           </p>
 
           {product.variants.length > 1 ? (

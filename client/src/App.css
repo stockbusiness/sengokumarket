@@ -1247,6 +1247,10 @@
   flex: 2 1 200px;
 }
 
+.admin-variant-row__price {
+  flex: 1 1 120px;
+}
+
 .admin-variant-row__stock {
   flex: 1 1 100px;
 }

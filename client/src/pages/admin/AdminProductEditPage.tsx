@@ -43,7 +43,7 @@ export default function AdminProductEditPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
-  const [newVariant, setNewVariant] = useState<VariantRow>({ name: '', stock: 0 });
+  const [newVariant, setNewVariant] = useState<VariantRow>({ name: '', stock: 0, price: 0 });
   const priceInputRef = useRef<HTMLInputElement | null>(null);
 
   function load() {
@@ -140,6 +140,19 @@ export default function AdminProductEditPage() {
     }
   }
 
+  // 残課題指示書第15章: basePriceは代表価格に過ぎず、実際の販売価格はバリエーションごとに
+  // 個別管理する(basePrice変更によるバリエーション価格の一括上書きは廃止した)。
+  async function handleUpdateVariantPrice(variantId: string, variantName: string, price: number) {
+    if (!product) return;
+    try {
+      await updateAdminProduct(product.id, { variants: [{ id: variantId, price }] });
+      notify('success', `${variantName}の価格を更新しました`);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '価格の更新に失敗しました');
+    }
+  }
+
   async function handleDeleteVariant(variantId: string, variantName: string) {
     if (!product) return;
     if (!window.confirm(`「${variantName}」を削除します。よろしいですか？`)) return;
@@ -160,10 +173,10 @@ export default function AdminProductEditPage() {
     }
     try {
       await updateAdminProduct(product.id, {
-        variants: [{ name: newVariant.name.trim(), price: product.basePrice, stock: newVariant.stock }],
+        variants: [{ name: newVariant.name.trim(), price: newVariant.price, stock: newVariant.stock }],
       });
       notify('success', `「${newVariant.name.trim()}」を追加しました`);
-      setNewVariant({ name: '', stock: 0 });
+      setNewVariant({ name: '', stock: 0, price: 0 });
       load();
     } catch (e) {
       notify('error', e instanceof Error ? e.message : 'バリエーションの追加に失敗しました');
@@ -254,8 +267,11 @@ export default function AdminProductEditPage() {
 
         <div className="admin-form-section">
           <h2 className="admin-form-section__title">価格(消費税10%)</h2>
+          <p className="admin-form-section__hint">
+            ここでの価格は一覧表示用の代表価格です。実際の販売価格はバリエーションごとに個別設定します(下欄)。
+          </p>
           <label>
-            価格
+            価格(代表価格)
             <input
               type="number"
               ref={priceInputRef}
@@ -331,6 +347,18 @@ export default function AdminProductEditPage() {
         {product.variants.map((v) => (
           <div className="admin-variant-row" key={v.id}>
             <span className="admin-variant-row__name">{v.name}</span>
+            <label className="admin-variant-row__price">
+              価格
+              <input
+                type="number"
+                min={0}
+                defaultValue={v.price}
+                onBlur={(e) => {
+                  const next = Number(e.target.value);
+                  if (next !== v.price) handleUpdateVariantPrice(v.id, v.name, next);
+                }}
+              />
+            </label>
             <label className="admin-variant-row__stock">
               在庫数
               <input
@@ -355,6 +383,15 @@ export default function AdminProductEditPage() {
               placeholder="例: 通常、RED、Black"
               value={newVariant.name}
               onChange={(e) => setNewVariant((prev) => ({ ...prev, name: e.target.value }))}
+            />
+          </label>
+          <label className="admin-variant-row__price">
+            価格
+            <input
+              type="number"
+              min={0}
+              value={newVariant.price}
+              onChange={(e) => setNewVariant((prev) => ({ ...prev, price: Number(e.target.value) }))}
             />
           </label>
           <label className="admin-variant-row__stock">

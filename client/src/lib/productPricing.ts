@@ -28,5 +28,6 @@ export function toTaxExcludedEstimate(amount: number): number {
 export interface VariantRow {
   name: string;
   stock: number;
+  price: number;
 }
-export const DEFAULT_VARIANT_ROWS: VariantRow[] = [{ name: '通常', stock: 0 }];
+export const DEFAULT_VARIANT_ROWS: VariantRow[] = [{ name: '通常', stock: 0, price: 0 }];

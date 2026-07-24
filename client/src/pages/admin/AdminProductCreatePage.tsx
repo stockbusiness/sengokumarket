@@ -36,7 +36,7 @@ export default function AdminProductCreatePage() {
   }
 
   function addVariantRow() {
-    setVariantRows((prev) => [...prev, { name: '', stock: 0 }]);
+    setVariantRows((prev) => [...prev, { name: '', stock: 0, price: basePrice }]);
   }
 
   function removeVariantRow(index: number) {
@@ -85,7 +85,7 @@ export default function AdminProductCreatePage() {
         basePrice: finalPrice,
         status: 'draft',
         images: parseImagesText(imagesText),
-        variants: validVariants.map((v) => ({ name: v.name.trim(), price: finalPrice, stock: v.stock })),
+        variants: validVariants.map((v) => ({ name: v.name.trim(), price: toTaxIncluded(v.price, priceMode), stock: v.stock })),
       });
       navigate('/admin/products', { state: { message: `「${name}」を作成しました` } });
     } catch (e) {
@@ -149,8 +149,11 @@ export default function AdminProductCreatePage() {
 
         <div className="admin-form-section">
           <h2 className="admin-form-section__title">価格(消費税10%)</h2>
+          <p className="admin-form-section__hint">
+            ここでの価格は一覧表示用の代表価格です。実際の販売価格はバリエーションごとに個別設定できます(下欄)。
+          </p>
           <label>
-            価格
+            価格(代表価格)
             <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
           </label>
           <div className="admin-tax-mode">
@@ -185,7 +188,8 @@ export default function AdminProductCreatePage() {
         <div className="admin-form-section">
           <h2 className="admin-form-section__title">バリエーション・在庫</h2>
           <p className="admin-form-section__hint">
-            色・サイズ等の選択肢ごとに、名前と在庫数(個数)を入力してください。ここで在庫数を設定しないと購入できません。
+            色・サイズ等の選択肢ごとに、名前・価格・在庫数(個数)を入力してください。ここで在庫数を設定しないと購入できません。
+            価格は上の「価格(代表価格)」欄と同じ税込/税別モードで入力してください。
           </p>
           {variantRows.map((row, index) => (
             <div className="admin-variant-row" key={index}>
@@ -196,6 +200,15 @@ export default function AdminProductCreatePage() {
                   value={row.name}
                   placeholder="例: 通常、RED、Black"
                   onChange={(e) => updateVariantRow(index, 'name', e.target.value)}
+                />
+              </label>
+              <label className="admin-variant-row__price">
+                価格
+                <input
+                  type="number"
+                  value={row.price}
+                  min={0}
+                  onChange={(e) => updateVariantRow(index, 'price', Number(e.target.value))}
                 />
               </label>
               <label className="admin-variant-row__stock">
