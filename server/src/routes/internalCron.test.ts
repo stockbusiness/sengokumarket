@@ -16,7 +16,7 @@ vi.mock('../services/nftMintProcessing', () => ({
   processNftMints: () => processNftMints(),
 }));
 
-const dispatchPendingOutboxEvents = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 }));
+const dispatchPendingOutboxEvents = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 }));
 
 vi.mock('../services/integrationOutboxDispatcher', () => ({
   dispatchPendingOutboxEvents: () => dispatchPendingOutboxEvents(),
@@ -210,7 +210,7 @@ describe('内部cron: 連携Outbox送信(仕様書外の拡張)', () => {
       .get('/api/internal/cron/process-integration-outbox')
       .set('Authorization', 'Bearer test-cron-secret-outbox');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
+    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 });
     expect(dispatchPendingOutboxEvents).toHaveBeenCalledTimes(1);
   });
 });

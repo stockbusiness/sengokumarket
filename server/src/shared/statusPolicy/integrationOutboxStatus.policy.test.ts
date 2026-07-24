@@ -16,4 +16,19 @@ describe('assertIntegrationOutboxTransition', () => {
       expect.objectContaining({ code: 'INVALID_INTEGRATION_OUTBOX_STATUS_TRANSITION' } satisfies Partial<DomainError>),
     );
   });
+
+  // 残課題指示書Stage6: 必須ID未解決による送信保留(blocked)の遷移。
+  it('processing→blockedは許可される(必須ID未解決による送信保留)', () => {
+    expect(() => assertIntegrationOutboxTransition('processing', 'blocked')).not.toThrow();
+  });
+
+  it('blocked→processingは許可される(ID解決後の自動再開)', () => {
+    expect(() => assertIntegrationOutboxTransition('blocked', 'processing')).not.toThrow();
+  });
+
+  it('blocked→succeededは不正遷移として拒否される(必ずprocessingを経由する)', () => {
+    expect(() => assertIntegrationOutboxTransition('blocked', 'succeeded')).toThrowError(
+      expect.objectContaining({ code: 'INVALID_INTEGRATION_OUTBOX_STATUS_TRANSITION' } satisfies Partial<DomainError>),
+    );
+  });
 });

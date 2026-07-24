@@ -58,6 +58,33 @@ describe('管理API: 連携Outbox一覧(仕様書外の拡張・千ノ国全体�
     );
   });
 
+  it('残課題指示書Stage6: status=blockedで絞り込み、blocked理由(blockedReason)を確認できる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const blockedCorrelationId = `${correlationId}-blocked`;
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'sengoku-passport',
+        payload: { foo: 'bar' },
+        correlationId: blockedCorrelationId,
+      });
+    });
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: blockedCorrelationId } });
+    await prisma.integrationOutboxEvent.update({
+      where: { id: row.id },
+      data: { status: 'blocked', blockedReason: 'common_user_unresolved' },
+    });
+
+    const res = await agent.get('/api/admin/integration-outbox?status=blocked');
+    expect(res.status).toBe(200);
+    const found = res.body.outboxEvents.find((e: { correlationId: string }) => e.correlationId === blockedCorrelationId);
+    expect(found).toBeTruthy();
+    expect(found.blockedReason).toBe('common_user_unresolved');
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: blockedCorrelationId } });
+  });
+
   it('不正なstatusは400になる', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent.get('/api/admin/integration-outbox?status=not_a_status');

@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import type { IntegrationOutboxEvent } from '@prisma/client';
+import type { IntegrationOutboxEvent, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { isSennokuniIntegrationEnabled, getSennokuniHubCredentials, getIntegrationEndpointBaseUrl } from './sennokuniIntegrationConfig';
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
@@ -24,10 +24,11 @@ export interface DispatchOutboxResult {
   retrying: number;
   dead: number;
   skipped: number;
+  blocked: number;
 }
 
 export async function dispatchPendingOutboxEvents(): Promise<DispatchOutboxResult> {
-  const result: DispatchOutboxResult = { claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 };
+  const result: DispatchOutboxResult = { claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 };
 
   if (!isSennokuniIntegrationEnabled()) return result;
 
@@ -40,14 +41,15 @@ export async function dispatchPendingOutboxEvents(): Promise<DispatchOutboxResul
     await prisma.integrationOutboxEvent.updateMany({ where: { id: row.id, status: 'processing' }, data: { status: 'pending' } });
   }
 
-  // 2) 送信対象(pending・next_attempt_at未到来でない)をclaimして送信する。
+  // 2) 送信対象をclaimして送信する。残課題指示書Stage6: blocked行も毎回再評価対象に含めることで、
+  // 必須ID解決後に自動的に送信を再開できるようにする(8.4「ID解決後に自動再開」)。
   const pendingRows = await prisma.integrationOutboxEvent.findMany({
-    where: { status: 'pending', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
+    where: { status: { in: ['pending', 'blocked'] }, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
     take: BATCH_LIMIT,
   });
 
   for (const row of pendingRows) {
-    const claimed = await prisma.integrationOutboxEvent.updateMany({ where: { id: row.id, status: 'pending' }, data: { status: 'processing' } });
+    const claimed = await prisma.integrationOutboxEvent.updateMany({ where: { id: row.id, status: row.status }, data: { status: 'processing' } });
     if (claimed.count === 0) {
       result.skipped++;
       continue;
@@ -59,10 +61,63 @@ export async function dispatchPendingOutboxEvents(): Promise<DispatchOutboxResul
   return result;
 }
 
+// 仕様書外の拡張(残課題指示書Stage6・8.2推奨順位1〜3): 送信直前に注文の最新状態を再取得し、
+// enqueue時点でスナップショットしたcommon_user_id等が古いままpayloadに焼き付いていないか
+// 補正する。product_integration_rulesの必須ID設定(8.3)のうち未解決のものがあれば、送信せず
+// blocked(理由付き)として返す。order_idを持たない(=entitlement系ではない)イベントは対象外。
+async function reconcileEntitlementFields(
+  event: IntegrationOutboxEvent,
+): Promise<{ blockedReason: string | null; effectivePayload: Record<string, unknown> }> {
+  const payload = event.payload as Record<string, unknown>;
+  const orderId = typeof payload.order_id === 'string' ? payload.order_id : null;
+  if (!orderId) return { blockedReason: null, effectivePayload: payload };
+
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order) return { blockedReason: null, effectivePayload: payload };
+
+  const effectivePayload: Record<string, unknown> = {
+    ...payload,
+    common_user_id: order.commonUserId,
+    sales_agent_id: order.salesAgentCode,
+    closing_agent_id: order.closingAgentCode,
+    referral_session_key: order.referralSessionKey,
+    registration_referrer_agency_id: order.registrationReferrerAgentCode,
+    assigned_agency_id: order.assignedAgentCode,
+  };
+
+  const productId = typeof payload.product_id === 'string' ? payload.product_id : null;
+  const rule = productId ? await prisma.productIntegrationRule.findUnique({ where: { productId } }) : null;
+  if (!rule) return { blockedReason: null, effectivePayload };
+
+  if (rule.requireCommonUserId && !order.commonUserId) return { blockedReason: 'common_user_unresolved', effectivePayload };
+  if (rule.requireSalesAgentId && !order.salesAgentCode) return { blockedReason: 'sales_agent_unresolved', effectivePayload };
+  if (rule.requireClosingAgentId && !order.closingAgentCode) return { blockedReason: 'closing_agent_unresolved', effectivePayload };
+  if (rule.requireReferralSessionKey && !order.referralSessionKey) {
+    return { blockedReason: 'referral_session_unresolved', effectivePayload };
+  }
+
+  return { blockedReason: null, effectivePayload };
+}
+
 async function sendAndRecordResult(event: IntegrationOutboxEvent, result: DispatchOutboxResult): Promise<void> {
+  const { blockedReason, effectivePayload } = await reconcileEntitlementFields(event);
+  if (blockedReason) {
+    await prisma.integrationOutboxEvent.update({
+      where: { id: event.id },
+      data: { status: 'blocked', blockedReason, payload: effectivePayload as Prisma.InputJsonValue },
+    });
+    result.blocked++;
+    return;
+  }
+
+  const effectiveEvent: IntegrationOutboxEvent = { ...event, payload: effectivePayload as Prisma.JsonValue };
+
   try {
-    await sendOutboxEvent(event);
-    await prisma.integrationOutboxEvent.update({ where: { id: event.id }, data: { status: 'succeeded', processedAt: new Date(), lastError: null } });
+    await sendOutboxEvent(effectiveEvent);
+    await prisma.integrationOutboxEvent.update({
+      where: { id: event.id },
+      data: { status: 'succeeded', processedAt: new Date(), lastError: null, blockedReason: null, payload: effectivePayload as Prisma.InputJsonValue },
+    });
     result.succeeded++;
   } catch (e) {
     const message = (e instanceof Error ? e.message : String(e)).slice(0, 2000);
@@ -70,7 +125,7 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
     if (attemptCount >= MAX_ATTEMPTS) {
       await prisma.integrationOutboxEvent.update({
         where: { id: event.id },
-        data: { status: 'dead', attemptCount, lastError: message },
+        data: { status: 'dead', attemptCount, lastError: message, blockedReason: null },
       });
       result.dead++;
     } else {
@@ -81,6 +136,7 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
           status: 'pending',
           attemptCount,
           lastError: message,
+          blockedReason: null,
           nextAttemptAt: new Date(Date.now() + backoffMinutes * 60 * 1000),
         },
       });
@@ -121,10 +177,10 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
     // 返金時のREVERSAL対象を追跡できるよう、成功した付与のtransaction_idをpayloadへ記録する。
     // 仕様書外の拡張として簡易に実装しているが、本来は専用のorder_wallet_transactionsテーブルで
     // 管理すべき情報であり(実装報告書の既知の未対応事項)、現時点での暫定対応にとどまる。
-    await prisma.integrationOutboxEvent.update({
-      where: { id: event.id },
-      data: { payload: { ...(event.payload as Record<string, unknown>), ove_transaction_id: grantResult.transactionId } },
-    });
+    // DBへは直接書かず、呼び出し元(sendAndRecordResult)が送信成功時にまとめて1回で永続化する
+    // (残課題指示書Stage6でDispatcherがpayloadを再構築するようになったため、途中で個別に書き込むと
+    // 後続の永続化で上書き・消失してしまうのを避けるため、メモリ上のオブジェクトを直接更新する)。
+    (event.payload as Record<string, unknown>).ove_transaction_id = grantResult.transactionId;
     return;
   }
 

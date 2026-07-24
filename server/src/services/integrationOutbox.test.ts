@@ -133,6 +133,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
       referral_session_key: 'rsk_test_001',
       order_id: order.id,
       order_item_id: orderItem.id,
+      product_id: product.id,
       product_code: 'PASSPORT-GOLD',
       entitlement_type: 'castle_lord_contract',
       quantity: 3,

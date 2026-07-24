@@ -213,6 +213,12 @@ model ProductIntegrationRule {
   entitlementType            String?  @map("entitlement_type")
   rewardRuleId               String?  @map("reward_rule_id")
   revokeOnRefund             Boolean  @default(true) @map("revoke_on_refund")
+  // 仕様書外の拡張(残課題指示書Stage6・8.3): 送信先ごとに必須とするIDを設定可能にする。
+  // 既定値はすべてfalse(現状どおり未解決のnullがあっても送信する)であり、既存の挙動を変えない。
+  requireCommonUserId        Boolean  @default(false) @map("require_common_user_id")
+  requireSalesAgentId        Boolean  @default(false) @map("require_sales_agent_id")
+  requireClosingAgentId      Boolean  @default(false) @map("require_closing_agent_id")
+  requireReferralSessionKey  Boolean  @default(false) @map("require_referral_session_key")
   createdAt                  DateTime @default(now()) @map("created_at")
   updatedAt                  DateTime @updatedAt @map("updated_at")
 
@@ -413,9 +419,12 @@ model IntegrationOutboxEvent {
   payload              Json
   payloadHash          String    @map("payload_hash")
   correlationId        String?   @map("correlation_id")
-  status               String    @default("pending") @map("status") // pending | processing | succeeded | failed | dead
+  status               String    @default("pending") @map("status") // pending | processing | succeeded | failed | dead | blocked
   attemptCount         Int       @default(0) @map("attempt_count")
   lastError            String?   @map("last_error")
+  // 仕様書外の拡張(残課題指示書Stage6): 必須ID(product_integration_rulesで設定)が未解決のため
+  // 送信を保留した理由(例: common_user_unresolved)。status='blocked'の間のみ設定される。
+  blockedReason        String?   @map("blocked_reason")
   nextAttemptAt        DateTime? @map("next_attempt_at")
   processedAt          DateTime? @map("processed_at")
   createdAt            DateTime  @default(now()) @map("created_at")

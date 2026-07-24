@@ -82,6 +82,9 @@ export async function enqueueEntitlementEvents(
       payload: {
         ...baseEventPayload(order),
         order_item_id: item.id,
+        // 仕様書外の拡張(残課題指示書Stage6): Dispatcherが送信直前に最新のproduct_integration_rule
+        // (必須ID設定)を再取得できるよう、product_idをpayloadへ含める。
+        product_id: item.productId,
         product_code: rule.productCode,
         entitlement_type: rule.entitlementType,
         quantity: item.quantity,

@@ -358,19 +358,109 @@ purchase側のみを今回のStage 5の対象とした。**
 
 ---
 
-# 動作確認(Stage 1〜5 共通)
+# Stage 6: 共通ID未解決イベントの送信保留(完了報告)
 
-- `npx vitest run`(server): 539件全成功。
+## 問題
+
+権利付与Outbox(`integration_outbox_events`のentitlement.granted/revoked)は、enqueue時点の
+注文状態(`common_user_id`・`sales_agent_id`・`closing_agent_id`・`referral_session_key`)を
+payloadへスナップショットしていた。これらはStage 4のジョブ(`common_user_resolve`・
+`referral_capture`)によって決済確定「後」に非同期で解決されることがあるため、決済確定と
+ほぼ同時にentitlement Outboxがenqueueされると、これらの値が未解決(null)のまま送信されて
+しまう可能性があった。
+
+## 対応(指示書8.2の推奨順位1〜3をすべて実装)
+
+### 8.3 必須判定: product_integration_rulesへの追加
+
+`ProductIntegrationRule`に`requireCommonUserId`/`requireSalesAgentId`/`requireClosingAgentId`/
+`requireReferralSessionKey`(すべて既定`false`)を追加した。既定値がfalseのため、
+**既存の(現状すべて未設定の)商品の挙動は一切変わらない**(指示書8.4「不要なシステムでは
+common_user_idなしでも送信可能」)。
+
+### 8.2 推奨順位1: Dispatcher送信時に最新情報を再構築
+
+`enqueueEntitlementEvents`のpayloadに`product_id`を追加(必須判定の再取得に使う)。
+`integrationOutboxDispatcher.ts`に`reconcileEntitlementFields()`を新設し、送信直前に
+`payload.order_id`から注文を再取得し、`common_user_id`等4フィールドを**そのenqueue時点の
+値ではなく最新の注文の値で上書きしたpayload**を組み立てる。`order_id`を持たないイベント
+(entitlement系以外の将来のイベント種別)は素通しにする。
+
+### 8.2 推奨順位2: 必須IDが未解決ならblocked
+
+再構築後、`product_id`から対応する`product_integration_rule`を再取得し、必須設定されている
+フィールドが依然として未解決なら、送信を試みずに`status='blocked'`・
+`blocked_reason`(`common_user_unresolved`等、指示書8.2の例示にならった命名)を設定して
+そのターンは終了する(attempt_countは増加させない。ネットワーク障害等の「失敗」とは異なり、
+「まだ解決を待っている」状態のため)。
+
+### 8.2 推奨順位3: ID解決完了時にpendingへ戻す
+
+Dispatcherのclaim対象を`status IN ('pending', 'blocked')`へ拡張した。これにより`blocked`行も
+毎回のdispatch(cron・各種決済確定直後のベストエフォート即時実行)で再評価され、Stage 4の
+ジョブが解決を終えていれば次のサイクルで自動的に送信される(指示書8.4「ID解決後に自動再開」)。
+
+### 開発中に見つけた実バグ(修正済み)
+
+OVE Wallet宛の`entitlement.granted`送信成功時、`sendToOveWallet()`は送信成功のtransaction_id
+(将来の返金時REVERSAL用)を`payload`へ直接DB書き込みしていたが、今回`sendAndRecordResult()`
+の成功時にも(再構築後のpayloadを永続化するため)`payload`を上書きするよう変更したため、
+**そのままでは後続の1回で先に書き込まれたtransaction_idが消えてしまう状態**になっていた。
+`sendToOveWallet()`をメモリ上の`event.payload`オブジェクトを直接変更する方式に変更し、
+呼び出し元が送信成功後にまとめて1回で永続化するよう修正した(実際にテストで再現・確認した
+上で修正)。
+
+### 管理画面
+
+`GET /api/admin/integration-outbox?status=blocked`で一覧・絞り込み可能(既存の
+`INTEGRATION_OUTBOX_STATUSES`契約定数へ`blocked`を追加しただけで、一覧表示自体はDBの生の行を
+返すため`blockedReason`も追加のコード変更なしで表示される。指示書8.4「blocked理由を管理画面で
+確認可能」)。状態遷移Policy(`integrationOutboxStatus.policy.ts`、Phase6で導入・現状は参照用)
+にも`blocked`関連の遷移(`processing→blocked`・`blocked→processing`)を追加した。
+
+### 対象外(意図的に見送った箇所)
+
+- **product_integration_rulesの必須ID設定を管理画面から編集するUI**: このテーブル自体が
+  現状、管理画面からの編集手段を一切持たない(直接DB/シードでの設定を前提とした設計。
+  評議員NFTはこのシステム単独で完結する方針のため意図的に未整備)。今回追加した4つの
+  真偽値カラムも同様の位置づけとし、UIの新設は見送った。将来、実際に外部連携を有効化する
+  段階で、他のルール項目とまとめて管理画面を整備することを推奨する。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)クリーン。
+- `npx vitest run`: 547件全成功(既存539件 + Stage6関連の新規テスト8件: dispatcherのblocking/
+  再構築テスト4件、状態遷移Policyのblocked遷移テスト3件、管理API`status=blocked`絞り込み
+  テスト1件)。
+  - 「必須なのにcommon_user_idが未解決ならblockedになり送信しない」
+  - 「blocked後にID解決されると次回dispatchで自動的に再開する」
+  - 「必須設定がない商品は従来通りnullでも送信される(後方互換)」
+  - 「送信payloadはenqueue時点でなく送信時点の最新値を使う」
+  をそれぞれ確認した。既存の`integrationOutboxDispatcher.test.ts`・`integrationOutbox.test.ts`・
+  `admin/integrationOutbox.test.ts`の既存ケースはすべて無変更のまま成功しており、
+  現状(ルール未設定)の挙動に影響がないことを確認した。
+- 新規マイグレーション(追加のみ、既存データへの影響なし): `product_integration_rules`へ
+  4つの真偽値カラム(既定false)、`integration_outbox_events`へ`blocked_reason`。
+- `npx prisma migrate status`: 適用済み、pending migrationなし。
+- `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
+- `npm run build:client`成功。
+
+---
+
+# 動作確認(Stage 1〜6 共通)
+
+- `npx vitest run`(server): 547件全成功。
 - `npx tsc --noEmit`(server)・`npm run typecheck:api`・`npx tsc -b --noEmit`(client): すべてクリーン。
 - `npm run build:client`: 成功。
 - `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
 - `npx prisma migrate status`: 適用済み、pending migrationなし。
 
-## 結論(Stage 1〜5)
+## 結論(Stage 1〜6)
 
 指示書のP0のうちStage 1(Vercel Config検証)・Stage 2(packages/contracts build可能化)・
 Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の永続ジョブ化)・Stage 5(referral
-confirmのタイミング修正・purchase側)を完了した。決済・在庫・紹介・報酬・NFT/ウォレット・
-Outboxの変更禁止範囲には手を入れていない。`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。
-Stage 5のregistration側(新規機能追加が必要と判明)はユーザー確認の上で見送り、次のご指示が
-あれば対応する。Stage 6(共通ID未解決イベントの送信保留)以降は、着手のご指示があり次第対応する。
+confirmのタイミング修正・purchase側)・Stage 6(共通ID未解決イベントの送信保留)を完了した。
+決済・在庫・紹介・報酬・NFT/ウォレット・Outboxの変更禁止範囲には手を入れていない。
+`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。Stage 5のregistration側(新規機能追加が
+必要と判明)はユーザー確認の上で見送り、次のご指示があれば対応する。Stage 7(Integration
+Outbox Dispatcher強化)以降は、着手のご指示があり次第対応する。
