@@ -17,6 +17,7 @@ import adminRouter from './routes/admin';
 import agencyRouter from './routes/agency';
 import integrationAgenciesRouter from './modules/agencies/http/agencyIntegration.routes';
 import internalCronRouter from './routes/internalCron';
+import readyRouter from './routes/ready';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
@@ -40,9 +41,12 @@ export function createApp(): Express {
   app.use(express.json());
   app.use(cookieParser());
 
+  // プロセス生存確認のみ(DBには一切触れない)。DB・migration状態は/api/readyで確認する
+  // (本番安定化指示書Stage0: Vercelデプロイ成功と本番DB migration成功を混同しないため)。
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok' });
   });
+  app.use('/api', readyRouter);
 
   // 外部の代理店システムからのサーバー間API連携。Cookie/Originに依存しないAPIキー認証のため、
   // ブラウザCookieセッション向けのOrigin検証(requireSameOrigin)より前に登録する(仕様書外の拡張)。

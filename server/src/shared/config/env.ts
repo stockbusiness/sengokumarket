@@ -54,24 +54,29 @@ function validateTermsVersion(value: string): string | null {
   return value.trim().length === 0 ? 'TERMS_VERSIONを空文字にすることはできません' : null;
 }
 
-// サーバー起動時(index.ts・Vercelエントリポイントのapi/index.ts)にのみ呼び出す。createApp()
-// 自体からは呼ばない(createApp()は各テストファイルからも直接呼ばれるため、テスト環境固有の
-// 緩い設定でも動作できるようにするため)。
-export function assertRequiredEnv(env: NodeJS.ProcessEnv = process.env): void {
+// 本番安定化指示書Stage0(/api/ready)向け: プロセスを落とさずに検証結果だけを得たい
+// 呼び出し元のために、assertRequiredEnvから例外送出を分離した非throw版。
+export function collectRequiredEnvErrors(env: NodeJS.ProcessEnv = process.env): string[] {
   const missing = REQUIRED_ENV_VARS.filter((key) => !env[key]);
   if (missing.length > 0) {
-    throw new Error(`必須環境変数が設定されていません: ${missing.join(', ')}`);
+    return [`必須環境変数が設定されていません: ${missing.join(', ')}`];
   }
 
   const isProduction = env.NODE_ENV === 'production';
-  const errors = [
+  return [
     validateAppUrl(env.APP_URL!, isProduction),
     validateJwtSecret(env.JWT_SECRET!),
     validateSettingsEncryptionKey(env.SETTINGS_ENCRYPTION_KEY!),
     validateDatabaseUrl(env.DATABASE_URL!),
     validateTermsVersion(env.TERMS_VERSION!),
   ].filter((e): e is string => e !== null);
+}
 
+// サーバー起動時(index.ts・Vercelエントリポイントのapi/index.ts)にのみ呼び出す。createApp()
+// 自体からは呼ばない(createApp()は各テストファイルからも直接呼ばれるため、テスト環境固有の
+// 緩い設定でも動作できるようにするため)。
+export function assertRequiredEnv(env: NodeJS.ProcessEnv = process.env): void {
+  const errors = collectRequiredEnvErrors(env);
   if (errors.length > 0) {
     throw new Error(`環境変数の設定が不正です: ${errors.join(' / ')}`);
   }
