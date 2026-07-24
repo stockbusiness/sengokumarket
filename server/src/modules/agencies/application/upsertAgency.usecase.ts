@@ -5,7 +5,7 @@ import * as repo from '../infrastructure/prismaAgency.repository';
 import { wouldCreateCycle } from '../domain/agencyHierarchy.policy';
 import { reconcilePendingParents } from './reconcilePendingParents.usecase';
 import { provisionAgencyAccount } from './provisionAgencyAccount.usecase';
-import { AgencyValidationError, type AgencyNotification, type AgencyRecord, type UpsertAgencyRequest } from '../domain/agency.types';
+import { AgencyValidationError, type AgencyRecord, type UpsertAgencyRequest } from '../domain/agency.types';
 
 type Tx = Prisma.TransactionClient;
 
@@ -13,7 +13,6 @@ export interface UpsertAgencyResult {
   agency: AgencyRecord;
   created: boolean;
   loginProvisioned: boolean;
-  notification: AgencyNotification | null;
 }
 
 interface ParentAssignment {
@@ -67,8 +66,10 @@ async function resolveParentAssignment(tx: Tx, input: UpsertAgencyRequest, exist
 // 代理店の作成・更新・親再紐付け・ログインアカウント作成/昇格を単一トランザクションで行う
 // (指示書8.4)。これにより「代理店だけ作成されてログイン作成が失敗する」部分成功を防ぐ
 // (ProvisionAgencyAccountUseCaseが競合を検知した場合はAgencyLoginConflictErrorを投げ、
-// トランザクション全体がロールバックされる)。メール送信自体はトランザクション外で行うため、
-// 呼び出し元がnotificationを見て別途dispatchすること。
+// トランザクション全体がロールバックされる)。通知メールの送信予定もnotification_outbox_events
+// へ同一トランザクションで記録するため(残課題指示書Stage3)、呼び出し元は
+// triggerImmediateNotificationDispatch()でベストエフォート即時実行を試みるだけでよく、
+// 失敗しても後続のDispatcher(cron)が再送する。
 export async function upsertAgency(input: UpsertAgencyRequest): Promise<UpsertAgencyResult> {
   return prisma.$transaction(async (tx) => {
     const existing = await repo.findAgencyByExternalId(tx, input.externalId);
@@ -106,7 +107,6 @@ export async function upsertAgency(input: UpsertAgencyRequest): Promise<UpsertAg
       agency,
       created: !existing,
       loginProvisioned: provision.provisioned,
-      notification: provision.notification,
     };
   });
 }

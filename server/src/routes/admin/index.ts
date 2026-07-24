@@ -20,6 +20,7 @@ import legalRouter from './legal';
 import couponsRouter from './coupons';
 import stripeEventsRouter from './stripeEvents';
 import integrationOutboxRouter from './integrationOutbox';
+import notificationOutboxRouter from './notificationOutbox';
 
 const router = Router();
 
@@ -53,5 +54,6 @@ router.use(legalRouter);
 router.use(couponsRouter);
 router.use(stripeEventsRouter);
 router.use(integrationOutboxRouter);
+router.use(notificationOutboxRouter);
 
 export default router;

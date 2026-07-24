@@ -10,15 +10,28 @@ function hashToken(token: string): string {
 
 // トークンはハッシュ化して保存し、平文はメールリンクにのみ含める(仕様書v1.5 6.10 / 16章)。
 export async function createPasswordResetToken(userId: string): Promise<string> {
+  const { token } = await createPasswordResetTokenWithId(userId);
+  return token;
+}
+
+// 残課題指示書Stage3: NotificationOutboxのDispatcherが再試行時に「前回発行したトークン」を
+// 無効化できるよう、生成したトークンのID(ハッシュ化前の値は保持しない)も返す版。
+export async function createPasswordResetTokenWithId(userId: string): Promise<{ token: string; tokenId: string }> {
   const token = crypto.randomBytes(32).toString('hex');
-  await prisma.passwordResetToken.create({
+  const record = await prisma.passwordResetToken.create({
     data: {
       userId,
       tokenHash: hashToken(token),
       expiresAt: new Date(Date.now() + TOKEN_TTL_MS),
     },
   });
-  return token;
+  return { token, tokenId: record.id };
+}
+
+// 送信失敗時の再試行で無制限に有効トークンが増えないよう、前回発行分を無効化してから
+// 新規発行する(残課題指示書5.5)。既に使用済み(usedAt設定済み)なら何もしない。
+export async function invalidatePasswordResetToken(tokenId: string): Promise<void> {
+  await prisma.passwordResetToken.updateMany({ where: { id: tokenId, usedAt: null }, data: { usedAt: new Date() } });
 }
 
 export async function consumePasswordResetToken(token: string, newPassword: string): Promise<boolean> {

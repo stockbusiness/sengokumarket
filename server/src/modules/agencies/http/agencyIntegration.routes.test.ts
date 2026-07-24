@@ -4,15 +4,14 @@ import { createApp } from '../../../app';
 import { prisma } from '../../../lib/prisma';
 import { setSetting } from '../../../services/settings';
 
-const sendAgencyAccountSetupEmail = vi.fn(async (..._args: unknown[]) => {});
-const sendAgencyAccessGrantedEmail = vi.fn(async (..._args: unknown[]) => {});
+// 残課題指示書Stage3: 通知の送信はnotification_outbox_events経由のDispatcherが
+// modules/notifications/infrastructure/resend.adapter.tsを直接呼ぶため、
+// (旧)services/mailTemplates.tsではなくこちらをモックする。
+const sendViaResendOrThrow = vi.fn(async (..._args: unknown[]) => {});
 
-vi.mock('../../../services/mailTemplates', () => ({
-  sendAgencyAccountSetupEmail: (...args: unknown[]) => sendAgencyAccountSetupEmail(...args),
-  sendAgencyAccessGrantedEmail: (...args: unknown[]) => sendAgencyAccessGrantedEmail(...args),
-  sendPasswordResetEmail: vi.fn(async () => {}),
-  sendPurchaseCompleteEmail: vi.fn(async () => {}),
-  sendGuestPasswordSetupEmail: vi.fn(async () => {}),
+vi.mock('../../notifications/infrastructure/resend.adapter', () => ({
+  sendViaResend: vi.fn(async () => {}),
+  sendViaResendOrThrow: (...args: unknown[]) => sendViaResendOrThrow(...args),
 }));
 
 const app = createApp();
@@ -189,7 +188,7 @@ describe('外部代理店システム連携API', () => {
     const externalId = `integration-test-login-${Date.now()}`;
     const loginEmail = `integration-agency-test-${Date.now()}@example.com`;
 
-    sendAgencyAccountSetupEmail.mockClear();
+    sendViaResendOrThrow.mockClear();
     const res = await request(app)
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
@@ -197,20 +196,24 @@ describe('外部代理店システム連携API', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.login_provisioned).toBe(true);
-    expect(sendAgencyAccountSetupEmail).toHaveBeenCalledTimes(1);
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }));
 
     const user = await prisma.user.findUnique({ where: { email: loginEmail } });
     expect(user?.role).toBe('agency');
     expect(user?.agencyId).toBe(res.body.id);
 
+    const outboxEvent = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: loginEmail } });
+    expect(outboxEvent?.eventType).toBe('agency_account_setup');
+    expect(outboxEvent?.status).toBe('succeeded');
+
     // 同じ代理店に対して再度login_emailを送っても二重作成されない
-    sendAgencyAccountSetupEmail.mockClear();
+    sendViaResendOrThrow.mockClear();
     const second = await request(app)
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
       .send({ external_id: externalId, name: 'ログイン代理店', login_email: loginEmail });
     expect(second.body.login_provisioned).toBe(false);
-    expect(sendAgencyAccountSetupEmail).not.toHaveBeenCalled();
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
   });
 
   it('既に代理店へ永久帰属している会員のメールをlogin_emailに指定すると、既存アカウントが昇格し上位代理店を継承する', async () => {
@@ -236,8 +239,7 @@ describe('外部代理店システム連携API', () => {
     });
 
     const newAgencyExternalId = `integration-test-promoted-${Date.now()}`;
-    sendAgencyAccountSetupEmail.mockClear();
-    sendAgencyAccessGrantedEmail.mockClear();
+    sendViaResendOrThrow.mockClear();
     const res = await request(app)
       .post('/api/integrations/agencies')
       .set('x-api-key', API_KEY)
@@ -246,8 +248,11 @@ describe('外部代理店システム連携API', () => {
     expect(res.status).toBe(201);
     expect(res.body.login_provisioned).toBe(true);
     expect(res.body.parent_external_id).toBe(referrerExternalId);
-    expect(sendAgencyAccessGrantedEmail).toHaveBeenCalledWith(memberEmail, '購入者太郎');
-    expect(sendAgencyAccountSetupEmail).not.toHaveBeenCalled();
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }));
+
+    const outboxEvent = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: memberEmail } });
+    expect(outboxEvent?.eventType).toBe('agency_access_granted');
+    expect(outboxEvent?.status).toBe('succeeded');
 
     const updatedMember = await prisma.user.findUnique({ where: { id: member.id } });
     expect(updatedMember?.role).toBe('agency');

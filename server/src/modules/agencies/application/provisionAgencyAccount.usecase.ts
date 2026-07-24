@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import * as repo from '../infrastructure/prismaAgency.repository';
-import { AgencyLoginConflictError, type AgencyNotification } from '../domain/agency.types';
+import { enqueueNotification } from '../../notifications/infrastructure/notificationOutbox.repository';
+import { AgencyLoginConflictError } from '../domain/agency.types';
 
 type Tx = Prisma.TransactionClient;
 
@@ -9,12 +10,12 @@ const TAKEN_ROLES = new Set(['agency', 'admin', 'admin_viewer']);
 
 export interface ProvisionResult {
   provisioned: boolean;
-  notification: AgencyNotification | null;
 }
 
-// ログインアカウントの作成・昇格。実際のメール送信・トークン発行はトランザクション外で
-// 行うため、ここでは「何を送るべきか」だけをnotificationとして返す(送信自体は
-// infrastructure/agencyNotification.adapter.tsが担う)。
+// ログインアカウントの作成・昇格。通知(パスワード設定案内・アクセス許可通知)は
+// notification_outbox_eventsへ同一トランザクションで記録するのみとし(残課題指示書Stage3)、
+// 実際のメール送信・トークン発行はcommit後にDispatcherが行う。これにより、代理店・ユーザー
+// 作成に成功したのに通知だけ失われて再送できない、という問題を防ぐ。
 export async function provisionAgencyAccount(
   tx: Tx,
   agencyId: string,
@@ -22,12 +23,12 @@ export async function provisionAgencyAccount(
   loginEmail: string | null | undefined,
 ): Promise<ProvisionResult> {
   if (!loginEmail || loginEmail.trim().length === 0) {
-    return { provisioned: false, notification: null };
+    return { provisioned: false };
   }
 
   const alreadyHasLogin = await repo.findLoginUserForAgency(tx, agencyId);
   if (alreadyHasLogin) {
-    return { provisioned: false, notification: null };
+    return { provisioned: false };
   }
 
   const existingUserByEmail = await repo.findUserByEmailInsensitive(tx, loginEmail);
@@ -42,15 +43,19 @@ export async function provisionAgencyAccount(
     // 仕様書外の拡張: 既存の一般会員アカウント(評議員NFT購入者等)を代理店ポータルログインに
     // 昇格させる。既にパスワードを持っているため、仮パスワードの再発行・設定メールは不要。
     await repo.promoteUserToAgency(tx, existingUserByEmail.id, agencyId);
-    return {
-      provisioned: true,
-      notification: { type: 'access_granted', email: existingUserByEmail.email, name: existingUserByEmail.name },
-    };
+    await enqueueNotification(tx, {
+      eventType: 'agency_access_granted',
+      recipient: existingUserByEmail.email,
+      payload: { name: existingUserByEmail.name },
+    });
+    return { provisioned: true };
   }
 
   const user = await repo.createAgencyLoginUser(tx, { name: agencyName, email: loginEmail, agencyId });
-  return {
-    provisioned: true,
-    notification: { type: 'setup_required', email: user.email, name: user.name, userId: user.id },
-  };
+  await enqueueNotification(tx, {
+    eventType: 'agency_account_setup',
+    recipient: user.email,
+    payload: { name: user.name, userId: user.id },
+  });
+  return { provisioned: true };
 }

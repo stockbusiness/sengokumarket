@@ -5,7 +5,7 @@ import { sendIntegrationError } from '../../../lib/apiError';
 import { isKnownAgencyLifecycleEvent } from '../domain/agencyEvent.policy';
 import { AgencyLoginConflictError, AgencyValidationError } from '../domain/agency.types';
 import { findAgencyDetail, listAgencies } from '../infrastructure/prismaAgency.repository';
-import { dispatchAgencyNotification } from '../infrastructure/agencyNotification.adapter';
+import { triggerImmediateNotificationDispatch } from '../../notifications/application/dispatchNotificationOutbox.usecase';
 import { upsertAgency } from '../application/upsertAgency.usecase';
 import { parseUpsertRequestBody } from './agencyIntegration.schema';
 import { presentAgency, presentAgencyDetail } from './agencyIntegration.presenter';
@@ -46,7 +46,10 @@ router.post('/', async (req, res) => {
 
   try {
     const result = await upsertAgency(parsed.input);
-    await dispatchAgencyNotification(result.notification);
+    // 通知(パスワード設定案内・アクセス許可通知)は既にnotification_outbox_eventsへ
+    // 記録済み(残課題指示書Stage3)。ここではベストエフォートで即時ディスパッチを試みるのみで、
+    // 失敗してもレスポンスは成功のまま返す(cronが後で再送する)。
+    await triggerImmediateNotificationDispatch();
 
     res.status(result.created ? 201 : 200).json({
       ok: true,

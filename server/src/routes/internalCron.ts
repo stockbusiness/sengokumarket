@@ -5,6 +5,7 @@ import { syncAgencyHierarchyFromExternalSystem } from '../services/agencyHierarc
 import { expireOverdueBankTransferOrders } from '../services/bankTransfer';
 import { processNftMints } from '../services/nftMintProcessing';
 import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispatcher';
+import { dispatchPendingNotifications } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 const router = Router();
 
@@ -49,6 +50,19 @@ router.get('/process-nft-mints', async (_req, res) => {
 router.get('/process-integration-outbox', async (_req, res) => {
   try {
     const result = await dispatchPendingOutboxEvents();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// 残課題指示書Stage3の拡張: 代理店設定メール等のnotification_outbox_eventsディスパッチャ。
+// 代理店連携API直後にもベストエフォートで呼ばれるが(triggerImmediateNotificationDispatch)、
+// 失敗時の再試行・取りこぼしのセーフティネットとして cron からも定期実行する。
+router.get('/process-notification-outbox', async (_req, res) => {
+  try {
+    const result = await dispatchPendingNotifications();
     res.json(result);
   } catch (e) {
     if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);

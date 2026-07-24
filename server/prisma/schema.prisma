@@ -428,6 +428,34 @@ model IntegrationOutboxEvent {
   @@map("integration_outbox_events")
 }
 
+// 仕様書外の拡張(残課題指示書Stage3): 代理店アカウント作成等に伴う通知メールを、
+// 代理店・ログインユーザー作成と同一トランザクションでこのテーブルへ記録する。実際のメール送信は
+// commit後にDispatcherが行うため、Resend未設定・送信失敗時でも代理店作成自体は成功し、
+// 復旧後に再送できる(integration_outbox_eventsと異なりprocessing_token/processing_started_atを
+// 最初から持たせ、Dispatcherの所有権管理を明確にする)。
+model NotificationOutboxEvent {
+  id                  String    @id @default(uuid()) @db.Uuid
+  eventType           String    @map("event_type") // agency_account_setup | agency_access_granted
+  recipient           String
+  payload             Json
+  status              String    @default("pending") // pending | processing | succeeded | failed | dead
+  attemptCount        Int       @default(0) @map("attempt_count")
+  processingToken     String?   @map("processing_token")
+  processingStartedAt DateTime? @map("processing_started_at")
+  nextAttemptAt       DateTime? @map("next_attempt_at")
+  lastError           String?   @map("last_error")
+  // setup系通知でDispatcherが発行したパスワード設定トークンの参照(生トークンは保存しない)。
+  // 再試行時にこのトークンを無効化してから新規発行することで、無制限に有効トークンが
+  // 増えるのを防ぐ(残課題指示書5.5)。
+  passwordResetTokenId String?  @map("password_reset_token_id") @db.Uuid
+  processedAt         DateTime? @map("processed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("notification_outbox_events")
+}
+
 model Notice {
   id          String    @id @default(uuid()) @db.Uuid
   title       String

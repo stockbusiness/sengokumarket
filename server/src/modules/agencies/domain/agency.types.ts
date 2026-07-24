@@ -29,12 +29,6 @@ export interface UpsertAgencyRequest {
   loginEmail?: string | null;
 }
 
-// 新規ログインユーザー作成時は設定リンク用トークンの発行(パスワード再設定サービス経由)が
-// トランザクション外で必要になるため、userIdのみを持たせてトークン発行を後段に委ねる。
-export type AgencyNotification =
-  | { type: 'access_granted'; email: string; name: string }
-  | { type: 'setup_required'; email: string; name: string; userId: string };
-
 export class AgencyValidationError extends Error {
   constructor(message: string) {
     super(message);
