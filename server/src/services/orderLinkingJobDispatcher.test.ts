@@ -1,0 +1,283 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import bcrypt from 'bcryptjs';
+import { prisma } from '../lib/prisma';
+import { setSetting } from './settings';
+import { enqueueCommonUserResolveJob, enqueueReferralCaptureJob } from './orderLinkingJobs';
+import { processOrderLinkingJobs, triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
+
+// 仕様書外の拡張(残課題指示書Stage4): common_user_id解決・referral captureを永続ジョブとして
+// 処理するDispatcherの回帰テスト。Feature Flag無効時(既定)は既存フローに一切影響しないことを
+// 重点的に確認する(最重要要件)。
+describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
+  const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
+  const emailSuffix = `order-linking-job-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const createdUserIds: string[] = [];
+  const createdOrderIds: string[] = [];
+
+  async function createUser(commonUserId: string | null = null) {
+    const user = await prisma.user.create({
+      data: {
+        name: 'ジョブテストユーザー',
+        email: `${emailSuffix}-${Math.random().toString(36).slice(2)}@example.com`,
+        passwordHash: await bcrypt.hash('password123', 10),
+        commonUserId,
+      },
+    });
+    createdUserIds.push(user.id);
+    return user;
+  }
+
+  async function createOrder(opts: { userId?: string | null; referralCode?: string | null }) {
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `SG-JOBTEST-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        userId: opts.userId ?? undefined,
+        totalAmount: 10000,
+        originalAmount: 10000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: 'ジョブテスト太郎',
+        customerEmail: `${emailSuffix}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+        referralCode: opts.referralCode ?? undefined,
+      },
+    });
+    createdOrderIds.push(order.id);
+    return order;
+  }
+
+  beforeAll(async () => {
+    // 他のテストファイルが実際のcheckout/会員登録フローを通して残したorder_linking_jobs
+    // (このStage4でjob_typeを問わず常時enqueueするようにしたため、統合連携と無関係な既存の
+    // 決済・注文系テストも副次的にpending行を残す)を、本テストファイル開始前に掃除する。
+    // vitest.config.tsのfileParallelism:falseによりテストファイルは直列実行されるため、
+    // ここで一度掃除すれば本ファイルの実行中に新たな汚染が入り込むことはない。
+    await prisma.orderLinkingJob.deleteMany({ where: { status: 'pending' } });
+  });
+
+  beforeEach(() => {
+    delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
+    await prisma.setting.deleteMany({
+      where: { key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url'] } },
+    });
+    // 各テストが作成したジョブを都度片付け、他のテストのdispatch結果へ混入しないようにする。
+    await prisma.orderLinkingJob.deleteMany({
+      where: { OR: [{ userId: { in: createdUserIds } }, { orderId: { in: createdOrderIds } }] },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.orderLinkingJob.deleteMany({
+      where: { OR: [{ userId: { in: createdUserIds } }, { orderId: { in: createdOrderIds } }] },
+    });
+    await prisma.order.deleteMany({ where: { id: { in: createdOrderIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('Feature Flag無効時はジョブをclaimせずpendingのまま残す(既存フローへの影響なし)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const user = await createUser();
+    const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+    const result = await processOrderLinkingJobs();
+
+    expect(result).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
+    expect(fetchMock).not.toHaveBeenCalled();
+    const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(after.status).toBe('pending');
+  });
+
+  it('Feature Flag再度有効化後は溜まったpendingジョブを処理できる', async () => {
+    const user = await createUser();
+    await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+    // 無効時にディスパッチしても何も起きないことを確認してから、有効化する。
+    await processOrderLinkingJobs();
+
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_reactivated` }) }),
+    );
+
+    const result = await processOrderLinkingJobs();
+    expect(result.succeeded).toBe(1);
+
+    const updatedUser = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(updatedUser.commonUserId).toBe(`cu_${emailSuffix}_reactivated`);
+  });
+
+  describe('common_user_resolve job', () => {
+    it('未解決ユーザーはresolve APIを呼びcommonUserIdを更新する(orderIdがあれば注文へも反映)', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      const order = await createOrder({ userId: user.id });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_resolved_1` }) }),
+      );
+      await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id, orderId: order.id }));
+
+      const result = await processOrderLinkingJobs();
+      expect(result).toMatchObject({ claimed: 1, succeeded: 1, retrying: 0, dead: 0 });
+
+      const updatedUser = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(updatedUser.commonUserId).toBe(`cu_${emailSuffix}_resolved_1`);
+      const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(updatedOrder.commonUserId).toBe(`cu_${emailSuffix}_resolved_1`);
+      expect(updatedOrder.commonUserResolutionStatus).toBe('resolved');
+    });
+
+    it('既にcommonUserId解決済みのユーザーはAPIを呼ばずorderへ反映するのみ(即succeeded)', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser(`cu_${emailSuffix}_already_resolved`);
+      const order = await createOrder({ userId: user.id });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id, orderId: order.id }));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.succeeded).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(updatedOrder.commonUserId).toBe(`cu_${emailSuffix}_already_resolved`);
+      expect(updatedOrder.commonUserResolutionStatus).toBe('resolved');
+    });
+
+    it('外部API停止時(非2xx)はpendingへ戻りbackoffが設定され、再試行可能', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 503, json: () => Promise.resolve({}) }));
+      const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('pending');
+      expect(after.attemptCount).toBe(1);
+      expect(after.nextAttemptAt).not.toBeNull();
+      expect(after.lastError).toBeTruthy();
+    });
+
+    it('最大試行回数を超えるとdeadになる', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+      const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+      await prisma.orderLinkingJob.update({ where: { id: job.id }, data: { attemptCount: 4 } });
+
+      const result = await processOrderLinkingJobs();
+      expect(result.dead).toBe(1);
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('dead');
+    });
+  });
+
+  describe('referral_capture job', () => {
+    it('referralCodeがある注文はcapture APIを呼びreferralSessionKeyを保存する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0099' });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              status: 'captured',
+              canonical_referral_token: 'rt_test',
+              referral_session_key: 'rs_test_job',
+              agency_id: 'AGENT-CODE-JOB',
+              expires_at: null,
+            }),
+        }),
+      );
+      await prisma.$transaction((tx) => enqueueReferralCaptureJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.succeeded).toBe(1);
+
+      const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(updatedOrder.referralSessionKey).toBe('rs_test_job');
+      // referral confirmはStage5で別途enqueueするため、この時点では代理店4役は確定しない。
+      expect(updatedOrder.registrationReferrerAgentCode).toBeNull();
+    });
+
+    it('captureが失敗した場合は再試行できる', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0098' });
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+      const job = await prisma.$transaction((tx) => enqueueReferralCaptureJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('pending');
+    });
+  });
+
+  it('二重処理防止: 同時に複数回claimしても1件のジョブは1回しか処理されない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+    const user = await createUser();
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_concurrent` }) });
+    vi.stubGlobal('fetch', fetchMock);
+    await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+    const [resultA, resultB] = await Promise.all([processOrderLinkingJobs(), processOrderLinkingJobs()]);
+    expect(resultA.claimed + resultB.claimed).toBe(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('triggerImmediateOrderLinkingDispatchは例外を投げない(呼び出し元を巻き込まない)', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')));
+
+    const user = await createUser();
+    await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+    await expect(triggerImmediateOrderLinkingDispatch()).resolves.toBeUndefined();
+  });
+});

@@ -12,7 +12,7 @@ import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { resolveReferral } from '../services/referral';
 import { validateCoupon } from '../services/coupon';
-import { runBestEffortSennokuniOrderLinking } from '../services/sennokuniOrderLinking';
+import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJobDispatcher';
 
 const router = Router();
 
@@ -48,10 +48,11 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
     const { order, items } = await createPendingOrder(input);
     orderId = order.id;
 
-    // 仕様書外の拡張(千ノ国全体連携・2026-07-22指示書対応): common_user_id解決・referral
-    // capture/confirmはDBトランザクション完了後にベストエフォートで行う(在庫仮引当の完了を
-    // 外部APIの応答速度に左右させないため)。Feature Flag無効時(既定)は即座に何もしない。
-    void runBestEffortSennokuniOrderLinking(order.id);
+    // 仕様書外の拡張(千ノ国全体連携・残課題指示書Stage4対応): common_user_id解決・referral
+    // captureのジョブは注文作成と同一トランザクションで既に永続化済み(createPendingOrder内)。
+    // ここではベストエフォートで即時ディスパッチを試みるのみで、失敗してもレスポンスは
+    // 成功のまま返す(cronが後で再送する)。Feature Flag無効時(既定)は即座に何もしない。
+    await triggerImmediateOrderLinkingDispatch();
 
     if (input.paymentMethod === 'bank_transfer') {
       const config = await getBankTransferConfig();

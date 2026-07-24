@@ -12,7 +12,8 @@ import { createPasswordResetToken, consumePasswordResetToken } from '../services
 import { sendPasswordResetEmail } from '../services/mailTemplates';
 import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
-import { bestEffortResolveAndLinkCommonUserId } from '../services/externalCommonUserClient';
+import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
+import { triggerImmediateOrderLinkingDispatch } from '../services/orderLinkingJobDispatcher';
 
 const router = Router();
 
@@ -69,23 +70,28 @@ router.post('/auth/register', registerLimiter, async (req, res) => {
     return sendError(res, 409, 'EMAIL_ALREADY_EXISTS', 'このメールアドレスは既に登録されています');
   }
 
-  const user = await prisma.user.create({
-    data: {
-      name,
-      email: normalizeEmail(email),
-      phone: isNonEmptyString(phone) ? phone : null,
-      passwordHash: await bcrypt.hash(password, 10),
-      role: 'user',
-    },
+  // 仕様書外の拡張(千ノ国全体連携・残課題指示書Stage4対応): common_user_id解決はServerlessでの
+  // fire-and-forgetをやめ、ユーザー作成と同一トランザクションで永続ジョブとして記録する
+  // (外部HTTP呼び出し自体はcommit後にDispatcherが行う)。
+  const user = await prisma.$transaction(async (tx) => {
+    const created = await tx.user.create({
+      data: {
+        name,
+        email: normalizeEmail(email),
+        phone: isNonEmptyString(phone) ? phone : null,
+        passwordHash: await bcrypt.hash(password, 10),
+        role: 'user',
+      },
+    });
+    await enqueueCommonUserResolveJob(tx, { userId: created.id });
+    return created;
   });
 
   const token = signAuthToken({ sub: user.id, role: user.role });
   setAuthCookie(res, token);
   res.status(201).json({ user: publicUser(user) });
 
-  // 仕様書外の拡張(千ノ国全体連携・2026-07-22指示書対応): common_user_id解決はベストエフォート・
-  // レスポンス送信後に行い、Feature Flag無効時(既定)は即座に何もしない。
-  void bestEffortResolveAndLinkCommonUserId(user.id, user.email);
+  await triggerImmediateOrderLinkingDispatch();
 });
 
 router.post('/auth/login', async (req, res) => {

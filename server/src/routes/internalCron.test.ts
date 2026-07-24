@@ -22,6 +22,12 @@ vi.mock('../services/integrationOutboxDispatcher', () => ({
   dispatchPendingOutboxEvents: () => dispatchPendingOutboxEvents(),
 }));
 
+const processOrderLinkingJobs = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 }));
+
+vi.mock('../services/orderLinkingJobDispatcher', () => ({
+  processOrderLinkingJobs: () => processOrderLinkingJobs(),
+}));
+
 const dispatchPendingNotifications = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0 }));
 
 vi.mock('../modules/notifications/application/dispatchNotificationOutbox.usecase', () => ({
@@ -243,5 +249,42 @@ describe('内部cron: 代理店通知Outbox送信(残課題指示書Stage3)', ()
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0 });
     expect(dispatchPendingNotifications).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 残課題指示書Stage4の拡張: common_user_id解決・referral captureのorder_linking_jobs送信cron配線確認。
+// processOrderLinkingJobs自体の送信ロジックはorderLinkingJobDispatcher.test.tsで検証済みのため、
+// ここではcron認証・呼び出し配線のみ確認する。
+describe('内部cron: 共通ID・紹介連携ジョブ送信(残課題指示書Stage4)', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalSecret;
+    processOrderLinkingJobs.mockClear();
+  });
+
+  it('CRON_SECRET未設定の場合は503', async () => {
+    delete process.env.CRON_SECRET;
+    const res = await request(app).get('/api/internal/cron/process-order-linking-jobs');
+    expect(res.status).toBe(503);
+  });
+
+  it('Authorizationヘッダーが一致しない場合は401', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-order-linking';
+    const res = await request(app)
+      .get('/api/internal/cron/process-order-linking-jobs')
+      .set('Authorization', 'Bearer wrong-secret');
+    expect(res.status).toBe(401);
+    expect(processOrderLinkingJobs).not.toHaveBeenCalled();
+  });
+
+  it('正しいCRON_SECRETでprocessOrderLinkingJobsが実行される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-order-linking';
+    const res = await request(app)
+      .get('/api/internal/cron/process-order-linking-jobs')
+      .set('Authorization', 'Bearer test-cron-secret-order-linking');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
+    expect(processOrderLinkingJobs).toHaveBeenCalledTimes(1);
   });
 });

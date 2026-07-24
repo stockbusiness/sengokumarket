@@ -1,8 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { setSetting } from './settings';
-import { bestEffortResolveAndLinkCommonUserId, resolveCommonUserId } from './externalCommonUserClient';
+import { resolveCommonUserId } from './externalCommonUserClient';
 
 // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT・2026-07-22指示書対応):
 // common_user_id解決クライアントは、SENNOKUNI_INTEGRATION_ENABLED(既定OFF)が有効化され、
@@ -87,70 +86,5 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
 
     const result = await resolveCommonUserId({ externalUserId: 'user-1' });
     expect(result).toBeNull();
-  });
-
-  describe('bestEffortResolveAndLinkCommonUserId', () => {
-    it('Feature Flag無効時はユーザーを更新しない', async () => {
-      const user = await prisma.user.create({
-        data: {
-          name: 'テスト太郎',
-          email: `commonuser-client-test-${Date.now()}@example.com`,
-          passwordHash: await bcrypt.hash('password123', 10),
-        },
-      });
-
-      await bestEffortResolveAndLinkCommonUserId(user.id, user.email);
-
-      const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-      expect(after.commonUserId).toBeNull();
-
-      await prisma.user.delete({ where: { id: user.id } });
-    });
-
-    it('Feature Flag有効・resolve成功時はuser.commonUserIdを更新する', async () => {
-      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
-      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
-      vi.stubGlobal(
-        'fetch',
-        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: 'cu_test_00000002' }) }),
-      );
-
-      const user = await prisma.user.create({
-        data: {
-          name: 'テスト次郎',
-          email: `commonuser-client-test-${Date.now()}@example.com`,
-          passwordHash: await bcrypt.hash('password123', 10),
-        },
-      });
-
-      await bestEffortResolveAndLinkCommonUserId(user.id, user.email);
-
-      const after = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-      expect(after.commonUserId).toBe('cu_test_00000002');
-
-      await prisma.user.delete({ where: { id: user.id } });
-    });
-
-    it('resolve中に例外が発生しても呼び出し元には伝播しない', async () => {
-      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
-      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
-      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
-
-      const user = await prisma.user.create({
-        data: {
-          name: 'テスト三郎',
-          email: `commonuser-client-test-${Date.now()}@example.com`,
-          passwordHash: await bcrypt.hash('password123', 10),
-        },
-      });
-
-      await expect(bestEffortResolveAndLinkCommonUserId(user.id, user.email)).resolves.toBeUndefined();
-
-      await prisma.user.delete({ where: { id: user.id } });
-    });
   });
 });

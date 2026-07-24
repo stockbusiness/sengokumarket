@@ -157,17 +157,143 @@ IDを同じイベント行へ記録し直す。
 
 ---
 
-# 動作確認(Stage 1〜3 共通)
+# Stage 4: 共通ID・紹介連携の永続ジョブ化(完了報告)
 
-- `npx vitest run`(server): 526件全成功。
+## 問題
+
+Checkout・会員登録の直後に、以下のfire-and-forget呼び出しを行っていた。
+
+```ts
+void runBestEffortSennokuniOrderLinking(order.id);   // checkout.ts
+void bestEffortResolveAndLinkCommonUserId(user.id, user.email); // auth.ts(会員登録)
+```
+
+Vercel Serverlessではレスポンス完了後にプロセスが凍結・終了する可能性があり、この処理が
+最後まで実行される保証がない。外部API停止時の再試行手段もなかった。
+
+## 対応
+
+### 新規テーブル `order_linking_jobs`
+
+指示書6.3の推奨カラム(`order_id`/`job_type`/`status`/`attempt_count`/`processing_token`/
+`processing_started_at`/`next_attempt_at`/`last_error`)に加え、会員登録時点では注文がまだ
+存在しないケースを扱えるよう`user_id`も持たせた(nullable、`job_type`によって
+`user_id`のみ/`user_id`+`order_id`両方/`order_id`のみを使い分ける)。
+
+### job_type分割(指示書6.4の明示的な指定に従う)
+
+Checkout時点でトランザクション内に記録するのは以下の2種類のみ:
+
+```text
+common_user_resolve  … common_user.resolve.requested 相当
+referral_capture     … referral.capture.requested 相当
+```
+
+**referral confirm(event=purchase)はここでは一切enqueueしない。** 指示書7章(Stage 5)が
+指摘する「決済確定前にconfirmを送ってしまう」問題は、Stage 5で正式にconfirm用のjob_type
+(`referral_confirm_registration`/`referral_confirm_purchase`)と、その正しいトリガー地点
+(会員登録完了・`applyPaidOrderSideEffects()`)を追加することで対応する。Stage 4の時点で
+confirmの送信経路自体を無くしたことで、Stage 5の着手前から「決済前confirm」の実害は既に
+発生しない状態になっている。
+
+これに伴い、旧`sennokuniOrderLinking.ts`(resolve→capture→confirm-purchaseを1つの
+fire-and-forget関数にまとめていたオーケストレーター)は全体を削除し、`services/orderLinkingJobs.ts`
+(enqueue)・`services/orderLinkingJobDispatcher.ts`(claim・実行・backoff)の2ファイルへ置き換えた。
+`externalCommonUserClient.ts`の`bestEffortResolveAndLinkCommonUserId`も同様に削除した
+(いずれも呼び出し元がジョブ経由に置き換わり、fire-and-forget版は完全に不要になったため)。
+
+### Dispatcher
+
+`integrationOutboxDispatcher.ts`と同じ設計を踏襲: `SENNOKUNI_INTEGRATION_ENABLED`(既定OFF)が
+有効になるまでジョブをclaimせず`pending`のまま保持し(受入条件「Feature Flag無効時は送信しない」
+「再度有効化するとpendingを処理可能」を満たす)、条件付きUPDATE(`WHERE status='pending'`)による
+アトミックなclaim、指数バックオフ(5→10→20→40→60分、最大5回で`dead`)、10分以上放置された
+`processing`行の回収を行う。
+
+- `common_user_resolve`job: 対象ユーザーの`commonUserId`が既に解決済みならAPIを呼ばずorderへの
+  反映のみで即成功、未解決ならresolve APIを呼び、成功時は`User.commonUserId`と(`order_id`が
+  あれば)`Order.commonUserId`/`commonUserResolutionStatus`を更新する。
+- `referral_capture`job: `Order.referralCode`が無ければ何もせず成功、あればcapture APIを呼び
+  `Order.referralSessionKey`のみを更新する(代理店4役の確定はStage 5のconfirm jobが行う)。
+- 外部クライアント(`resolveCommonUserId`/`captureReferralToken`)がnullを返した場合
+  (Feature Flag確認済みの状態でのnullは、認証情報未設定・ネットワーク障害・非2xx応答のいずれか)、
+  Dispatcher側で明示的に例外化し、backoff・再試行の対象にする(指示書6.5「外部API停止時に
+  再試行可能」)。低レベルクライアント自体の戻り値契約(null許容)は、他の呼び出し文脈との
+  互換性を保つため変更していない。
+
+### Checkout・会員登録
+
+`createPendingOrder.usecase.ts`の注文作成トランザクション内で、`order.userId`に対して
+`common_user_resolve`ジョブを、`order.referralCode`があれば`referral_capture`ジョブを
+enqueueする(外部HTTP呼び出しは一切行わない)。`checkout.ts`はcommit後に
+`triggerImmediateOrderLinkingDispatch()`をベストエフォートで呼ぶのみ(NFT自動発行・
+Stage 3通知Outboxと同じ「即時実行+cronセーフティネット」方式)。
+
+`auth.ts`の会員登録も、ユーザー作成を`prisma.$transaction`で包み、同一トランザクション内で
+`common_user_resolve`ジョブ(`order_id`なし)をenqueueするよう変更した。
+
+### cron配線
+
+`GET /api/internal/cron/process-order-linking-jobs`(既存の`internalCron.ts`・`CRON_SECRET`
+保護に相乗り)を追加し、`vercel.json`の`crons`に日次実行を追加した。
+
+## 開発中に見つけた実バグ・注意点
+
+- **テスト用に固定のダミー`common_user_id`文字列を使うと、共有の開発用DBで`User.commonUserId`
+  の一意制約に本当に抵触することを確認した。** `npx vitest run`をフルスイートで実行した際、
+  無関係な既存テスト(実際のcheckout/会員登録フローを経由するもの)が本Stageの変更により
+  副次的に`order_linking_jobs`のpending行を大量に残すようになっており、これらがテスト内で
+  Feature Flagを有効化した瞬間に一括でclaim・処理されてしまい、固定文字列の`common_user_id`を
+  複数の無関係なテストユーザーへ重複して割り当てようとして一意制約違反が発生した。対応として、
+  (1) 自テストファイルの`beforeAll`で他ファイル由来のpending行を一括削除(`fileParallelism: false`
+  のため以降の汚染は入らない)、(2) モックで使う`common_user_id`値をテスト実行ごとに一意な
+  接尾辞付きにする、の2点を行った。過去の失敗した実行で実際に無関係なテストユーザー1件へ
+  `commonUserId`が誤って書き込まれたまま残っていたため、この調査の過程で該当行を修正した
+  (本番データには影響なし。ローカル開発用DBのみの話)。
+
+## 対象外(意図的に見送った箇所)
+
+- `referral_confirm_registration`/`referral_confirm_purchase`job_typeの追加とそのトリガー配線
+  (Stage 5でこの2つのjob_typeと、会員登録完了・決済確定という正しいトリガー地点を追加する)。
+- 全額返金時のconfirm取消契約(指示書7.3「全額返金時の取消契約がある場合は別イベントとして
+  enqueue」): 現時点で千ノ国側の取消契約の詳細が確定していないため、Stage 5着手時に契約内容を
+  確認しながら対応する。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)クリーン。
+- `npx vitest run`: 529件全成功(既存526件 + `orderLinkingJobDispatcher.test.ts`の新規テスト
+  10件)。
+  - 「Feature Flag無効時はジョブをclaimせずpendingのまま残す」
+  - 「Feature Flag再度有効化後は溜まったpendingジョブを処理できる」
+  - 「未解決ユーザーはresolve APIを呼びcommonUserIdを更新する(orderIdがあれば注文へも反映)」
+  - 「既に解決済みのユーザーはAPIを呼ばない」
+  - 「外部API停止時(非2xx)は再試行可能」「最大試行回数超過でdead」
+  - 「referral captureの成功・失敗時再試行」
+  - 「二重処理防止」「即時ディスパッチが例外を投げない」
+  をそれぞれ確認した。
+- `externalCommonUserClient.test.ts`・`checkout.test.ts`・`checkout.stripeNotConfigured.test.ts`・
+  `modules/checkout`配下・`routes/auth.test.ts`はいずれも無変更のまま成功しており、既存の
+  決済・会員登録フローに影響がないことを確認した。
+- `npx prisma migrate status`: 適用済み、pending migrationなし。
+- `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功
+  (Stage 2のbuild chainがStage 4のスキーマ追加後も壊れていないことの確認)。
+- `npm run build:client`成功。
+
+---
+
+# 動作確認(Stage 1〜4 共通)
+
+- `npx vitest run`(server): 529件全成功。
 - `npx tsc --noEmit`(server)・`npm run typecheck:api`・`npx tsc -b --noEmit`(client): すべてクリーン。
 - `npm run build:client`: 成功。
 - `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
 - `npx prisma migrate status`: 適用済み、pending migrationなし。
 
-## 結論(Stage 1〜3)
+## 結論(Stage 1〜4)
 
 指示書のP0のうちStage 1(Vercel Config検証)・Stage 2(packages/contracts build可能化)・
-Stage 3(代理店通知Outbox)を完了した。決済・在庫・紹介・報酬・NFT/ウォレット・Outboxの
-変更禁止範囲には手を入れていない。`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。
-Stage 4(共通ID・紹介連携の永続ジョブ化)以降は、着手のご指示があり次第対応する。
+Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の永続ジョブ化)を完了した。決済・在庫・
+紹介・報酬・NFT/ウォレット・Outboxの変更禁止範囲には手を入れていない。
+`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。Stage 5(referral confirmのタイミング修正)
+以降は、着手のご指示があり次第対応する。

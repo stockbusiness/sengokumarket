@@ -8,6 +8,7 @@ import * as checkoutItemRepo from '../infrastructure/checkoutItem.repository';
 import * as purchaserRepo from '../infrastructure/purchaserAccount.repository';
 import * as orderWriter from '../infrastructure/orderWriter.repository';
 import * as couponAdapter from '../infrastructure/couponReservation.adapter';
+import { enqueueCommonUserResolveJob, enqueueReferralCaptureJob } from '../../../services/orderLinkingJobs';
 import { assertStockAvailable } from '../domain/stockAvailability.policy';
 import { assertAgentRequiredSatisfied } from '../domain/salesModel.policy';
 import { calculateOriginalAmount } from '../domain/orderPricing.service';
@@ -132,6 +133,16 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
           couponCode: pricing.coupon.code,
         });
       }
+    }
+
+    // 仕様書外の拡張(千ノ国全体連携・残課題指示書Stage4): common_user_id解決・referral captureは
+    // 外部HTTP呼び出しを伴うため、注文作成トランザクション内では永続ジョブとして記録するのみに
+    // とどめる(Serverlessのレスポンス完了後に処理が打ち切られてもジョブを失わないため)。
+    // 実際の送信はcommit後にDispatcherがベストエフォートで行う。referral confirmは
+    // 決済確定タイミングで別途enqueueする(Stage5)。
+    await enqueueCommonUserResolveJob(tx, { userId: user.id, orderId: order.id });
+    if (order.referralCode) {
+      await enqueueReferralCaptureJob(tx, order.id);
     }
 
     return { order, items };

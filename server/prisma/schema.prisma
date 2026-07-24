@@ -428,6 +428,30 @@ model IntegrationOutboxEvent {
   @@map("integration_outbox_events")
 }
 
+// 仕様書外の拡張(残課題指示書Stage4): checkout.tsが行っていたfire-and-forget(`void
+// runBestEffortSennokuniOrderLinking(...)`・`void bestEffortResolveAndLinkCommonUserId(...)`)は
+// Serverlessではレスポンス完了後の処理完了が保証されないため、common_user_id解決・referral
+// captureを注文作成(・会員登録)と同一トランザクションでこのテーブルへ記録する永続ジョブ化する。
+// referral confirm(event=registration/purchase)は残課題指示書Stage5で別途追加する。
+model OrderLinkingJob {
+  id                  String    @id @default(uuid()) @db.Uuid
+  jobType             String    @map("job_type") // common_user_resolve | referral_capture
+  userId              String?   @map("user_id") @db.Uuid
+  orderId             String?   @map("order_id") @db.Uuid
+  status              String    @default("pending") // pending | processing | succeeded | failed | dead
+  attemptCount        Int       @default(0) @map("attempt_count")
+  processingToken     String?   @map("processing_token")
+  processingStartedAt DateTime? @map("processing_started_at")
+  nextAttemptAt       DateTime? @map("next_attempt_at")
+  lastError           String?   @map("last_error")
+  processedAt         DateTime? @map("processed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("order_linking_jobs")
+}
+
 // 仕様書外の拡張(残課題指示書Stage3): 代理店アカウント作成等に伴う通知メールを、
 // 代理店・ログインユーザー作成と同一トランザクションでこのテーブルへ記録する。実際のメール送信は
 // commit後にDispatcherが行うため、Resend未設定・送信失敗時でも代理店作成自体は成功し、

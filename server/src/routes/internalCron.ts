@@ -6,6 +6,7 @@ import { expireOverdueBankTransferOrders } from '../services/bankTransfer';
 import { processNftMints } from '../services/nftMintProcessing';
 import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispatcher';
 import { dispatchPendingNotifications } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
+import { processOrderLinkingJobs } from '../services/orderLinkingJobDispatcher';
 
 const router = Router();
 
@@ -63,6 +64,20 @@ router.get('/process-integration-outbox', async (_req, res) => {
 router.get('/process-notification-outbox', async (_req, res) => {
   try {
     const result = await dispatchPendingNotifications();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// 残課題指示書Stage4の拡張: common_user_id解決・referral captureのorder_linking_jobs
+// ディスパッチャ。checkout・会員登録直後にもベストエフォートで呼ばれるが
+// (triggerImmediateOrderLinkingDispatch)、失敗時の再試行・取りこぼしのセーフティネットとして
+// cronからも定期実行する。
+router.get('/process-order-linking-jobs', async (_req, res) => {
+  try {
+    const result = await processOrderLinkingJobs();
     res.json(result);
   } catch (e) {
     if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);

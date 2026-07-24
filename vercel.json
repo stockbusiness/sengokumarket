@@ -23,6 +23,7 @@
     { "path": "/api/internal/cron/expire-bank-transfer-orders", "schedule": "0 19 * * *" },
     { "path": "/api/internal/cron/process-nft-mints", "schedule": "0 20 * * *" },
     { "path": "/api/internal/cron/process-integration-outbox", "schedule": "0 21 * * *" },
-    { "path": "/api/internal/cron/process-notification-outbox", "schedule": "0 22 * * *" }
+    { "path": "/api/internal/cron/process-notification-outbox", "schedule": "0 22 * * *" },
+    { "path": "/api/internal/cron/process-order-linking-jobs", "schedule": "0 23 * * *" }
   ]
 }

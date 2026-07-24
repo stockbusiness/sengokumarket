@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import { isSennokuniIntegrationEnabled, getSennokuniHubCredentials } from './sennokuniIntegrationConfig';
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
-import { prisma } from '../lib/prisma';
 
 const SYSTEM_KEY = 'sengoku-market';
 const RESOLVE_PATH = '/api/common-users/resolve';
@@ -69,21 +68,4 @@ export async function resolveCommonUserId(input: ResolveCommonUserInput): Promis
   const json = (await res.json().catch(() => null)) as { common_user_id?: unknown } | null;
   if (!json || typeof json.common_user_id !== 'string' || !json.common_user_id) return null;
   return { commonUserId: json.common_user_id };
-}
-
-// 登録・購入等のDBトランザクション完了「後」に呼ぶベストエフォート版。トランザクション内で
-// 外部HTTP呼び出しを待つと、決済・在庫更新のロック保持時間が外部APIの応答速度に左右されて
-// しまうため(仕様書v1.5 7.6の「メール送信はトランザクション外」と同じ方針)、必ずコミット後・
-// 例外を握りつぶした形で呼び出すこと。Feature Flag無効時は内部のresolveCommonUserIdが
-// 即座にnullを返すため、既存フローへの追加コストは実質ゼロ。
-export async function bestEffortResolveAndLinkCommonUserId(userId: string, email: string | null): Promise<void> {
-  if (!isSennokuniIntegrationEnabled()) return;
-
-  try {
-    const resolved = await resolveCommonUserId({ externalUserId: userId, verifiedEmail: email });
-    if (!resolved) return;
-    await prisma.user.update({ where: { id: userId }, data: { commonUserId: resolved.commonUserId } });
-  } catch (e) {
-    console.error('common_user_id best-effort resolve/link failed', { userId, error: e });
-  }
 }
