@@ -282,18 +282,95 @@ Stage 3通知Outboxと同じ「即時実行+cronセーフティネット」方�
 
 ---
 
-# 動作確認(Stage 1〜4 共通)
+# Stage 5: referral confirmのタイミング修正(purchase側完了・registration側は判断待ち)
 
-- `npx vitest run`(server): 529件全成功。
+## 問題
+
+Stage 4までの実装では、referral captureは注文作成時点(=決済前)にジョブ化していたが、
+`confirm(event=purchase)`を送る経路自体がまだ存在しなかった(旧`sennokuniOrderLinking.ts`は
+Stage 4で削除済み)。指示書の正式フローどおり、`confirm(event=purchase)`は決済確定
+(Stripe Webhook `paid` または銀行振込入金確認)のタイミングでのみ送るよう実装した。
+
+## registration側について(ユーザーへ確認済み・今回は見送り)
+
+指示書は「会員登録確定時にconfirm(event=registration)をenqueueする」ことも求めているが、
+調査の結果、**このシステムには現在「会員登録時点での紹介コード帰属」という概念自体が
+存在しない**ことが判明した(`/auth/register`は氏名・メール・電話・パスワードのみを受け取り、
+紹介コードを一切認識しない。紹介コードの永久帰属は`attachReferralAttribution`により
+**常に初回注文時点**に確定する仕様になっている)。
+
+これをそのまま実装するには、`/auth/register`への新規ref код受付・登録時点でのcapture・
+Order非依存のsession key保存という、既存の「初回購入時点で紹介元を固定する」という
+確立済みの仕様(CLAUDE.md・変更禁止範囲)とは別の、新しいユーザー向け機能を追加する必要が
+あり、開発者判断で進めるべき範囲を超えると判断してユーザーに確認した。**「今回は見送る」
+方針が選ばれたため、`referral_confirm_registration`のjob_type・そのenqueue経路は実装せず、
+purchase側のみを今回のStage 5の対象とした。**
+
+## 実装(purchase側)
+
+- `services/orderLinkingJobs.ts`に`enqueueReferralConfirmPurchaseJob(tx, orderId)`を追加。
+- `services/orderFulfillment.ts`の`applyPaidOrderSideEffects()`(Stripe Webhook・銀行振込
+  入金確認の両方から、決済確定の同一トランザクション内で呼ばれる唯一の共通処理)内で、
+  `order.referralCode`があればこのジョブをenqueueする。この関数は呼び出し側で
+  `paymentStatus`が既に`paid`でないことを確認した上でのみ呼ばれるため、以下の受入条件は
+  この関数に相乗りするだけで自動的に満たされる:
+  - 未決済注文でpurchase confirmされない(paid遷移時のみ呼ばれるため)
+  - Stripe paid時・銀行振込入金確認時それぞれ1回だけconfirm(paymentStatus='paid'の
+    事前チェックで二重処理防止)
+  - Webhook再送で二重confirmしない(Stripe Event Inboxの冪等性 + 同じpaymentStatusチェック)
+  - confirm失敗で決済確定を巻き戻さない(enqueueはDB INSERTのみで即座に成功し、実際の
+    confirm送信はcommit後のDispatcherが行うため)
+- `services/orderLinkingJobDispatcher.ts`に`referral_confirm_purchase`job_typeを追加。
+  `referral_capture`・`common_user_resolve`ジョブとの処理順序保証はないため、処理時点で
+  `order.referralSessionKey`または`order.commonUserId`がまだ解決されていない場合は例外を
+  投げて既存のbackoff/再試行に委ねる(他の2ジョブの解決を待ってから自動的に再試行される)。
+- Stripe Webhook・銀行振込確認の両方の決済確定処理から`triggerImmediateOrderLinkingDispatch()`
+  を呼び、ベストエフォートで即時ディスパッチする(cronによるセーフティネットも既存のまま)。
+
+## 対象外(意図的に見送った箇所)
+
+- **`referral_confirm_registration`(会員登録確定時のconfirm)**: 上記の通り、ユーザーへの
+  確認の結果、新規機能追加が必要と判明したため今回は見送り。次のご指示があれば
+  (a)`/auth/register`への紹介コード受付機能を新設する、または(b)初回注文時点の
+  帰属確定を「登録」の代替イベントとみなす、のいずれかの方針で対応する。
+- **全額返金時の取消契約(指示書7.3)**: `externalReferralClient.ts`の`ConfirmReferralInput`
+  は現時点で`event: 'registration' | 'purchase'`のみをサポートしており、返金・取消用の
+  event種別は千ノ国側の契約がまだ確定していない。存在しない外部契約を推測して実装すると
+  後で破壊的変更になるリスクが高いため、契約確定後に対応する。
+
+## 動作確認
+
+- `npx tsc --noEmit`(server)・`npx tsc -b --noEmit`(client)クリーン。
+- `npx vitest run`: 539件全成功(既存529件 + `orderLinkingJobDispatcher.test.ts`への
+  `referral_confirm_purchase`job関連テスト5件 + `stripeWebhook.test.ts`・
+  `admin/orders.test.ts`への決済確定時のジョブ記録確認テスト各1件)。
+  - 「referralSessionKey・commonUserIdが揃っていればconfirm APIを呼び代理店4役を保存する」
+  - 「referralSessionKeyが未解決の間は再試行する」「commonUserIdが未解決の間は再試行する」
+  - 「referralCodeが無い注文はconfirm APIを呼ばず即成功する」
+  - 「confirmが失敗した場合は再試行できる」
+  - 「紹介コードありの決済確定でジョブが記録される(未決済時は記録しない)」(Stripe Webhook・
+    銀行振込入金確認の両方)
+  をそれぞれ確認した。
+- スキーマ変更なし(job_typeは既存の`order_linking_jobs`テーブルの文字列カラムへ新しい値を
+  追加しただけのため、新規マイグレーション不要)。`npx prisma migrate status`は適用済みのまま。
+- `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
+- `npm run build:client`成功。
+
+---
+
+# 動作確認(Stage 1〜5 共通)
+
+- `npx vitest run`(server): 539件全成功。
 - `npx tsc --noEmit`(server)・`npm run typecheck:api`・`npx tsc -b --noEmit`(client): すべてクリーン。
 - `npm run build:client`: 成功。
 - `build:contracts`→`build:server`→`node dist/index.js`起動→`/api/health`応答: 成功。
 - `npx prisma migrate status`: 適用済み、pending migrationなし。
 
-## 結論(Stage 1〜4)
+## 結論(Stage 1〜5)
 
 指示書のP0のうちStage 1(Vercel Config検証)・Stage 2(packages/contracts build可能化)・
-Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の永続ジョブ化)を完了した。決済・在庫・
-紹介・報酬・NFT/ウォレット・Outboxの変更禁止範囲には手を入れていない。
-`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。Stage 5(referral confirmのタイミング修正)
-以降は、着手のご指示があり次第対応する。
+Stage 3(代理店通知Outbox)・Stage 4(共通ID・紹介連携の永続ジョブ化)・Stage 5(referral
+confirmのタイミング修正・purchase側)を完了した。決済・在庫・紹介・報酬・NFT/ウォレット・
+Outboxの変更禁止範囲には手を入れていない。`SENNOKUNI_INTEGRATION_ENABLED`は`false`のまま。
+Stage 5のregistration側(新規機能追加が必要と判明)はユーザー確認の上で見送り、次のご指示が
+あれば対応する。Stage 6(共通ID未解決イベントの送信保留)以降は、着手のご指示があり次第対応する。

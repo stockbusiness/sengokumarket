@@ -3,7 +3,7 @@ import type { OrderLinkingJob } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { isSennokuniIntegrationEnabled } from './sennokuniIntegrationConfig';
 import { resolveCommonUserId } from './externalCommonUserClient';
-import { captureReferralToken } from './externalReferralClient';
+import { captureReferralToken, confirmReferral } from './externalReferralClient';
 
 // 仕様書外の拡張(残課題指示書Stage4): order_linking_jobsの実送信ディスパッチャ。
 // integration_outbox_eventsのdispatcher(integrationOutboxDispatcher.ts)と同じ「条件付きUPDATEに
@@ -94,6 +94,7 @@ async function processAndRecordResult(job: OrderLinkingJob, result: DispatchOrde
 async function runJob(job: OrderLinkingJob): Promise<void> {
   if (job.jobType === 'common_user_resolve') return runCommonUserResolveJob(job);
   if (job.jobType === 'referral_capture') return runReferralCaptureJob(job);
+  if (job.jobType === 'referral_confirm_purchase') return runReferralConfirmPurchaseJob(job);
   throw new Error(`unknown order linking job type: ${job.jobType}`);
 }
 
@@ -130,6 +131,37 @@ async function runReferralCaptureJob(job: OrderLinkingJob): Promise<void> {
   if (!captured) throw new Error('referral capture failed or returned no result');
 
   await prisma.order.update({ where: { id: order.id }, data: { referralSessionKey: captured.referralSessionKey } });
+}
+
+// 残課題指示書Stage5: 決済確定(applyPaidOrderSideEffects)と同一トランザクションでenqueueされる。
+// referral_capture・common_user_resolveジョブとの処理順序保証はないため、このジョブが先に
+// claimされた場合はreferralSessionKey/commonUserIdがまだ解決されていないことがある。その場合は
+// 例外を投げて既存のbackoff/再試行に委ねる(他の2ジョブが解決を終えた後の再試行で成功する)。
+async function runReferralConfirmPurchaseJob(job: OrderLinkingJob): Promise<void> {
+  if (!job.orderId) throw new Error('referral_confirm_purchase job is missing orderId');
+
+  const order = await prisma.order.findUnique({ where: { id: job.orderId } });
+  if (!order) return;
+  if (!order.referralCode) return;
+  if (!order.referralSessionKey) throw new Error('referral session is not captured yet');
+  if (!order.commonUserId) throw new Error('common_user_id is not resolved yet');
+
+  const confirmed = await confirmReferral({
+    referralSessionKey: order.referralSessionKey,
+    commonUserId: order.commonUserId,
+    event: 'purchase',
+  });
+  if (!confirmed) throw new Error('referral confirm failed or returned no result');
+
+  await prisma.order.update({
+    where: { id: order.id },
+    data: {
+      registrationReferrerAgentCode: confirmed.registrationReferrerAgencyId ?? undefined,
+      assignedAgentCode: confirmed.assignedAgencyId ?? undefined,
+      salesAgentCode: confirmed.salesAgentId ?? undefined,
+      closingAgentCode: confirmed.closingAgentId ?? undefined,
+    },
+  });
 }
 
 // Vercelには永続ワーカーが無いため、注文作成・会員登録のcommit直後にベストエフォートで即時実行し

@@ -23,3 +23,12 @@ export function enqueueReferralCaptureJob(tx: Tx, orderId: string): Promise<Orde
     data: { jobType: 'referral_capture', orderId },
   });
 }
+
+// 残課題指示書Stage5: 決済確定(Stripe Webhook・銀行振込入金確認)と同一トランザクションで
+// enqueueする。呼び出し元(applyPaidOrderSideEffects)はpaymentStatus='paid'への更新後にのみ
+// 呼ばれるため、未決済注文でconfirmされることはなく、二重処理防止も既存の決済確定処理に委ねる。
+export function enqueueReferralConfirmPurchaseJob(tx: Tx, orderId: string): Promise<OrderLinkingJob> {
+  return tx.orderLinkingJob.create({
+    data: { jobType: 'referral_confirm_purchase', orderId },
+  });
+}

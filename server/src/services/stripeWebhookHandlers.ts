@@ -6,6 +6,7 @@ import { sendCartAbandonedEmail } from './mailTemplates';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { triggerImmediateNftMintProcessing } from './nftMintProcessing';
 import { enqueueEntitlementEvents } from './integrationOutbox';
+import { triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -53,6 +54,9 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
   // 仕様書外の拡張(NFT自動発行): cronの実行間隔(Vercelプランによっては日次)を待たせないよう、
   // 決済確定直後にベストエフォートで発行処理を試みる(失敗時はcronがセーフティネットとして拾う)。
   await triggerImmediateNftMintProcessing();
+  // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)等のorder_linking_jobs
+  // も同様にベストエフォートで即時ディスパッチする(失敗してもcronが後で再送する)。
+  await triggerImmediateOrderLinkingDispatch();
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {

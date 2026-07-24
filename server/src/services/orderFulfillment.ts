@@ -4,6 +4,7 @@ import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTe
 import { confirmCouponUsage } from './coupon';
 import { getNftChain } from './nftMint';
 import { enqueueEntitlementEvents } from './integrationOutbox';
+import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
 
 type Tx = Prisma.TransactionClient;
 
@@ -82,6 +83,12 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
   // 仕様書外の拡張(千ノ国全体統合契約2026-07-21 6章): 決済確定と同一トランザクションで
   // entitlement.grantedをOutboxへ記録する(送信先ルール未設定の商品はno-op)。
   await enqueueEntitlementEvents(tx, order, orderItems, 'entitlement.granted');
+  // 仕様書外の拡張(残課題指示書Stage5): referral confirm(event=purchase)は決済確定前に
+  // 送ってしまうと未決済・離脱注文まで購入扱いになってしまうため、Checkout時点では送らず、
+  // 決済確定と同一トランザクションでジョブとして記録する(実送信はcommit後にDispatcherが行う)。
+  if (order.referralCode) {
+    await enqueueReferralConfirmPurchaseJob(tx, order.id);
+  }
 
   return { order, items: orderItems };
 }

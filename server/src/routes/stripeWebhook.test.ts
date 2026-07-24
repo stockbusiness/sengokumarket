@@ -217,6 +217,48 @@ describe('POST /api/stripe/webhook', () => {
     expect(updatedOrder.commissionAmount).toBe(commission.commissionAmount);
   });
 
+  it('残課題指示書Stage5: 紹介コードありの決済確定でreferral_confirm_purchaseジョブが記録される(未決済時は記録しない)', async () => {
+    const referralLink = await prisma.referralLink.create({
+      data: { code: `WHREF-CONFIRM-${Date.now()}`, agencyId, landingPath: '/products/test' },
+    });
+    const email = `webhook-test-confirm-job-${Date.now()}@example.com`;
+    const { order } = await createPendingOrder({
+      customerName: 'テスト',
+      customerEmail: email,
+      customerPhone: '090-0000-0000',
+      customerPostalCode: '100-0001',
+      customerAddress: '東京都千代田区1-1-1',
+      referralCode: referralLink.code,
+      agreedToTerms: true,
+      items: [{ variantId: physicalVariantId, quantity: 1 }],
+    });
+    const sessionId = `cs_test_${Math.random().toString(36).slice(2)}`;
+    await prisma.order.update({ where: { id: order.id }, data: { stripeSessionId: sessionId } });
+
+    // 未決済(Checkout作成直後)の時点ではreferral_confirm_purchaseジョブは記録されない
+    // (未決済注文でconfirmしない、という受入条件そのもの)。
+    const beforePayment = await prisma.orderLinkingJob.findMany({
+      where: { orderId: order.id, jobType: 'referral_confirm_purchase' },
+    });
+    expect(beforePayment).toHaveLength(0);
+
+    await postWebhook({
+      id: `evt_test_confirm_job_${Date.now()}`,
+      type: 'checkout.session.completed',
+      created: Math.floor(Date.now() / 1000),
+      data: { object: { id: sessionId, payment_intent: `pi_test_${Date.now()}`, metadata: { order_id: order.id } } },
+    });
+
+    const afterPayment = await prisma.orderLinkingJob.findMany({
+      where: { orderId: order.id, jobType: 'referral_confirm_purchase' },
+    });
+    expect(afterPayment).toHaveLength(1);
+    expect(afterPayment[0].status).toBe('pending');
+
+    await prisma.orderLinkingJob.deleteMany({ where: { orderId: order.id } });
+    await prisma.referralLink.delete({ where: { id: referralLink.id } });
+  });
+
   it('checkout.session.expiredで仮引当が解放される', async () => {
     const email = `webhook-test-expired-${Date.now()}@example.com`;
     const { order, sessionId } = await createTestOrder(email);

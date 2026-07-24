@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { setSetting } from './settings';
-import { enqueueCommonUserResolveJob, enqueueReferralCaptureJob } from './orderLinkingJobs';
+import { enqueueCommonUserResolveJob, enqueueReferralCaptureJob, enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
 import { processOrderLinkingJobs, triggerImmediateOrderLinkingDispatch } from './orderLinkingJobDispatcher';
 
 // 仕様書外の拡張(残課題指示書Stage4): common_user_id解決・referral captureを永続ジョブとして
@@ -244,6 +244,121 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
       const order = await createOrder({ referralCode: 'SGI0098' });
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
       const job = await prisma.$transaction((tx) => enqueueReferralCaptureJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('pending');
+    });
+  });
+
+  describe('referral_confirm_purchase job(残課題指示書Stage5)', () => {
+    it('referralSessionKey・commonUserIdが揃っていればconfirm APIを呼び代理店4役を保存する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0097' });
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { referralSessionKey: 'rs_confirm_test', commonUserId: `cu_${emailSuffix}_confirm_purchase` },
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              status: 'confirmed',
+              common_user_id: `cu_${emailSuffix}_confirm_purchase`,
+              registration_referrer_agency_id: 'AGENT-CODE-001',
+              assigned_agency_id: 'AGENT-CODE-002',
+              sales_agent_id: 'AGENT-CODE-003',
+              closing_agent_id: 'AGENT-CODE-004',
+            }),
+        }),
+      );
+      await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.succeeded).toBe(1);
+
+      const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(updatedOrder.registrationReferrerAgentCode).toBe('AGENT-CODE-001');
+      expect(updatedOrder.assignedAgentCode).toBe('AGENT-CODE-002');
+      expect(updatedOrder.salesAgentCode).toBe('AGENT-CODE-003');
+      expect(updatedOrder.closingAgentCode).toBe('AGENT-CODE-004');
+    });
+
+    it('referralSessionKeyが未解決(referral_captureが未完了)の間は再試行する(未決済注文でconfirmしない設計の裏返し)', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0096' });
+      await prisma.order.update({ where: { id: order.id }, data: { commonUserId: `cu_${emailSuffix}_pending_session` } });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const job = await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('pending');
+      expect(after.lastError).toContain('referral session');
+    });
+
+    it('commonUserIdが未解決(common_user_resolveが未完了)の間は再試行する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0095' });
+      await prisma.order.update({ where: { id: order.id }, data: { referralSessionKey: 'rs_no_common_user' } });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const job = await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.lastError).toContain('common_user_id');
+    });
+
+    it('referralCodeが無い注文はconfirm APIを呼ばず即成功する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: null });
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.succeeded).toBe(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('confirmが失敗した場合は再試行できる', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0094' });
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { referralSessionKey: 'rs_confirm_fail', commonUserId: `cu_${emailSuffix}_confirm_fail` },
+      });
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+      const job = await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
 
       const result = await processOrderLinkingJobs();
       expect(result.retrying).toBe(1);

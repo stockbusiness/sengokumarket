@@ -190,6 +190,35 @@ describe('管理API: 注文管理', () => {
       await prisma.product.delete({ where: { id: product.id } });
     });
 
+    it('残課題指示書Stage5: 紹介コードありの銀行振込入金確認でreferral_confirm_purchaseジョブが記録される', async () => {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-BANKTRANSFERTEST-CONFIRM-${Date.now()}`,
+          totalAmount: 10000,
+          originalAmount: 10000,
+          paymentStatus: 'pending',
+          orderStatus: 'pending',
+          paymentMethod: 'bank_transfer',
+          customerName: '入金確認次郎',
+          customerEmail: `admin-orders-test-banktransfer-confirm-${Date.now()}@example.com`,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+          referralCode: 'SGI9001',
+        },
+      });
+
+      const { agent } = await createAdminAgent(app);
+      const res = await agent.post(`/api/admin/orders/${order.id}/confirm-bank-transfer`).set('Origin', TEST_ORIGIN).send();
+      expect(res.status).toBe(200);
+
+      const jobs = await prisma.orderLinkingJob.findMany({ where: { orderId: order.id, jobType: 'referral_confirm_purchase' } });
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].status).toBe('pending');
+
+      await prisma.orderLinkingJob.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.delete({ where: { id: order.id } });
+    });
+
     it('既にpaid済みの銀行振込注文を再度入金確認すると400を返す(二重処理防止)', async () => {
       const order = await prisma.order.create({
         data: {
