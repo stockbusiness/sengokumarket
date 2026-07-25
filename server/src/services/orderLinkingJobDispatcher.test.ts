@@ -80,6 +80,9 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     await prisma.orderLinkingJob.deleteMany({
       where: { OR: [{ userId: { in: createdUserIds } }, { orderId: { in: createdOrderIds } }] },
     });
+    // 本番安定化指示書Stage9: common_user_resolveジョブがexternal_identitiesへ書き込むため、
+    // users削除前にFK制約を満たすよう先に削除する。
+    await prisma.externalIdentity.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.order.deleteMany({ where: { id: { in: createdOrderIds } } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.$disconnect();
@@ -228,6 +231,109 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
       const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
       expect(after.status).toBe('dead');
     });
+
+    // 本番安定化指示書Stage9(12.1「ExternalIdentity」)。
+    it('解決成功時、users.commonUserIdだけでなくexternal_identitiesへも保存する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_identity_1` }) }),
+      );
+      await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.succeeded).toBe(1);
+
+      const identity = await prisma.externalIdentity.findUniqueOrThrow({
+        where: { systemKey_externalUserId: { systemKey: 'sengoku-market', externalUserId: user.id } },
+      });
+      expect(identity.userId).toBe(user.id);
+      expect(identity.commonUserId).toBe(`cu_${emailSuffix}_identity_1`);
+      expect(identity.identityType).toBe('email');
+      expect(identity.verifiedAt).not.toBeNull();
+    });
+
+    // 本番安定化指示書Stage9(12.2「common user merge」・12.4「異なるcommon IDで自動上書き
+    // しない・conflict管理可能」)。
+    it('既存external_identitiesと異なるcommon_user_idが返るとconflictでblockedになり、上書きしない', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      await prisma.externalIdentity.create({
+        data: {
+          userId: user.id,
+          systemKey: 'sengoku-market',
+          externalUserId: user.id,
+          commonUserId: `cu_${emailSuffix}_original`,
+          identityType: 'email',
+          verifiedAt: new Date(),
+        },
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_conflicting` }) }),
+      );
+      const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.blocked).toBe(1);
+
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('blocked');
+      expect(after.blockedReason).toBe('common_user_id_conflict');
+      expect(after.attemptCount).toBe(0);
+      expect(after.lastError).toContain(`cu_${emailSuffix}_original`);
+      expect(after.lastError).toContain(`cu_${emailSuffix}_conflicting`);
+
+      // 上書きされていないこと。
+      const updatedUser = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(updatedUser.commonUserId).toBeNull();
+      const identity = await prisma.externalIdentity.findUniqueOrThrow({
+        where: { systemKey_externalUserId: { systemKey: 'sengoku-market', externalUserId: user.id } },
+      });
+      expect(identity.commonUserId).toBe(`cu_${emailSuffix}_original`);
+    });
+
+    it('conflictでblockedになったジョブは自動再評価の対象外になり、外部APIを再び呼ばない', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const user = await createUser();
+      await prisma.externalIdentity.create({
+        data: {
+          userId: user.id,
+          systemKey: 'sengoku-market',
+          externalUserId: user.id,
+          commonUserId: `cu_${emailSuffix}_stay_original`,
+          identityType: 'email',
+          verifiedAt: new Date(),
+        },
+      });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_stay_conflicting` }) });
+      vi.stubGlobal('fetch', fetchMock);
+      await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+      const firstResult = await processOrderLinkingJobs();
+      expect(firstResult.blocked).toBe(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // 2回目のdispatchでは自動的に再claimされない(外部APIも再度呼ばれない)。
+      const secondResult = await processOrderLinkingJobs();
+      expect(secondResult.claimed).toBe(0);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('referral_capture job', () => {
@@ -317,6 +423,48 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
       expect(updatedOrder.assignedAgentCode).toBe('AGENT-CODE-002');
       expect(updatedOrder.salesAgentCode).toBe('AGENT-CODE-003');
       expect(updatedOrder.closingAgentCode).toBe('AGENT-CODE-004');
+    });
+
+    // 本番安定化指示書Stage9(12.3「confirm結果検証」)。
+    it('confirmレスポンスのcommon_user_idが送信値と一致しない場合は成功扱いにせず再試行になる', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      const order = await createOrder({ referralCode: 'SGI0097-mismatch' });
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { referralSessionKey: 'rs_confirm_mismatch', commonUserId: `cu_${emailSuffix}_sent` },
+      });
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              status: 'confirmed',
+              common_user_id: `cu_${emailSuffix}_different_from_sent`,
+              registration_referrer_agency_id: 'AGENT-CODE-001',
+              assigned_agency_id: 'AGENT-CODE-002',
+              sales_agent_id: 'AGENT-CODE-003',
+              closing_agent_id: 'AGENT-CODE-004',
+            }),
+        }),
+      );
+      const job = await prisma.$transaction((tx) => enqueueReferralConfirmPurchaseJob(tx, order.id));
+
+      const result = await processOrderLinkingJobs();
+      expect(result.retrying).toBe(1);
+      expect(result.succeeded).toBe(0);
+
+      const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+      expect(after.status).toBe('pending');
+      expect(after.lastError).toContain('mismatch');
+
+      // 代理店4役は保存されない(成功扱いにしない)。
+      const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+      expect(updatedOrder.registrationReferrerAgentCode).toBeNull();
     });
 
     // 本番安定化指示書Stage5(8.3): 依存待ち(referral_session_unresolved/common_user_unresolved)

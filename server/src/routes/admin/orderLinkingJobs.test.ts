@@ -125,6 +125,7 @@ describe('管理API: order-linking-jobs手動再送・skip(本番安定化指示
 
   afterAll(async () => {
     await prisma.orderLinkingJob.deleteMany({ where: { userId: { in: createdUserIds } } });
+    await prisma.externalIdentity.deleteMany({ where: { userId: { in: createdUserIds } } });
     await prisma.user.deleteMany({ where: { id: { in: createdUserIds } } });
     await prisma.$disconnect();
   });
@@ -158,6 +159,52 @@ describe('管理API: order-linking-jobs手動再送・skip(本番安定化指示
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.status).toBe('succeeded');
+  });
+
+  // 本番安定化指示書Stage9(12.4「conflict管理可能」): common_user_id_conflictでblockedになった
+  // ジョブは、既存のorder-linking-jobs管理API(一覧・手動再送)だけで運用できることの確認。
+  it('common_user_id_conflictでblockedのジョブは一覧に表示され、管理者が手動再送できる', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+    const { agent } = await createAdminAgent(app);
+    const user = await createLinkingUser('conflict-retry');
+    createdUserIds.push(user.id);
+    await prisma.externalIdentity.create({
+      data: {
+        userId: user.id,
+        systemKey: 'sengoku-market',
+        externalUserId: user.id,
+        commonUserId: 'cu_conflict_route_original',
+        identityType: 'email',
+        verifiedAt: new Date(),
+      },
+    });
+    const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+    await prisma.orderLinkingJob.update({
+      where: { id: job.id },
+      data: { status: 'blocked', blockedReason: 'common_user_id_conflict' },
+    });
+
+    const list = await agent.get('/api/admin/order-linking-jobs?status=blocked');
+    expect(list.status).toBe(200);
+    const found = list.body.jobs.find((j: { id: string }) => j.id === job.id);
+    expect(found).toBeTruthy();
+    expect(found.blockedReason).toBe('common_user_id_conflict');
+
+    // 管理者が代理店HUB側の値を確認し、既存記録と一致する値が返るよう修正された後に手動再送する想定。
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: 'cu_conflict_route_original' }) }),
+    );
+    const retryRes = await agent.post(`/api/admin/order-linking-jobs/${job.id}/retry`).set('Origin', TEST_ORIGIN);
+    expect(retryRes.status).toBe(200);
+    expect(retryRes.body.status).toBe('succeeded');
+
+    const updatedUser = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(updatedUser.commonUserId).toBe('cu_conflict_route_original');
   });
 
   it('存在しないIDの再送は404', async () => {

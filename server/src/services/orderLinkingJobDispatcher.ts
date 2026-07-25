@@ -36,9 +36,17 @@ const JOB_TYPE_PRIORITY = ['common_user_resolve', 'referral_capture', 'referral_
 // 本番安定化指示書Stage5(8.3): 依存先(common_user_id解決・referral capture)がまだ完了して
 // いないだけの状態。通常の失敗(外部APIエラー等)とは区別し、attempt_countを増やさず
 // blockedへ遷移させることで、依存待ちだけで最大試行回数を消費してdeadになるのを防ぐ。
+// 本番安定化指示書Stage9(12.2): common_user_id_conflict(代理店HUBから既存記録と異なる
+// common_user_idが返った場合)も同じblocked機構で「停止・管理者確認」を表現する。ただし
+// これは時間経過で自然に解決する依存待ちではなく、管理者による明示的な確認・修正が必要な
+// ため、fetchClaimableJobsByPriorityの自動再評価対象からは除外する(無限に外部APIを
+// 叩き直さないようにするため)。
 class OrderLinkingDependencyNotReadyError extends Error {
-  constructor(public readonly reason: 'common_user_unresolved' | 'referral_session_unresolved') {
-    super(`order linking job dependency not ready: ${reason}`);
+  constructor(
+    public readonly reason: 'common_user_unresolved' | 'referral_session_unresolved' | 'common_user_id_conflict',
+    detail?: string,
+  ) {
+    super(detail ?? `order linking job dependency not ready: ${reason}`);
   }
 }
 
@@ -83,6 +91,10 @@ async function fetchClaimableJobsByPriority(limit: number): Promise<OrderLinking
       where: {
         jobType,
         status: { in: ['pending', 'blocked'] },
+        // 本番安定化指示書Stage9(12.2): common_user_id_conflictは時間経過で自然に解決しない
+        // (管理者による確認・修正が必要)ため、自動再評価から除外する。管理者による明示的な
+        // 再送(retryOrderLinkingJob)でのみ再評価する。
+        NOT: { status: 'blocked', blockedReason: 'common_user_id_conflict' },
         OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
       },
       orderBy: { createdAt: 'asc' },
@@ -144,9 +156,18 @@ async function processAndRecordResult(job: OrderLinkingJob, result: DispatchOrde
   } catch (e) {
     if (e instanceof OrderLinkingDependencyNotReadyError) {
       // attempt_countは増やさない(依存待ちだけで最大試行回数を消費させない)。
+      // 本番安定化指示書Stage9(12.4「conflict管理可能」): lastErrorへ具体的な理由
+      // (common_user_id_conflictの場合は既存値・新しい解決値)も記録し、管理画面
+      // (GET /api/admin/order-linking-jobs)で内容を確認できるようにする。
       await prisma.orderLinkingJob.updateMany({
         where: { id: job.id, status: 'processing', processingToken },
-        data: { status: 'blocked', blockedReason: e.reason, processingToken: null, processingStartedAt: null },
+        data: {
+          status: 'blocked',
+          blockedReason: e.reason,
+          lastError: e.message.slice(0, 2000),
+          processingToken: null,
+          processingStartedAt: null,
+        },
       });
       result.blocked++;
       return;
@@ -178,6 +199,8 @@ async function runJob(job: OrderLinkingJob): Promise<void> {
   throw new Error(`unknown order linking job type: ${job.jobType}`);
 }
 
+const EXTERNAL_IDENTITY_SYSTEM_KEY = 'sengoku-market';
+
 async function runCommonUserResolveJob(job: OrderLinkingJob): Promise<void> {
   if (!job.userId) throw new Error('common_user_resolve job is missing userId');
 
@@ -188,6 +211,36 @@ async function runCommonUserResolveJob(job: OrderLinkingJob): Promise<void> {
   if (!commonUserId) {
     const resolved = await resolveCommonUserId({ externalUserId: user.id, verifiedEmail: user.email });
     if (!resolved) throw new Error('common_user_id resolve failed or returned no result');
+
+    // 本番安定化指示書Stage9(12.2「common user merge」): 既にexternal_identitiesへ記録済みの
+    // common_user_idと異なる値が代理店HUBから返った場合、単純上書きしない。conflictとして
+    // 停止し、管理者確認を必要とする(自動再評価はしない。fetchClaimableJobsByPriority参照)。
+    const existingIdentity = await prisma.externalIdentity.findUnique({
+      where: { systemKey_externalUserId: { systemKey: EXTERNAL_IDENTITY_SYSTEM_KEY, externalUserId: user.id } },
+    });
+    if (existingIdentity?.commonUserId && existingIdentity.commonUserId !== resolved.commonUserId) {
+      throw new OrderLinkingDependencyNotReadyError(
+        'common_user_id_conflict',
+        `existing external_identities.common_user_id=${existingIdentity.commonUserId} but hub returned=${resolved.commonUserId}`,
+      );
+    }
+
+    // 本番安定化指示書Stage9(12.1「ExternalIdentity」): common_user_id解決成功時、
+    // users.common_user_idだけでなくexternal_identitiesへも保存し、同一ユーザーの複数
+    // identity(将来他システム分含む)を追跡可能にする。
+    await prisma.externalIdentity.upsert({
+      where: { systemKey_externalUserId: { systemKey: EXTERNAL_IDENTITY_SYSTEM_KEY, externalUserId: user.id } },
+      create: {
+        userId: user.id,
+        systemKey: EXTERNAL_IDENTITY_SYSTEM_KEY,
+        externalUserId: user.id,
+        commonUserId: resolved.commonUserId,
+        identityType: 'email',
+        verifiedAt: new Date(),
+      },
+      update: { commonUserId: resolved.commonUserId, verifiedAt: new Date() },
+    });
+
     commonUserId = resolved.commonUserId;
     await prisma.user.update({ where: { id: user.id }, data: { commonUserId } });
   }
@@ -234,6 +287,15 @@ async function runReferralConfirmPurchaseJob(job: OrderLinkingJob): Promise<void
     event: 'purchase',
   });
   if (!confirmed) throw new Error('referral confirm failed or returned no result');
+
+  // 本番安定化指示書Stage9(12.3「confirm結果検証」): confirmレスポンスのcommon_user_idが
+  // 送信値と一致するか検証する。一致しない場合は成功扱いにしない(代理店4役を誤ったユーザーへ
+  // 紐付けてしまう事故を防ぐ)。通常のエラーとして扱い、既存のbackoff/再試行に委ねる。
+  if (confirmed.commonUserId !== order.commonUserId) {
+    throw new Error(
+      `referral confirm response common_user_id mismatch: sent=${order.commonUserId}, returned=${confirmed.commonUserId}`,
+    );
+  }
 
   await prisma.order.update({
     where: { id: order.id },
