@@ -9,6 +9,7 @@ import {
 } from './sennokuniIntegrationConfig';
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
 import { grantReward, reverseReward } from './oveWalletRewardClient';
+import { hashOutboxPayload } from './integrationOutbox';
 
 // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT 9章・2026-07-22指示書対応):
 // integration_outbox_eventsの実送信ディスパッチャ。NFT自動発行の既存cron(nftMintProcessing.ts)と
@@ -131,7 +132,10 @@ export async function triggerImmediateOutboxDispatch(): Promise<void> {
 async function reconcileEntitlementFields(
   event: IntegrationOutboxEvent,
 ): Promise<{ blockedReason: string | null; effectivePayload: Record<string, unknown> }> {
-  const payload = event.payload as Record<string, unknown>;
+  // 本番安定化指示書Stage7(10.2): 再取得のたびにoriginal_payload(enqueue時点、以後不変)を
+  // 基準にする。delivery_payloadを基準にすると、以前の再取得結果(古いcommon_user_id等)が
+  // 積み重なって残ってしまう可能性があるため。
+  const payload = event.originalPayload as Record<string, unknown>;
   const orderId = typeof payload.order_id === 'string' ? payload.order_id : null;
   if (!orderId) return { blockedReason: null, effectivePayload: payload };
 
@@ -168,38 +172,65 @@ async function reconcileEntitlementFields(
 
 // 仕様書外の拡張(残課題指示書Stage7): 送信先からの非2xx応答等、HTTPステータスを持つ失敗を
 // 試行履歴(integration_event_attempts.http_status)へ記録できるようにする。
+// 本番安定化指示書Stage7(10.3): 送信先URL・応答本文の抜粋(秘密情報は含めない)も持たせる。
 class OutboxSendError extends Error {
   httpStatus?: number;
-  constructor(message: string, httpStatus?: number) {
+  destinationUrl?: string | null;
+  responseBodyExcerpt?: string | null;
+  constructor(message: string, opts?: { httpStatus?: number; destinationUrl?: string | null; responseBodyExcerpt?: string | null }) {
     super(message);
     this.name = 'OutboxSendError';
-    this.httpStatus = httpStatus;
+    this.httpStatus = opts?.httpStatus;
+    this.destinationUrl = opts?.destinationUrl ?? null;
+    this.responseBodyExcerpt = opts?.responseBodyExcerpt ?? null;
   }
+}
+
+interface SendOutcome {
+  destinationUrl: string | null;
+  responseBodyExcerpt: string | null;
 }
 
 async function sendAndRecordResult(event: IntegrationOutboxEvent, result: DispatchOutboxResult): Promise<void> {
   const processingToken = event.processingToken!;
   const { blockedReason, effectivePayload } = await reconcileEntitlementFields(event);
+  // 本番安定化指示書Stage7(10.1・10.2): delivery_payloadを更新する際は必ずhashも
+  // 再計算する(保存payloadとhashが一致しない不整合を防ぐ)。
+  const deliveryPayloadHash = hashOutboxPayload(effectivePayload);
+
   if (blockedReason) {
     // blockedは「送信を試みていない」状態のため、試行履歴(integration_event_attempts)には残さない。
     await prisma.integrationOutboxEvent.updateMany({
       where: { id: event.id, status: 'processing', processingToken },
-      data: { status: 'blocked', blockedReason, payload: effectivePayload as Prisma.InputJsonValue },
+      data: { status: 'blocked', blockedReason, deliveryPayload: effectivePayload as Prisma.InputJsonValue, deliveryPayloadHash },
     });
     result.blocked++;
     return;
   }
 
-  const effectiveEvent: IntegrationOutboxEvent = { ...event, payload: effectivePayload as Prisma.JsonValue };
+  const effectiveEvent: IntegrationOutboxEvent = { ...event, deliveryPayload: effectivePayload as Prisma.JsonValue };
   const attemptNumber = event.attemptCount + 1;
   const startedAt = new Date();
 
   try {
-    await sendOutboxEvent(effectiveEvent);
-    await recordAttempt({ event, attemptNumber, startedAt, processingToken, result: 'succeeded', httpStatus: null, error: null });
+    const outcome = await sendOutboxEvent(effectiveEvent);
+    await recordAttempt({
+      event,
+      attemptNumber,
+      startedAt,
+      processingToken,
+      result: 'succeeded',
+      httpStatus: null,
+      error: null,
+      requestPayloadHash: deliveryPayloadHash,
+      destinationUrl: outcome.destinationUrl,
+      responseBodyExcerpt: outcome.responseBodyExcerpt,
+    });
     // 古いclaim(stale再クレーム後に別プロセスが先に処理した等)が、後から届いた新しい結果を
     // 上書きしないよう、processing・同一tokenであることを条件にする(9.3「古い処理が新しい
-    // 結果を上書きしない」)。
+    // 結果を上書きしない」)。effectiveEvent.deliveryPayload(sendOutboxEvent内でove_transaction_id
+    // 等が追記されている可能性がある)を保存し、hashも合わせて再計算する。
+    const finalPayload = effectiveEvent.deliveryPayload as Record<string, unknown>;
     await prisma.integrationOutboxEvent.updateMany({
       where: { id: event.id, status: 'processing', processingToken },
       data: {
@@ -207,7 +238,8 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
         processedAt: new Date(),
         lastError: null,
         blockedReason: null,
-        payload: effectivePayload as Prisma.InputJsonValue,
+        deliveryPayload: finalPayload as Prisma.InputJsonValue,
+        deliveryPayloadHash: hashOutboxPayload(finalPayload),
         processingToken: null,
         processingStartedAt: null,
       },
@@ -215,13 +247,35 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
     result.succeeded++;
   } catch (e) {
     const httpStatus = e instanceof OutboxSendError ? (e.httpStatus ?? null) : null;
+    const destinationUrl = e instanceof OutboxSendError ? (e.destinationUrl ?? null) : null;
+    const responseBodyExcerpt = e instanceof OutboxSendError ? (e.responseBodyExcerpt ?? null) : null;
     const message = (e instanceof Error ? e.message : String(e)).slice(0, 2000);
-    await recordAttempt({ event, attemptNumber, startedAt, processingToken, result: 'failed', httpStatus, error: message });
+    await recordAttempt({
+      event,
+      attemptNumber,
+      startedAt,
+      processingToken,
+      result: 'failed',
+      httpStatus,
+      error: message,
+      requestPayloadHash: deliveryPayloadHash,
+      destinationUrl,
+      responseBodyExcerpt,
+    });
 
     if (attemptNumber >= MAX_ATTEMPTS) {
       await prisma.integrationOutboxEvent.updateMany({
         where: { id: event.id, status: 'processing', processingToken },
-        data: { status: 'dead', attemptCount: attemptNumber, lastError: message, blockedReason: null, processingToken: null, processingStartedAt: null },
+        data: {
+          status: 'dead',
+          attemptCount: attemptNumber,
+          lastError: message,
+          blockedReason: null,
+          deliveryPayload: effectivePayload as Prisma.InputJsonValue,
+          deliveryPayloadHash,
+          processingToken: null,
+          processingStartedAt: null,
+        },
       });
       result.dead++;
     } else {
@@ -233,6 +287,8 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
           attemptCount: attemptNumber,
           lastError: message,
           blockedReason: null,
+          deliveryPayload: effectivePayload as Prisma.InputJsonValue,
+          deliveryPayloadHash,
           processingToken: null,
           processingStartedAt: null,
           nextAttemptAt: new Date(Date.now() + backoffMinutes * 60 * 1000),
@@ -253,6 +309,11 @@ async function recordAttempt(input: {
   result: 'succeeded' | 'failed';
   httpStatus: number | null;
   error: string | null;
+  // 本番安定化指示書Stage7(10.3): この試行で実際に送信を試みたdelivery_payloadのhash・
+  // 送信先URL・応答本文の抜粋(取得できない経路ではnull)。
+  requestPayloadHash: string;
+  destinationUrl: string | null;
+  responseBodyExcerpt: string | null;
 }): Promise<void> {
   await prisma.integrationEventAttempt.create({
     data: {
@@ -264,11 +325,14 @@ async function recordAttempt(input: {
       result: input.result,
       error: input.error,
       processingToken: input.processingToken,
+      requestPayloadHash: input.requestPayloadHash,
+      destinationUrl: input.destinationUrl,
+      responseBodyExcerpt: input.responseBodyExcerpt,
     },
   });
 }
 
-async function sendOutboxEvent(event: IntegrationOutboxEvent): Promise<void> {
+async function sendOutboxEvent(event: IntegrationOutboxEvent): Promise<SendOutcome> {
   if (event.destinationSystemKey === 'ove-wallet') {
     return sendToOveWallet(event);
   }
@@ -277,8 +341,12 @@ async function sendOutboxEvent(event: IntegrationOutboxEvent): Promise<void> {
 
 // 仕様書外の拡張: OVE Walletはentitlement.granted/revokedという概念を持たず、reward付与・取消
 // (grant/REVERSAL)というAPIを持つため、Outbox上のイベント種別をウォレットAPI呼び出しへ変換する。
-async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
-  const payload = event.payload as {
+// 本番安定化指示書Stage7(10.3): oveWalletRewardClient.tsは送信先URL・生の応答本文を返さない
+// 抽象化されたクライアントのため、この経路ではdestinationUrl/responseBodyExcerptは取得できず
+// 常にnullとなる(既知の制約。変更する場合はoveWalletRewardClient.tsのインターフェース自体の
+// 見直しが必要なため、今回は対象外とする)。
+async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<SendOutcome> {
+  const payload = event.deliveryPayload as {
     common_user_id?: string | null;
     source_user_id?: string | null;
     order_item_id?: string;
@@ -311,8 +379,8 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
     // DBへは直接書かず、呼び出し元(sendAndRecordResult)が送信成功時にまとめて1回で永続化する
     // (残課題指示書Stage6でDispatcherがpayloadを再構築するようになったため、途中で個別に書き込むと
     // 後続の永続化で上書き・消失してしまうのを避けるため、メモリ上のオブジェクトを直接更新する)。
-    (event.payload as Record<string, unknown>).ove_transaction_id = grantResult.transactionId;
-    return;
+    (event.deliveryPayload as Record<string, unknown>).ove_transaction_id = grantResult.transactionId;
+    return { destinationUrl: null, responseBodyExcerpt: null };
   }
 
   if (event.eventType === 'entitlement.revoked') {
@@ -321,16 +389,16 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
         destinationSystemKey: 'ove-wallet',
         eventType: 'entitlement.granted',
         status: 'succeeded',
-        payload: { path: ['order_item_id'], equals: payload.order_item_id },
+        deliveryPayload: { path: ['order_item_id'], equals: payload.order_item_id },
       },
     });
-    const priorPayload = priorGrant?.payload as { ove_transaction_id?: string } | undefined;
+    const priorPayload = priorGrant?.deliveryPayload as { ove_transaction_id?: string } | undefined;
     if (!priorPayload?.ove_transaction_id) {
       throw new Error('cannot reverse OVE wallet reward: no matching prior grant transaction found');
     }
     const reversed = await reverseReward(priorPayload.ove_transaction_id, 'entitlement revoked (refund)');
     if (!reversed) throw new Error('OVE wallet reward reversal failed');
-    return;
+    return { destinationUrl: null, responseBodyExcerpt: null };
   }
 
   throw new Error(`unsupported event type for ove-wallet: ${event.eventType}`);
@@ -340,7 +408,7 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
 // (X-SenNoKuni-*)のイベントEnvelopeで送信する。受信pathは送信先ごとの設定値
 // (getIntegrationEndpointPath)から取得し、コード固定しない。未設定時のみ暫定値
 // (/shopping/webhook)にフォールバックする。
-async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<void> {
+async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<SendOutcome> {
   const baseUrl = await getIntegrationEndpointBaseUrl(event.destinationSystemKey);
   if (!baseUrl) throw new Error(`no endpoint configured for destination: ${event.destinationSystemKey}`);
 
@@ -349,7 +417,7 @@ async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<voi
 
   const path = await getIntegrationEndpointPath(event.destinationSystemKey);
   const method = 'POST';
-  const payload = event.payload as { common_user_id?: string | null };
+  const payload = event.deliveryPayload as { common_user_id?: string | null };
   const envelope = {
     event_id: event.eventId,
     event_type: event.eventType,
@@ -358,7 +426,7 @@ async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<voi
     source_system_key: 'sengoku-market',
     common_user_id: payload.common_user_id ?? null,
     correlation_id: event.correlationId,
-    data: event.payload,
+    data: event.deliveryPayload,
   };
   const rawBody = JSON.stringify(envelope);
   const timestamp = String(Math.floor(Date.now() / 1000));
@@ -377,21 +445,34 @@ async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<voi
     correlationId: event.correlationId ?? undefined,
   });
 
+  const destinationUrl = `${baseUrl}${path}`;
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}${path}`, {
+    res = await fetch(destinationUrl, {
       method,
       headers,
       body: rawBody,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch (e) {
-    throw new OutboxSendError(e instanceof Error ? e.message : String(e));
+    throw new OutboxSendError(e instanceof Error ? e.message : String(e), { destinationUrl });
   }
 
+  // 本番安定化指示書Stage7(10.3): 応答本文の抜粋を試行履歴へ残す(秘密情報が含まれないよう
+  // 短く切り詰める。送信先が秘密情報を返すことは想定していないが、念のため長さを制限する)。
+  const responseBodyExcerpt =
+    typeof res.text === 'function'
+      ? await res
+          .text()
+          .then((t) => t.slice(0, 500))
+          .catch(() => null)
+      : null;
+
   if (!res.ok) {
-    throw new OutboxSendError(`destination returned non-2xx: ${res.status}`, res.status);
+    throw new OutboxSendError(`destination returned non-2xx: ${res.status}`, { httpStatus: res.status, destinationUrl, responseBodyExcerpt });
   }
+
+  return { destinationUrl, responseBodyExcerpt };
 }
 
 // 仕様書外の拡張(残課題指示書Stage7・9.2「手動再送」): 管理画面からのdead/failed/blocked/pending

@@ -451,8 +451,15 @@ model IntegrationOutboxEvent {
   eventType            String    @map("event_type") // order.paid 等(契約書6.2章)
   eventVersion         String    @default("1.0") @map("event_version")
   destinationSystemKey String    @map("destination_system_key") // agency-system | sengoku-passport | ove-wallet | ai-art-school
-  payload              Json
-  payloadHash          String    @map("payload_hash")
+  // 本番安定化指示書Stage7(10.1・10.2): 送信直前の再取得(reconcileEntitlementFields)で
+  // payloadが最新値へ更新されるが、以前は同じpayload列を上書きしていたためenqueue時点の
+  // 監査用データが失われ、かつpayload_hashが古いままという不整合があった。
+  // originalPayload(enqueue時点、以後不変)とdeliveryPayload(実際に送信を試みる値。
+  // 再取得のたびに更新)を分離し、それぞれ専用のhashを持たせる。
+  originalPayload      Json      @map("original_payload")
+  originalPayloadHash  String    @map("original_payload_hash")
+  deliveryPayload      Json      @map("payload")
+  deliveryPayloadHash  String    @map("payload_hash")
   correlationId        String?   @map("correlation_id")
   status               String    @default("pending") @map("status") // pending | processing | succeeded | failed | dead | blocked
   attemptCount         Int       @default(0) @map("attempt_count")
@@ -493,6 +500,11 @@ model IntegrationEventAttempt {
   result          String // succeeded | failed
   error           String?
   processingToken String?   @map("processing_token")
+  // 本番安定化指示書Stage7(10.3「試行履歴」): この試行で実際に送信したdelivery_payloadの
+  // hash(payload差分の追跡用)・送信先URL・応答本文の抜粋(秘密情報は含めない・長さ制限)。
+  requestPayloadHash  String? @map("request_payload_hash")
+  destinationUrl      String? @map("destination_url")
+  responseBodyExcerpt String? @map("response_body_excerpt")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   outboxEvent IntegrationOutboxEvent @relation(fields: [outboxEventId], references: [id])

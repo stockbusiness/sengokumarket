@@ -134,7 +134,7 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
 
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
     expect(row.status).toBe('succeeded');
-    expect((row.payload as Record<string, unknown>).ove_transaction_id).toBe('tx_test_001');
+    expect((row.deliveryPayload as Record<string, unknown>).ove_transaction_id).toBe('tx_test_001');
   });
 
   // 本番安定化指示書Stage6(9.4「商品数量をそのままポイント数にしない」)。
@@ -356,17 +356,51 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     expect(failedAttempts[0]).toMatchObject({ attemptNumber: 1, result: 'failed', httpStatus: 503 });
     expect(failedAttempts[0].startedAt).toBeTruthy();
     expect(failedAttempts[0].finishedAt).toBeTruthy();
+    // 本番安定化指示書Stage7(10.3): 送信先URL・request payload hashも試行履歴へ残す。
+    expect(failedAttempts[0].destinationUrl).toBe('https://passport.example.com/shopping/webhook');
+    expect(failedAttempts[0].requestPayloadHash).toBeTruthy();
 
     vi.unstubAllGlobals();
     const okCorrelationId = `${correlationPrefix}attempt-ok-${Date.now()}`;
     await createEvent({ correlationId: okCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{"status":"ok"}') }));
 
     await dispatchPendingOutboxEvents();
     const okEvent = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: okCorrelationId } });
     const okAttempts = await prisma.integrationEventAttempt.findMany({ where: { outboxEventId: okEvent.id } });
     expect(okAttempts).toHaveLength(1);
     expect(okAttempts[0]).toMatchObject({ attemptNumber: 1, result: 'succeeded', httpStatus: null });
+    expect(okAttempts[0].destinationUrl).toBe('https://passport.example.com/shopping/webhook');
+    expect(okAttempts[0].responseBodyExcerpt).toBe('{"status":"ok"}');
+    expect(okAttempts[0].requestPayloadHash).toBeTruthy();
+  });
+
+  // 本番安定化指示書Stage7(10.1・10.2・10.4): 保存payloadとhashが一致し、original_payload
+  // (enqueue時点の監査用データ)は送信直前の再取得で書き換わらないことの直接検証。
+  it('送信直前の再取得でdelivery_payloadとそのhashは更新されるが、original_payloadは不変', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') }));
+
+    const correlationId = `${correlationPrefix}payload-hash-${Date.now()}`;
+    const before = await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+    const originalPayloadBefore = before.originalPayload;
+    const originalHashBefore = before.originalPayloadHash;
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    await dispatchPendingOutboxEvents();
+
+    const after = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    // original_payload/hashは不変(監査用データが失われない)。
+    expect(after.originalPayload).toEqual(originalPayloadBefore);
+    expect(after.originalPayloadHash).toBe(originalHashBefore);
+    // 保存されているdelivery_payloadとそのhashは常に一致する。
+    const crypto = await import('crypto');
+    const expectedDeliveryHash = crypto.createHash('sha256').update(JSON.stringify(after.deliveryPayload)).digest('hex');
+    expect(after.deliveryPayloadHash).toBe(expectedDeliveryHash);
   });
 
   // 残課題指示書Stage7・9.3「古い処理が新しい結果を上書きしない」: processing_tokenの一致を
@@ -458,12 +492,12 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
     // 再claimされて混入しないようにする(blocked行は毎回再評価対象に含まれるため特に重要)。
     const stage6EventIds = (
       await prisma.integrationOutboxEvent.findMany({
-        where: { payload: { path: ['product_code'], equals: 'STAGE6-TEST' } },
+        where: { deliveryPayload: { path: ['product_code'], equals: 'STAGE6-TEST' } },
         select: { id: true },
       })
     ).map((e) => e.id);
     await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: stage6EventIds } } });
-    await prisma.integrationOutboxEvent.deleteMany({ where: { payload: { path: ['product_code'], equals: 'STAGE6-TEST' } } });
+    await prisma.integrationOutboxEvent.deleteMany({ where: { deliveryPayload: { path: ['product_code'], equals: 'STAGE6-TEST' } } });
     await prisma.orderItem.deleteMany({ where: { product: { name: { startsWith: productNamePrefix } } } });
     await prisma.order.deleteMany({ where: { customerEmail: { contains: productNamePrefix } } });
     await prisma.productIntegrationRule.deleteMany({ where: { product: { name: { startsWith: productNamePrefix } } } });
@@ -567,7 +601,7 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
     const row = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
     expect(row.status).toBe('succeeded');
     expect(row.blockedReason).toBeNull();
-    expect((row.payload as Record<string, unknown>).common_user_id).toBe('cu_stage6_resumed');
+    expect((row.deliveryPayload as Record<string, unknown>).common_user_id).toBe('cu_stage6_resumed');
   });
 
   it('必須設定がない(requireCommonUserId=false)商品は、common_user_id未解決でも従来通り送信される(後方互換)', async () => {
@@ -598,7 +632,11 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
 
     expect(grantRewardMock).toHaveBeenCalledWith(expect.objectContaining({ commonUserId: 'cu_stage6_fresh' }));
     const row = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
-    expect((row.payload as Record<string, unknown>).common_user_id).toBe('cu_stage6_fresh');
+    expect((row.deliveryPayload as Record<string, unknown>).common_user_id).toBe('cu_stage6_fresh');
+    // 本番安定化指示書Stage7(10.1・10.2・10.4): delivery_payloadは最新値に更新されるが、
+    // original_payload(enqueue時点の監査用データ)は古いcommon_user_idのまま失われない。
+    expect((row.originalPayload as Record<string, unknown>).common_user_id).toBe('cu_stage6_stale');
+    expect(row.originalPayload).not.toEqual(row.deliveryPayload);
   });
 
   // 本番安定化指示書Stage6(9.5・9.7「無効ルールは送信しない」): enqueue後(pendingのまま)に

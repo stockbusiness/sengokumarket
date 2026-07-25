@@ -56,7 +56,7 @@ describe('integrationOutbox: enqueueOutboxEvent', () => {
     await prisma.$disconnect();
   });
 
-  it('evt_プレフィックスのeventId・payloadHash・既定status=pendingで作成する', async () => {
+  it('evt_プレフィックスのeventId・payload hash・既定status=pendingで作成する', async () => {
     const correlationId = `outbox-unit-test-${Date.now()}`;
     const payload = { foo: 'bar', n: 1 };
 
@@ -74,7 +74,13 @@ describe('integrationOutbox: enqueueOutboxEvent', () => {
     expect(row.status).toBe('pending');
     expect(row.attemptCount).toBe(0);
     expect(row.destinationSystemKey).toBe('ove-wallet');
-    expect(row.payloadHash).toBe(crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex'));
+    const expectedHash = crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+    // 本番安定化指示書Stage7(10.2): enqueue時点ではoriginal_payload/delivery_payloadは
+    // 同じ値・同じhashで初期化される。
+    expect(row.originalPayload).toEqual(payload);
+    expect(row.deliveryPayload).toEqual(payload);
+    expect(row.originalPayloadHash).toBe(expectedHash);
+    expect(row.deliveryPayloadHash).toBe(expectedHash);
   });
 });
 
@@ -122,7 +128,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     expect(row.eventType).toBe('entitlement.granted');
     expect(row.destinationSystemKey).toBe('sengoku-passport');
     expect(row.status).toBe('pending');
-    const payload = row.payload as Record<string, unknown>;
+    const payload = row.deliveryPayload as Record<string, unknown>;
     expect(payload).toMatchObject({
       source_system_key: 'sengoku-market',
       common_user_id: 'cu_test_00000001',
@@ -210,7 +216,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     expect(destinations).toEqual(['ai-art-school', 'ove-wallet']);
 
     const oveRow = rows.find((r) => r.destinationSystemKey === 'ove-wallet')!;
-    const ovePayload = oveRow.payload as Record<string, unknown>;
+    const ovePayload = oveRow.deliveryPayload as Record<string, unknown>;
     // 本番安定化指示書Stage6(9.4): 商品数量(2)をそのままポイント数にせず、
     // reward_amount_per_unit(100) * quantity(2) = 200として計算する(per_quantity)。
     expect(ovePayload.reward_amount).toBe(200);
@@ -240,7 +246,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     });
 
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: order.id } });
-    const payload = row.payload as Record<string, unknown>;
+    const payload = row.deliveryPayload as Record<string, unknown>;
     expect(payload.reward_amount).toBe(500);
 
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });

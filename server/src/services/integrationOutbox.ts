@@ -32,15 +32,26 @@ function buildEventId(): string {
   return `evt_${crypto.randomBytes(16).toString('hex')}`;
 }
 
+// 本番安定化指示書Stage7(10.1・10.2): payload更新のたびに再計算するhashをこの1箇所へ
+// 集約する(integrationOutboxDispatcher.tsのdelivery_payload更新でも使う)。
+export function hashOutboxPayload(payload: unknown): string {
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+// 本番安定化指示書Stage7(10.2): original_payload(enqueue時点、以後不変)と
+// delivery_payload(実際に送信を試みる値。ディスパッチャの再取得のたびに更新)を分離する。
+// enqueue時点では両者は同じ値・同じhashで初期化する。
 export async function enqueueOutboxEvent(tx: Tx, input: EnqueueOutboxEventInput): Promise<void> {
-  const payloadJson = JSON.stringify(input.payload);
+  const payloadHash = hashOutboxPayload(input.payload);
   await tx.integrationOutboxEvent.create({
     data: {
       eventId: buildEventId(),
       eventType: input.eventType,
       destinationSystemKey: input.destinationSystemKey,
-      payload: input.payload as Prisma.InputJsonValue,
-      payloadHash: crypto.createHash('sha256').update(payloadJson).digest('hex'),
+      originalPayload: input.payload as Prisma.InputJsonValue,
+      originalPayloadHash: payloadHash,
+      deliveryPayload: input.payload as Prisma.InputJsonValue,
+      deliveryPayloadHash: payloadHash,
       correlationId: input.correlationId ?? null,
     },
   });
