@@ -4,6 +4,7 @@ import { createApp } from '../../../app';
 import { prisma } from '../../../lib/prisma';
 import { setSetting } from '../../../services/settings';
 import { dispatchPendingNotifications } from '../../notifications/application/dispatchNotificationOutbox.usecase';
+import { hashRateLimitIdentifier } from '../../../services/rateLimiter';
 
 // 残課題指示書Stage3: 通知の送信はnotification_outbox_events経由のDispatcherが
 // modules/notifications/infrastructure/resend.adapter.tsを直接呼ぶため、
@@ -421,5 +422,31 @@ describe('外部代理店システム連携API', () => {
     const res = await request(app).get(`/api/integrations/agencies?external_id=${externalId}`).set('x-api-key', API_KEY);
     expect(res.status).toBe(200);
     expect(res.body.agency.external_id).toBe(externalId);
+  });
+});
+
+// 本番安定化指示書Stage3(6.6): IP単独レートリミットはAPIキー認証より前段で効かせ、
+// APIキー単位の2段目レートリミットは認証成功後のみ効く(6.8受入条件の直接検証)。
+describe('外部代理店システム連携API: レートリミットの2段構成(本番安定化指示書Stage3・6.6)', () => {
+  afterAll(async () => {
+    await prisma.rateLimitBucket.deleteMany({ where: { bucketKey: { startsWith: 'agency-integration-' } } });
+    await prisma.$disconnect();
+  });
+
+  it('APIキーが無い/誤っている呼び出しでもIP単独bucketは記録される(IP制限がAPIキー認証より前段で動くことの確認)', async () => {
+    const res = await request(app).get('/api/integrations/agencies').set('x-api-key', 'wrong-key-for-ratelimit-order-test');
+    expect(res.status).toBe(401);
+
+    const ipBucket = await prisma.rateLimitBucket.findFirst({ where: { bucketKey: { startsWith: 'agency-integration-ip:ip:' } } });
+    expect(ipBucket).not.toBeNull();
+  });
+
+  it('認証成功時はAPIキーのハッシュを識別子とする2段目bucketが記録される', async () => {
+    const res = await request(app).get('/api/integrations/agencies').set('x-api-key', API_KEY);
+    expect(res.status).toBe(200);
+
+    const expectedKey = `agency-integration-key:id:${hashRateLimitIdentifier(API_KEY)}`;
+    const keyBucket = await prisma.rateLimitBucket.findUnique({ where: { bucketKey: expectedKey } });
+    expect(keyBucket).not.toBeNull();
   });
 });

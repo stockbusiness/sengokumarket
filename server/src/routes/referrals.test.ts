@@ -1,13 +1,20 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
 
 const app = createApp();
 
-describe('GET /referrals/resolve(残課題指示書Stage12: 分散レートリミット)', () => {
+describe('GET /referrals/resolve(残課題指示書Stage12/本番安定化指示書Stage3: 分散レートリミット)', () => {
+  // 本番安定化指示書Stage3: IP単独bucketは同一scope内の全コードで共有されるため
+  // (コードを変えるだけでIP制限を回避できないようにする設計)、各テストが前のテストの
+  // カウントに影響されないよう、テストごとにこのscopeのbucketをリセットする。
+  beforeEach(async () => {
+    await prisma.rateLimitBucket.deleteMany({ where: { bucketKey: { startsWith: 'referral-resolve:' } } });
+  });
+
   afterAll(async () => {
-    await prisma.rateLimitBucket.deleteMany({ where: { bucketKey: { contains: 'referral-resolve' } } });
+    await prisma.rateLimitBucket.deleteMany({ where: { bucketKey: { startsWith: 'referral-resolve:' } } });
     await prisma.$disconnect();
   });
 

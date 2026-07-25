@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../lib/prisma';
-import { checkRateLimit } from './rateLimiter';
+import { checkRateLimit, cleanupStaleRateLimitBuckets } from './rateLimiter';
 
 describe('rateLimiter service(残課題指示書Stage12: 分散レートリミット)', () => {
   afterAll(async () => {
@@ -54,12 +54,58 @@ describe('rateLimiter service(残課題指示書Stage12: 分散レートリミ�
   });
 
   it('DBアクセスが失敗してもフェイルオープンでリクエストを許可する', async () => {
-    const spy = vi.spyOn(prisma.rateLimitBucket, 'upsert').mockRejectedValue(new Error('simulated DB failure'));
+    const spy = vi.spyOn(prisma, '$queryRaw').mockRejectedValue(new Error('simulated DB failure'));
     try {
       const result = await checkRateLimit(`ratelimiter-svc-test-failopen-${Date.now()}`, 60_000, 1);
       expect(result.allowed).toBe(true);
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('hashRateLimitIdentifier(本番安定化指示書Stage3: identifier保護)', () => {
+  it('同じ値は正規化(trim・小文字化)後に同一ハッシュになる', async () => {
+    const { hashRateLimitIdentifier } = await import('./rateLimiter');
+    const a = hashRateLimitIdentifier('  User@Example.com  ');
+    const b = hashRateLimitIdentifier('user@example.com');
+    expect(a).toBe(b);
+  });
+
+  it('値が違えばハッシュも異なる', async () => {
+    const { hashRateLimitIdentifier } = await import('./rateLimiter');
+    expect(hashRateLimitIdentifier('a@example.com')).not.toBe(hashRateLimitIdentifier('b@example.com'));
+  });
+
+  it('平文の値そのものはハッシュ結果に含まれない(bucket_keyへ平文保存しないことの確認)', async () => {
+    const { hashRateLimitIdentifier } = await import('./rateLimiter');
+    const hash = hashRateLimitIdentifier('secret-coupon-code');
+    expect(hash).not.toContain('secret-coupon-code');
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe('cleanupStaleRateLimitBuckets(本番安定化指示書Stage3・6.7: 古いbucketの掃除)', () => {
+  afterAll(async () => {
+    await prisma.rateLimitBucket.deleteMany({ where: { bucketKey: { contains: 'ratelimiter-cleanup-test' } } });
+    await prisma.$disconnect();
+  });
+
+  it('7日以上更新のないbucketは削除され、最近更新されたbucketは残る', async () => {
+    const staleKey = `ratelimiter-cleanup-test-stale-${Date.now()}`;
+    const freshKey = `ratelimiter-cleanup-test-fresh-${Date.now()}`;
+    await checkRateLimit(staleKey, 60_000, 10);
+    await checkRateLimit(freshKey, 60_000, 10);
+
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    await prisma.rateLimitBucket.update({ where: { bucketKey: staleKey }, data: { updatedAt: eightDaysAgo } });
+
+    const result = await cleanupStaleRateLimitBuckets();
+    expect(result.deletedCount).toBeGreaterThanOrEqual(1);
+
+    const stale = await prisma.rateLimitBucket.findUnique({ where: { bucketKey: staleKey } });
+    expect(stale).toBeNull();
+    const fresh = await prisma.rateLimitBucket.findUnique({ where: { bucketKey: freshKey } });
+    expect(fresh).not.toBeNull();
   });
 });

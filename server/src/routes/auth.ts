@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
 import { sendError } from '../lib/apiError';
@@ -13,23 +13,34 @@ import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
 import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
 import { dbRateLimit } from '../middleware/dbRateLimit';
+import { hashRateLimitIdentifier } from '../services/rateLimiter';
 
 const router = Router();
 
-// 残課題指示書Stage12: 複数Vercelインスタンス間で回数が共有されるDB永続化型のレート制限に
-// 差し替える(express-rate-limitの既定MemoryStoreはインスタンスごとに独立していた)。
+function hashedEmailIdentifier(req: Request): string | undefined {
+  return typeof req.body?.email === 'string' ? hashRateLimitIdentifier(req.body.email) : undefined;
+}
+
+// 残課題指示書Stage12/本番安定化指示書Stage3: 複数Vercelインスタンス間で回数が共有される
+// DB永続化型のレート制限に差し替える(express-rate-limitの既定MemoryStoreはインスタンスごとに
+// 独立していた)。IP単独・メールアドレス単独・両方の複合の3bucketを独立して検査することで、
+// IPを変えるだけ・メールアドレスを変えるだけでの回避を防ぐ(6.2)。IP単独bucketは社内
+// ネットワーク等の共有IPからの正当な複数アカウント登録を過剰にブロックしないよう、
+// メールアドレス単独bucketより緩めの上限にする(6.8「正常利用を過剰にブロックしない」)。
 // 大量アカウント作成・パスワード再設定メール送信の踏み台化を防ぐ(仕様書外の拡張)。
 const registerLimiter = dbRateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
+  ipLimit: 30,
   scope: 'register',
-  identify: (req) => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : undefined),
+  identify: hashedEmailIdentifier,
 });
 const passwordResetRequestLimiter = dbRateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 10,
+  ipLimit: 30,
   scope: 'password-reset-request',
-  identify: (req) => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : undefined),
+  identify: hashedEmailIdentifier,
 });
 // トークン総当たり対策。トークン自体を識別子にすると攻撃者の目的(異なるトークンを大量に
 // 試す)と矛盾するため、IPのみで制限する。

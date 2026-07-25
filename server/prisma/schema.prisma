@@ -50,6 +50,8 @@ model RateLimitBucket {
   count       Int      @default(0)
   updatedAt   DateTime @updatedAt @map("updated_at")
 
+  // 本番安定化指示書Stage3(6.7「cleanup」): 古いbucket(updated_at基準)を定期削除するための索引。
+  @@index([updatedAt])
   @@map("rate_limit_buckets")
 }
 

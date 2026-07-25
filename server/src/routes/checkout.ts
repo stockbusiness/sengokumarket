@@ -12,25 +12,32 @@ import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
 import { resolveReferral } from '../services/referral';
 import { validateCoupon } from '../services/coupon';
+import { hashRateLimitIdentifier } from '../services/rateLimiter';
 
 const router = Router();
 
-// 残課題指示書Stage12: 複数Vercelインスタンス間で回数が共有されるDB永続化型のレート制限に
-// 差し替える。在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ
-// (仕様書外の拡張)。customerEmailがあればIPに加えて識別子として使う。
+// 残課題指示書Stage12/本番安定化指示書Stage3: 複数Vercelインスタンス間で回数が共有される
+// DB永続化型のレート制限に差し替える。IP単独・識別子単独・複合の3bucketを独立して検査する
+// (6.2)。在庫仮引当・Stripeセッション作成の自動連打による在庫ロック濫用を防ぐ
+// (仕様書外の拡張)。customerEmailがあればIPに加えて識別子として使う。IP単独bucketは
+// 複数の購入者が同じ店舗Wi-Fi等を共有する場合を考慮し、メールアドレス単独より緩めにする。
 const createSessionLimiter = dbRateLimit({
   windowMs: 5 * 60 * 1000,
   limit: 20,
+  ipLimit: 50,
   scope: 'checkout-create-session',
-  identify: (req) => (typeof req.body?.customerEmail === 'string' ? req.body.customerEmail.toLowerCase() : undefined),
+  identify: (req) => (typeof req.body?.customerEmail === 'string' ? hashRateLimitIdentifier(req.body.customerEmail) : undefined),
 });
 // クーポンコード総当たり対策(仕様書16.2)。特定のクーポンコードへ大量に試行が集中するのを
-// 防ぐため、コード自体も識別子に加える。
+// 防ぐため、コード自体も識別子に加える。IP単独bucketは、同じ店舗Wi-Fi等から複数の購入者が
+// それぞれ別のクーポンコードを試すプレビュー操作を過剰にブロックしないよう、コード単独より
+// 緩めにする(他の3つのlimiterと同じ方針)。
 const couponValidateLimiter = dbRateLimit({
   windowMs: 60 * 1000,
   limit: 10,
+  ipLimit: 30,
   scope: 'coupon-validate',
-  identify: (req) => (typeof req.body?.couponCode === 'string' ? req.body.couponCode.toUpperCase() : undefined),
+  identify: (req) => (typeof req.body?.couponCode === 'string' ? hashRateLimitIdentifier(req.body.couponCode) : undefined),
 });
 
 function isNonEmptyString(v: unknown): v is string {

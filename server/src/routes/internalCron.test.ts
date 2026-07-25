@@ -34,6 +34,13 @@ vi.mock('../modules/notifications/application/dispatchNotificationOutbox.usecase
   dispatchPendingNotifications: () => dispatchPendingNotifications(),
 }));
 
+const cleanupStaleRateLimitBuckets = vi.fn(async () => ({ deletedCount: 0 }));
+
+vi.mock('../services/rateLimiter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/rateLimiter')>();
+  return { ...actual, cleanupStaleRateLimitBuckets: () => cleanupStaleRateLimitBuckets() };
+});
+
 const app = createApp();
 
 describe('内部cron: 外部代理店システム階層同期(仕様書外の拡張)', () => {
@@ -286,5 +293,42 @@ describe('内部cron: 共通ID・紹介連携ジョブ送信(残課題指示書S
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
     expect(processOrderLinkingJobs).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 本番安定化指示書Stage3(6.7): 古いrate_limit_buckets行の掃除cron配線確認。
+// cleanupStaleRateLimitBuckets自体の削除ロジックはrateLimiter.test.tsで検証済みのため、
+// ここではcron認証・呼び出し配線のみ確認する。
+describe('内部cron: レート制限bucketの掃除(本番安定化指示書Stage3)', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalSecret;
+    cleanupStaleRateLimitBuckets.mockClear();
+  });
+
+  it('CRON_SECRET未設定の場合は503', async () => {
+    delete process.env.CRON_SECRET;
+    const res = await request(app).get('/api/internal/cron/cleanup-rate-limit-buckets');
+    expect(res.status).toBe(503);
+  });
+
+  it('Authorizationヘッダーが一致しない場合は401', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-ratelimit-cleanup';
+    const res = await request(app)
+      .get('/api/internal/cron/cleanup-rate-limit-buckets')
+      .set('Authorization', 'Bearer wrong-secret');
+    expect(res.status).toBe(401);
+    expect(cleanupStaleRateLimitBuckets).not.toHaveBeenCalled();
+  });
+
+  it('正しいCRON_SECRETでcleanupStaleRateLimitBucketsが実行される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-ratelimit-cleanup';
+    const res = await request(app)
+      .get('/api/internal/cron/cleanup-rate-limit-buckets')
+      .set('Authorization', 'Bearer test-cron-secret-ratelimit-cleanup');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deletedCount: 0 });
+    expect(cleanupStaleRateLimitBuckets).toHaveBeenCalledTimes(1);
   });
 });

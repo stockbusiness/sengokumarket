@@ -23,11 +23,21 @@ import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
 import { requireCronSecret } from './middleware/cronAuth';
 import { dbRateLimit } from './middleware/dbRateLimit';
+import { hashRateLimitIdentifier } from './services/rateLimiter';
 import { sendError } from './lib/apiError';
 import { appConfig } from './shared/config/appConfig';
 
 export function createApp(): Express {
   const app = express();
+
+  // 本番安定化指示書Stage3(6.5「IP取得」): VercelはNode.jsの手前に1段プロキシ層を挟むため、
+  // req.ipがそのプロキシのIPになってしまい、レート制限のIP判定が機能しない。
+  // trust proxyを1(1ホップだけ信頼)に設定することで、X-Forwarded-Forの末尾から1つ手前
+  // (実クライアントのIP)をreq.ipとして採用する。trueや無制限のホップ数を信頼すると、
+  // クライアントが任意個のダミーIPをX-Forwarded-Forへ自分で追加してreq.ipを偽装できて
+  // しまうため、明示的に1ホップのみを信頼する(実際のVercel環境でのホップ数は本番で
+  // 別途確認が必要)。
+  app.set('trust proxy', 1);
 
   // セキュリティヘッダー(X-Content-Type-Options/X-Frame-Options等)。
   // このAppはJSON APIのみを返すためcontentSecurityPolicy/hstsは無効化し、静的サイト側はvercel.jsonで別途設定する。
@@ -50,14 +60,36 @@ export function createApp(): Express {
 
   // 外部の代理店システムからのサーバー間API連携。Cookie/Originに依存しないAPIキー認証のため、
   // ブラウザCookieセッション向けのOrigin検証(requireSameOrigin)より前に登録する(仕様書外の拡張)。
-  // 残課題指示書Stage12: APIキーは呼び出し元全体で共有される1本のため、対象識別子はIPのみとする。
-  const agencyIntegrationLimiter = dbRateLimit({
+  // 本番安定化指示書Stage3(6.6「外部API」): IP制限をAPIキー認証より前段に置くことで、
+  // 誤ったAPIキーを大量に試すこと自体をAPIキー検証(DB参照を伴う)へ到達させる前に弾く。
+  // APIキー認証後は、APIキー自体を識別子とした2段目の制限も掛ける(APIキーは呼び出し元全体で
+  // 共有される1本のため、IP単独の制限だけでは正規の呼び出し元が複数IPを使う場合に弱い)。
+  const agencyIntegrationIpLimiter = dbRateLimit({
     windowMs: 60 * 1000,
-    limit: 60,
-    scope: 'agency-integration',
+    limit: 120,
+    scope: 'agency-integration-ip',
     errorFormat: 'integration',
   });
-  app.use('/api/integrations/agencies', requireAgencyApiKey, agencyIntegrationLimiter, integrationAgenciesRouter);
+  const agencyIntegrationKeyLimiter = dbRateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    scope: 'agency-integration-key',
+    errorFormat: 'integration',
+    includeCombinedBucket: false,
+    includeIpBucket: false,
+    identify: (req) => {
+      const bearerMatch = req.header('authorization')?.match(/^Bearer (.+)$/);
+      const provided = req.header('x-api-key') ?? bearerMatch?.[1];
+      return typeof provided === 'string' && provided.length > 0 ? hashRateLimitIdentifier(provided) : undefined;
+    },
+  });
+  app.use(
+    '/api/integrations/agencies',
+    agencyIntegrationIpLimiter,
+    requireAgencyApiKey,
+    agencyIntegrationKeyLimiter,
+    integrationAgenciesRouter,
+  );
 
   // Vercel Cronからの呼び出し。Cookie/Originに依存しないため同様にrequireSameOriginより前段に置く(仕様書外の拡張)。
   app.use('/api/internal/cron', requireCronSecret, internalCronRouter);

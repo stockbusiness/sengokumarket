@@ -7,6 +7,7 @@ import { processNftMints } from '../services/nftMintProcessing';
 import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispatcher';
 import { dispatchPendingNotifications } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 import { processOrderLinkingJobs } from '../services/orderLinkingJobDispatcher';
+import { cleanupStaleRateLimitBuckets } from '../services/rateLimiter';
 
 const router = Router();
 
@@ -78,6 +79,18 @@ router.get('/process-notification-outbox', async (_req, res) => {
 router.get('/process-order-linking-jobs', async (_req, res) => {
   try {
     const result = await processOrderLinkingJobs();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// 本番安定化指示書Stage3(6.7): 長期間更新のないrate_limit_buckets行を掃除する。
+// 日次で十分(レート制限ウィンドウ自体は分〜時間単位で、7日以上更新がなければ既に無関係)。
+router.get('/cleanup-rate-limit-buckets', async (_req, res) => {
+  try {
+    const result = await cleanupStaleRateLimitBuckets();
     res.json(result);
   } catch (e) {
     if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);

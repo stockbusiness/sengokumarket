@@ -42,6 +42,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: echo "SETTINGS_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      - run: echo "RATE_LIMIT_HASH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npx prisma migrate deploy
         working-directory: server

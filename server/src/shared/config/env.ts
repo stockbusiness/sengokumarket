@@ -1,12 +1,23 @@
 // 起動必須の環境変数(指示書10.1・残課題指示書Stage1)。Stripe/Resend/外部代理店システム等の
 // 秘密情報はDB(settingsテーブル、services/settings.ts)で暗号化管理するため、ここには含めない
 // (CLAUDE.md「環境変数」章・.env.example参照)。
-const REQUIRED_ENV_VARS = ['DATABASE_URL', 'JWT_SECRET', 'APP_URL', 'TERMS_VERSION', 'SETTINGS_ENCRYPTION_KEY'] as const;
+const REQUIRED_ENV_VARS = [
+  'DATABASE_URL',
+  'JWT_SECRET',
+  'APP_URL',
+  'TERMS_VERSION',
+  'SETTINGS_ENCRYPTION_KEY',
+  'RATE_LIMIT_HASH_SECRET',
+] as const;
 
 const MIN_JWT_SECRET_LENGTH = 32;
 // 既知のプレースホルダー・デフォルト値をそのまま本番で使ってしまう事故を防ぐ(小文字比較)。
 const KNOWN_DEFAULT_JWT_SECRETS = new Set(['secret', 'changeme', 'change-me', 'your-secret-key', 'test', 'password', 'jwt-secret']);
 const HEX64_RE = /^[0-9a-fA-F]{64}$/;
+// 本番安定化指示書Stage3(6.3「identifier保護」)向け: レート制限bucket_keyへメールアドレス・
+// クーポンコード・紹介コード等を平文で保存しないためのHMAC鍵。JWT_SECRETと同じ最小長・
+// 既知デフォルト値チェックを適用する。
+const MIN_RATE_LIMIT_HASH_SECRET_LENGTH = 32;
 
 // 各検証は「不正である」ことだけを変数名と共に返し、実際の値(秘密情報を含みうる)は
 // 一切メッセージへ含めない(残課題指示書Stage1「エラーに秘密値そのものを出力しない」)。
@@ -54,6 +65,16 @@ function validateTermsVersion(value: string): string | null {
   return value.trim().length === 0 ? 'TERMS_VERSIONを空文字にすることはできません' : null;
 }
 
+function validateRateLimitHashSecret(value: string): string | null {
+  if (value.length < MIN_RATE_LIMIT_HASH_SECRET_LENGTH) {
+    return `RATE_LIMIT_HASH_SECRETは${MIN_RATE_LIMIT_HASH_SECRET_LENGTH}文字以上である必要があります`;
+  }
+  if (KNOWN_DEFAULT_JWT_SECRETS.has(value.toLowerCase())) {
+    return 'RATE_LIMIT_HASH_SECRETに既知のデフォルト値が設定されています';
+  }
+  return null;
+}
+
 // 本番安定化指示書Stage0(/api/ready)向け: プロセスを落とさずに検証結果だけを得たい
 // 呼び出し元のために、assertRequiredEnvから例外送出を分離した非throw版。
 export function collectRequiredEnvErrors(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -69,6 +90,7 @@ export function collectRequiredEnvErrors(env: NodeJS.ProcessEnv = process.env): 
     validateSettingsEncryptionKey(env.SETTINGS_ENCRYPTION_KEY!),
     validateDatabaseUrl(env.DATABASE_URL!),
     validateTermsVersion(env.TERMS_VERSION!),
+    validateRateLimitHashSecret(env.RATE_LIMIT_HASH_SECRET!),
   ].filter((e): e is string => e !== null);
 }
 

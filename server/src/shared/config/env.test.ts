@@ -7,6 +7,7 @@ const COMPLETE_ENV = {
   APP_URL: 'https://example.com',
   TERMS_VERSION: '2026-01-01',
   SETTINGS_ENCRYPTION_KEY: 'a'.repeat(64),
+  RATE_LIMIT_HASH_SECRET: 'a-sufficiently-long-rate-limit-hash-secret-for-tests',
 } as NodeJS.ProcessEnv;
 
 describe('assertRequiredEnv', () => {
@@ -71,6 +72,12 @@ describe('assertRequiredEnv', () => {
 
   it('TERMS_VERSIONが空白のみだとエラーになる', () => {
     expect(() => assertRequiredEnv({ ...COMPLETE_ENV, TERMS_VERSION: '   ' })).toThrowError(/TERMS_VERSION/);
+  });
+
+  it('RATE_LIMIT_HASH_SECRETが短すぎるとエラーになる', () => {
+    expect(() => assertRequiredEnv({ ...COMPLETE_ENV, RATE_LIMIT_HASH_SECRET: 'short' })).toThrowError(
+      /RATE_LIMIT_HASH_SECRET/,
+    );
   });
 
   it('エラーメッセージに実際の秘密値そのものを含まない', () => {

@@ -21,6 +21,9 @@ export const appConfig = {
   get settingsEncryptionKeyHex(): string | undefined {
     return process.env.SETTINGS_ENCRYPTION_KEY;
   },
+  get rateLimitHashSecret(): string | undefined {
+    return process.env.RATE_LIMIT_HASH_SECRET;
+  },
   get cronSecret(): string | undefined {
     return process.env.CRON_SECRET;
   },
