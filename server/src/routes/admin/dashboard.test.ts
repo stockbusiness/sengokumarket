@@ -2,8 +2,79 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent } from '../../test/adminAgent';
+import { enqueueNotification } from '../../modules/notifications/infrastructure/notificationOutbox.repository';
+import { enqueueCommonUserResolveJob } from '../../services/orderLinkingJobs';
+import { enqueueOutboxEvent } from '../../services/integrationOutbox';
 
 const app = createApp();
+
+// 本番安定化指示書Stage11(14.3「アラート」): ダッシュボードのdead/blocked件数。
+describe('管理API: ダッシュボードアラート件数(本番安定化指示書Stage11)', () => {
+  const userIds: string[] = [];
+  const notificationRecipients: string[] = [];
+  const outboxCorrelationId = `dashboard-alerts-test-${Date.now()}`;
+
+  afterAll(async () => {
+    await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { in: notificationRecipients } } });
+    await prisma.orderLinkingJob.deleteMany({ where: { userId: { in: userIds } } });
+    await prisma.user.deleteMany({ where: { id: { in: userIds } } });
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: outboxCorrelationId } });
+    await prisma.$disconnect();
+  });
+
+  it('dead/blocked状態の各件数がalertsへ反映される', async () => {
+    const recipient = `dashboard-alerts-notif-test-${Date.now()}@example.com`;
+    notificationRecipients.push(recipient);
+    await prisma.$transaction((tx) => enqueueNotification(tx, { eventType: 'agency_access_granted', recipient, payload: { name: 'テスト代理店' } }));
+    const notif = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { recipient } });
+    await prisma.notificationOutboxEvent.update({ where: { id: notif.id }, data: { status: 'dead' } });
+
+    const user = await prisma.user.create({
+      data: {
+        name: 'ダッシュボードアラートテスト',
+        email: `dashboard-alerts-user-test-${Date.now()}@example.com`,
+        passwordHash: 'x',
+      },
+    });
+    userIds.push(user.id);
+    const linkingJob = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+    await prisma.orderLinkingJob.update({ where: { id: linkingJob.id }, data: { status: 'dead' } });
+
+    const conflictUser = await prisma.user.create({
+      data: {
+        name: 'ダッシュボードアラート競合テスト',
+        email: `dashboard-alerts-conflict-test-${Date.now()}@example.com`,
+        passwordHash: 'x',
+      },
+    });
+    userIds.push(conflictUser.id);
+    const conflictJob = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: conflictUser.id }));
+    await prisma.orderLinkingJob.update({
+      where: { id: conflictJob.id },
+      data: { status: 'blocked', blockedReason: 'common_user_id_conflict' },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'sengoku-passport',
+        payload: {},
+        correlationId: outboxCorrelationId,
+      });
+    });
+    const outboxEvent = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: outboxCorrelationId } });
+    await prisma.integrationOutboxEvent.update({ where: { id: outboxEvent.id }, data: { status: 'dead' } });
+
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/dashboard');
+    expect(res.status).toBe(200);
+    expect(res.body.alerts.deadNotificationCount).toBeGreaterThanOrEqual(1);
+    expect(res.body.alerts.deadLinkingJobCount).toBeGreaterThanOrEqual(1);
+    expect(res.body.alerts.deadIntegrationEventCount).toBeGreaterThanOrEqual(1);
+    expect(res.body.alerts.commonIdConflictCount).toBeGreaterThanOrEqual(1);
+    expect(res.body.alerts.migrationReadinessError).toBe(false);
+  });
+});
 
 describe('管理API: ダッシュボード月別売上推移(仕様書外の拡張)', () => {
   const orderIds: string[] = [];

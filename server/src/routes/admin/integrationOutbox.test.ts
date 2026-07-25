@@ -106,6 +106,58 @@ describe('管理API: 連携Outbox一覧(仕様書外の拡張・千ノ国全体�
   });
 });
 
+// 本番安定化指示書Stage11(14.1「Integration Attempts」・14.4「試行履歴を確認可能」)。
+describe('管理API: 連携Outbox試行履歴(本番安定化指示書Stage11)', () => {
+  const correlationId = `integration-outbox-attempts-test-${Date.now()}`;
+
+  afterAll(async () => {
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId } });
+    await prisma.$disconnect();
+  });
+
+  it('試行履歴が無いイベントは空配列を返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, { eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport', payload: {}, correlationId });
+    });
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+
+    const res = await agent.get(`/api/admin/integration-outbox/${row.id}/attempts`);
+    expect(res.status).toBe(200);
+    expect(res.body.attempts).toEqual([]);
+  });
+
+  it('試行履歴があれば attempt_number 昇順で返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    await prisma.integrationEventAttempt.createMany({
+      data: [
+        { outboxEventId: row.id, attemptNumber: 2, startedAt: new Date(), result: 'failed', error: '2回目失敗' },
+        { outboxEventId: row.id, attemptNumber: 1, startedAt: new Date(), result: 'failed', error: '1回目失敗' },
+      ],
+    });
+
+    const res = await agent.get(`/api/admin/integration-outbox/${row.id}/attempts`);
+    expect(res.status).toBe(200);
+    expect(res.body.attempts).toHaveLength(2);
+    expect(res.body.attempts[0].attemptNumber).toBe(1);
+    expect(res.body.attempts[1].attemptNumber).toBe(2);
+
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: row.id } });
+  });
+
+  it('存在しないイベントIDは404', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/integration-outbox/00000000-0000-0000-0000-000000000000/attempts');
+    expect(res.status).toBe(404);
+  });
+
+  it('未認証は401になる', async () => {
+    const res = await request(app).get('/api/admin/integration-outbox/00000000-0000-0000-0000-000000000000/attempts');
+    expect(res.status).toBe(401);
+  });
+});
+
 // 残課題指示書Stage7・9.2「手動再送」。
 describe('管理API: 連携Outbox手動再送(残課題指示書Stage7)', () => {
   const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;

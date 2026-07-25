@@ -22,8 +22,12 @@ router.get('/order-linking-jobs', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
   }
 
+  // 本番安定化指示書Stage11(14.1「External Identity conflicts」画面): common_user_id_conflict
+  // で止まっているジョブだけを一覧できるようにする(PR-10で追加されたblocked理由)。
+  const blockedReason = typeof req.query.blockedReason === 'string' ? req.query.blockedReason : undefined;
+
   const { page, pageSize, skip, take } = parsePagination(req.query);
-  const where = status ? { status } : undefined;
+  const where = { ...(status ? { status } : {}), ...(blockedReason ? { blockedReason } : {}) };
   const [jobs, total] = await Promise.all([
     prisma.orderLinkingJob.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }),
     prisma.orderLinkingJob.count({ where }),

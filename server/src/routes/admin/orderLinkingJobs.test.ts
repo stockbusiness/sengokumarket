@@ -79,6 +79,29 @@ describe('管理API: order-linking-jobs一覧(本番安定化指示書Stage5)', 
     expect(found.blockedReason).toBe('common_user_unresolved');
   });
 
+  // 本番安定化指示書Stage11(14.1「External Identity conflicts」画面)。
+  it('blockedReasonクエリで絞り込める(common_user_id_conflictのみ抽出等)', async () => {
+    const { agent } = await createAdminAgent(app);
+    const conflictUser = await createLinkingUser('conflict-filter');
+    const unresolvedUser = await createLinkingUser('unresolved-filter');
+    createdUserIds.push(conflictUser.id, unresolvedUser.id);
+    const conflictJob = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: conflictUser.id }));
+    const unresolvedJob = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: unresolvedUser.id }));
+    await prisma.orderLinkingJob.update({
+      where: { id: conflictJob.id },
+      data: { status: 'blocked', blockedReason: 'common_user_id_conflict' },
+    });
+    await prisma.orderLinkingJob.update({
+      where: { id: unresolvedJob.id },
+      data: { status: 'blocked', blockedReason: 'common_user_unresolved' },
+    });
+
+    const res = await agent.get('/api/admin/order-linking-jobs?blockedReason=common_user_id_conflict');
+    expect(res.status).toBe(200);
+    expect(res.body.jobs.some((j: { id: string }) => j.id === conflictJob.id)).toBe(true);
+    expect(res.body.jobs.some((j: { id: string }) => j.id === unresolvedJob.id)).toBe(false);
+  });
+
   it('不正なstatusは400になる', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent.get('/api/admin/order-linking-jobs?status=not_a_status');

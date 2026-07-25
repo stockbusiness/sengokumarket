@@ -1,5 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
+import { collectRequiredEnvErrors } from '../../shared/config/env';
+import { checkDatabaseHealth, checkMigrationsHealth } from '../../services/readinessCheck';
 
 const router = Router();
 
@@ -15,6 +17,11 @@ router.get('/dashboard', async (_req, res) => {
     pendingCommissionAgg,
     partialRefundCount,
     commissionRecoveryCount,
+    deadNotificationCount,
+    deadLinkingJobCount,
+    deadIntegrationEventCount,
+    blockedIntegrationEventCount,
+    commonIdConflictCount,
   ] = await Promise.all([
     prisma.order.aggregate({ where: { paymentStatus: 'paid' }, _sum: { totalAmount: true } }),
     prisma.order.count(),
@@ -29,7 +36,20 @@ router.get('/dashboard', async (_req, res) => {
     prisma.commission.aggregate({ where: { status: 'pending' }, _sum: { commissionAmount: true } }),
     prisma.order.count({ where: { adminNote: { contains: '一部返金検知' } } }),
     prisma.commission.count({ where: { adminNote: { contains: '要回収' } } }),
+    // 本番安定化指示書Stage11(14.3「アラート」): DB直接操作しなくても異常に気づけるようにする。
+    prisma.notificationOutboxEvent.count({ where: { status: 'dead' } }),
+    prisma.orderLinkingJob.count({ where: { status: 'dead' } }),
+    prisma.integrationOutboxEvent.count({ where: { status: 'dead' } }),
+    prisma.integrationOutboxEvent.count({ where: { status: 'blocked' } }),
+    prisma.orderLinkingJob.count({ where: { status: 'blocked', blockedReason: 'common_user_id_conflict' } }),
   ]);
+
+  // migration/readiness errorは/api/readyと同じロジックで判定する(DB接続確認は上のPromise.all内で
+  // 別途行っているため二重にならないよう、ここでは軽量にenv/migrationのみ確認する)。
+  const envErrors = collectRequiredEnvErrors();
+  const databaseHealth = await checkDatabaseHealth();
+  const migrationsHealth = databaseHealth.ok ? await checkMigrationsHealth() : { ok: false };
+  const migrationReadinessError = envErrors.length > 0 || !databaseHealth.ok || !migrationsHealth.ok;
 
   const agencyTop5Raw = await prisma.order.groupBy({
     by: ['agencyId'],
@@ -66,6 +86,12 @@ router.get('/dashboard', async (_req, res) => {
     alerts: {
       partialRefundCount,
       commissionRecoveryCount,
+      deadNotificationCount,
+      deadLinkingJobCount,
+      deadIntegrationEventCount,
+      blockedIntegrationEventCount,
+      commonIdConflictCount,
+      migrationReadinessError,
     },
   });
 });

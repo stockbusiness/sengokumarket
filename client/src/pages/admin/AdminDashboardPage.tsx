@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { fetchAdminDashboard, fetchAdminSalesTrend, type AdminDashboard, type SalesTrendMonth } from '../../lib/adminApi';
 import { IconBadge, IconReceipt, IconWallet, IconYen } from '../../components/icons';
 
@@ -37,6 +38,12 @@ export default function AdminDashboardPage() {
   if (!data) return <p>読み込み中です...</p>;
 
   const alertTotal = data.alerts.partialRefundCount + data.alerts.commissionRecoveryCount;
+  const integrationAlertTotal =
+    data.alerts.deadNotificationCount +
+    data.alerts.deadLinkingJobCount +
+    data.alerts.deadIntegrationEventCount +
+    data.alerts.blockedIntegrationEventCount +
+    data.alerts.commonIdConflictCount;
 
   return (
     <div>
@@ -47,6 +54,48 @@ export default function AdminDashboardPage() {
           <h2>要対応アラート</h2>
           {data.alerts.partialRefundCount > 0 && <p>一部返金検知: {data.alerts.partialRefundCount}件</p>}
           {data.alerts.commissionRecoveryCount > 0 && <p>報酬要回収: {data.alerts.commissionRecoveryCount}件</p>}
+        </div>
+      )}
+
+      {/* 本番安定化指示書Stage11(14.3「アラート」)。 */}
+      {(integrationAlertTotal > 0 || data.alerts.migrationReadinessError) && (
+        <div className="admin-alert">
+          <h2>外部連携・本番稼働アラート</h2>
+          {data.alerts.migrationReadinessError && (
+            <p>
+              本番の環境変数・DB migration適用状況に問題があります(<code>/api/ready</code>を確認してください)
+            </p>
+          )}
+          {data.alerts.deadNotificationCount > 0 && (
+            <p>
+              通知送信のdead件数: {data.alerts.deadNotificationCount}件(
+              <Link to="/admin/notification-outbox">通知Outboxを確認</Link>)
+            </p>
+          )}
+          {data.alerts.deadLinkingJobCount > 0 && (
+            <p>
+              共通ID・紹介連携ジョブのdead件数: {data.alerts.deadLinkingJobCount}件(
+              <Link to="/admin/order-linking-jobs">Order Linking Jobsを確認</Link>)
+            </p>
+          )}
+          {data.alerts.deadIntegrationEventCount > 0 && (
+            <p>
+              外部連携送信のdead件数: {data.alerts.deadIntegrationEventCount}件(
+              <Link to="/admin/integration-outbox">Integration Outboxを確認</Link>)
+            </p>
+          )}
+          {data.alerts.blockedIntegrationEventCount > 0 && (
+            <p>
+              外部連携送信の保留(blocked)件数: {data.alerts.blockedIntegrationEventCount}件(
+              <Link to="/admin/integration-outbox">Integration Outboxを確認</Link>)
+            </p>
+          )}
+          {data.alerts.commonIdConflictCount > 0 && (
+            <p>
+              共通ID競合件数: {data.alerts.commonIdConflictCount}件(
+              <Link to="/admin/external-identity-conflicts">共通ID競合一覧を確認</Link>)
+            </p>
+          )}
         </div>
       )}
 

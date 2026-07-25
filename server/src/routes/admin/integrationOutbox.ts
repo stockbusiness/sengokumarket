@@ -26,6 +26,19 @@ router.get('/integration-outbox', async (req, res) => {
   res.json({ outboxEvents: events, total, page, pageSize });
 });
 
+// 本番安定化指示書Stage11(14.1「Integration Attempts」・14.4「試行履歴を確認可能」):
+// 個別イベントの送信試行履歴(integration_event_attempts)をDB直接操作なしで確認できるようにする。
+router.get('/integration-outbox/:id/attempts', async (req, res) => {
+  const event = await prisma.integrationOutboxEvent.findUnique({ where: { id: req.params.id } });
+  if (!event) return sendError(res, 404, 'NOT_FOUND', 'イベントが見つかりません');
+
+  const attempts = await prisma.integrationEventAttempt.findMany({
+    where: { outboxEventId: req.params.id },
+    orderBy: { attemptNumber: 'asc' },
+  });
+  res.json({ attempts });
+});
+
 // 残課題指示書Stage7・9.2「手動再送」: dead/failed/blocked/pendingイベントの手動再送。
 router.post('/integration-outbox/:id/retry', async (req, res) => {
   const result = await retryOutboxEvent(req.params.id);

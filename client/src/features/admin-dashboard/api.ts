@@ -10,7 +10,17 @@ export interface AdminDashboard {
   referralSales: number;
   agencyTop5: { agencyId: string; agencyName: string; totalSales: number }[];
   pendingCommissionTotal: number;
-  alerts: { partialRefundCount: number; commissionRecoveryCount: number };
+  alerts: {
+    partialRefundCount: number;
+    commissionRecoveryCount: number;
+    // 本番安定化指示書Stage11(14.3「アラート」)。
+    deadNotificationCount: number;
+    deadLinkingJobCount: number;
+    deadIntegrationEventCount: number;
+    blockedIntegrationEventCount: number;
+    commonIdConflictCount: number;
+    migrationReadinessError: boolean;
+  };
 }
 
 export function fetchAdminDashboard() {

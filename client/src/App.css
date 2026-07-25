@@ -870,6 +870,13 @@
   margin-bottom: 12px;
 }
 
+/* 本番安定化指示書Stage11: 一覧テーブル内の補足情報(イベント種別・送信先等)向けの小さな
+   グレー文字。既存のadmin-pagination等と同じtext-mutedトークンを流用する。 */
+.admin-muted {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 .admin-content th,
 .admin-content td {
   padding: 10px 12px;

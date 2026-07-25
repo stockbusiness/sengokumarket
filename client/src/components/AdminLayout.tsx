@@ -24,7 +24,7 @@ import {
 } from './icons';
 import type { ComponentType, SVGProps } from 'react';
 
-type BadgeKey = 'walletMissing' | 'alerts';
+type BadgeKey = 'walletMissing' | 'alerts' | 'integrationAlerts' | 'commonIdConflicts';
 type IconType = ComponentType<SVGProps<SVGSVGElement>>;
 
 const NAV_GROUPS: {
@@ -68,21 +68,53 @@ const NAV_GROUPS: {
       { to: '/admin/admin-users', label: '管理者アカウント', icon: IconUser, muted: true, staffHidden: true },
     ],
   },
+  {
+    // 本番安定化指示書Stage11(14章): 外部連携(千ノ国全体連携)の運用・監視画面。
+    // 現時点ではSENNOKUNI_INTEGRATION_ENABLED=falseのdormant機能のため、日次業務には不要。
+    heading: '外部連携・監視',
+    items: [
+      { to: '/admin/integration-preflight', label: '連携Preflight・段階設定', icon: IconGear, staffHidden: true },
+      { to: '/admin/integration-outbox', label: 'Integration Outbox', icon: IconChart, badgeKey: 'integrationAlerts', staffHidden: true },
+      { to: '/admin/order-linking-jobs', label: 'Order Linking Jobs', icon: IconLink, staffHidden: true },
+      {
+        to: '/admin/external-identity-conflicts',
+        label: '共通ID競合',
+        icon: IconUser,
+        badgeKey: 'commonIdConflicts',
+        staffHidden: true,
+      },
+      { to: '/admin/wallet-transactions', label: 'OVEウォレット取引履歴', icon: IconWallet, staffHidden: true },
+      { to: '/admin/integration-rules', label: '商品連携ルール一覧', icon: IconBox, staffHidden: true },
+      { to: '/admin/notification-outbox', label: '通知Outbox', icon: IconMegaphone, muted: true, staffHidden: true },
+    ],
+  },
 ];
 
 export default function AdminLayout() {
   const { user } = useAuth();
   const [walletMissingCount, setWalletMissingCount] = useState(0);
   const [alertCount, setAlertCount] = useState(0);
+  const [integrationAlertCount, setIntegrationAlertCount] = useState(0);
+  const [commonIdConflictCount, setCommonIdConflictCount] = useState(0);
 
   useEffect(() => {
     fetchAdminDashboard().then((d) => {
       setWalletMissingCount(d.walletMissingCount);
       setAlertCount(d.alerts.partialRefundCount + d.alerts.commissionRecoveryCount);
+      // 本番安定化指示書Stage11(14.3「アラート」)。
+      setIntegrationAlertCount(
+        d.alerts.deadNotificationCount + d.alerts.deadLinkingJobCount + d.alerts.deadIntegrationEventCount + d.alerts.blockedIntegrationEventCount,
+      );
+      setCommonIdConflictCount(d.alerts.commonIdConflictCount);
     });
   }, []);
 
-  const badgeCounts: Record<BadgeKey, number> = { walletMissing: walletMissingCount, alerts: alertCount };
+  const badgeCounts: Record<BadgeKey, number> = {
+    walletMissing: walletMissingCount,
+    alerts: alertCount,
+    integrationAlerts: integrationAlertCount,
+    commonIdConflicts: commonIdConflictCount,
+  };
   // RequireAdminの内側でのみ描画される(=roleはadmin/admin_viewer/staffのいずれか)ため、
   // !canAccessFullAdminはstaffと同義になる。
   const isStaff = !!user && !canAccessFullAdmin(user.role);

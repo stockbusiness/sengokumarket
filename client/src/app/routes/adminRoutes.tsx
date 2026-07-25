@@ -22,6 +22,13 @@ const AdminSettingsPage = lazyWithReload(() => import('../../pages/admin/AdminSe
 const AdminLegalPage = lazyWithReload(() => import('../../pages/admin/AdminLegalPage'));
 const AdminAuditLogsPage = lazyWithReload(() => import('../../pages/admin/AdminAuditLogsPage'));
 const AdminUsersPage = lazyWithReload(() => import('../../pages/admin/AdminUsersPage'));
+const AdminNotificationOutboxPage = lazyWithReload(() => import('../../pages/admin/AdminNotificationOutboxPage'));
+const AdminOrderLinkingJobsPage = lazyWithReload(() => import('../../pages/admin/AdminOrderLinkingJobsPage'));
+const AdminIntegrationOutboxPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationOutboxPage'));
+const AdminIntegrationRulesOverviewPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationRulesOverviewPage'));
+const AdminExternalIdentityConflictsPage = lazyWithReload(() => import('../../pages/admin/AdminExternalIdentityConflictsPage'));
+const AdminWalletTransactionsPage = lazyWithReload(() => import('../../pages/admin/AdminWalletTransactionsPage'));
+const AdminIntegrationPreflightPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationPreflightPage'));
 
 // 管理画面(/admin)。日次業務系(staffも利用可)とadmin/admin_viewer専用機能に分かれる
 // (どの機能がstaffに公開されるかはAdminLayoutのNAV_GROUPS.staffHiddenと、各RouteのRequireFullAdmin
@@ -107,6 +114,64 @@ export function adminRoutes() {
         element={
           <RequireFullAdmin>
             <AdminUsersPage />
+          </RequireFullAdmin>
+        }
+      />
+      {/* 本番安定化指示書Stage11(14.1「管理・監視画面」): 外部連携の運用・監視系はstaffには
+          公開しない(AdminLayoutのNAV_GROUPS.staffHiddenと対応)。 */}
+      <Route
+        path="notification-outbox"
+        element={
+          <RequireFullAdmin>
+            <AdminNotificationOutboxPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="order-linking-jobs"
+        element={
+          <RequireFullAdmin>
+            <AdminOrderLinkingJobsPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="external-identity-conflicts"
+        element={
+          <RequireFullAdmin>
+            <AdminExternalIdentityConflictsPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="integration-outbox"
+        element={
+          <RequireFullAdmin>
+            <AdminIntegrationOutboxPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="integration-rules"
+        element={
+          <RequireFullAdmin>
+            <AdminIntegrationRulesOverviewPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="wallet-transactions"
+        element={
+          <RequireFullAdmin>
+            <AdminWalletTransactionsPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="integration-preflight"
+        element={
+          <RequireFullAdmin>
+            <AdminIntegrationPreflightPage />
           </RequireFullAdmin>
         }
       />

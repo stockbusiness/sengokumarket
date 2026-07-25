@@ -49,6 +49,17 @@ function validateRuleInput(body: RuleInput): string | null {
   return null;
 }
 
+// 本番安定化指示書Stage11(14.1「Product Integration Rules」画面): 商品編集画面(9.5)は
+// 1商品ずつの設定・確認だが、監視画面としては全商品を横断して連携ルールを一覧できる必要がある。
+// 編集はここでは行わず、商品編集画面(9.5)への導線のみ提供する。
+router.get('/product-integration-rules', async (_req, res) => {
+  const rules = await prisma.productIntegrationRule.findMany({
+    orderBy: { createdAt: 'desc' },
+    include: { product: { select: { id: true, name: true } } },
+  });
+  res.json({ rules });
+});
+
 router.get('/products/:productId/integration-rules', async (req, res) => {
   const product = await prisma.product.findUnique({ where: { id: req.params.productId } });
   if (!product) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');

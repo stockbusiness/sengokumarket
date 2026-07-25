@@ -219,3 +219,34 @@ describe('管理API: 商品連携ルール(product_integration_rules)(本番安�
     expect(createRes.body.error.code).toBe('READONLY_ADMIN');
   });
 });
+
+// 本番安定化指示書Stage11(14.1「Product Integration Rules」監視画面): 全商品横断の一覧。
+describe('管理API: 商品連携ルール全件一覧(本番安定化指示書Stage11)', () => {
+  const createdProductIds: string[] = [];
+
+  afterAll(async () => {
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: { in: createdProductIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('管理者は全商品分の連携ルールを商品名付きで取得できる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('global-list');
+    createdProductIds.push(product.id);
+    const rule = await prisma.productIntegrationRule.create({
+      data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet' },
+    });
+
+    const res = await agent.get('/api/admin/product-integration-rules');
+    expect(res.status).toBe(200);
+    const found = res.body.rules.find((r: { id: string }) => r.id === rule.id);
+    expect(found).toBeTruthy();
+    expect(found.product.name).toBe(product.name);
+  });
+
+  it('未認証は401になる', async () => {
+    const res = await request(app).get('/api/admin/product-integration-rules');
+    expect(res.status).toBe(401);
+  });
+});
