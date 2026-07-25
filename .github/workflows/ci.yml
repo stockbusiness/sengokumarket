@@ -2,11 +2,10 @@ name: CI
 
 on:
   push:
-    # 2026-07-22指示書Stage5: 実際のGitHub既定ブランチ/唯一の開発ブランチはmainではなく
-    # claude/confirmation-needed-3wicjuであり、push対象がmainのみだとCIが一度も実行されない
-    # (実際にGitHub Actionsの実行回数が0件であることを確認済み)。mainブランチ運用への正式統一は
-    # Vercel Production Branch・GitHub既定ブランチ・branch protectionの変更を伴うため別途判断が
-    # 必要だが、それまでの暫定対応として現行ブランチをpushトリガーに追加する。
+    # 本番安定化指示書Stage12(15.2): mainブランチを作成済みだが、GitHub既定ブランチ・
+    # Vercel Production Branch・branch protectionの切り替えは実際の管理者権限操作を伴うため、
+    # 移行が完了するまでの間はclaude/confirmation-needed-3wicju側のpushでもCIを実行し続ける
+    # (切り替え完了後、このブランチ名は削除してよい)。
     branches: [main, claude/confirmation-needed-3wicju]
   pull_request:
 
@@ -46,6 +45,12 @@ jobs:
       - run: npm ci
       - run: npx prisma migrate deploy
         working-directory: server
+      # 本番安定化指示書Stage12(15.3「migration drift check」): schema.prismaに対して
+      # migrationファイルが不足している状態(このリポジトリで実際に発生した本番障害の原因)を
+      # マージ前に検知する。migrationsを再生した結果とschema.prismaが一致しない場合、
+      # --exit-codeにより非ゼロ終了する。
+      - run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
+        working-directory: server
       - run: npx tsx prisma/seed.ts
         working-directory: server
       - run: npx tsc -b --noEmit
@@ -61,7 +66,13 @@ jobs:
       # コンパイル済み@sengoku/contractsをrequireできることを確認する。
       - run: npm run build:contracts
       - run: npm run build --workspace=server
-      - name: dist起動smoke test
+      # 本番安定化指示書Stage12(15.3「Vercel entry import」): api/index.ts(Vercel
+      # サーバーレス関数のエントリポイント)自体が起動時例外なく読み込めることを確認する。
+      # RATE_LIMIT_HASH_SECRET等の必須環境変数が新規追加された際、本番デプロイで初めて
+      # 気づく(今回実際に発生した障害)のではなく、ここで検知できるようにする。
+      - name: Vercel entry (api/index.ts) import check
+        run: npx tsx scripts/ci-check-vercel-entry.mjs
+      - name: dist起動smoke test・critical E2E・Feature Flag false検証
         working-directory: server
         run: |
           node dist/index.js &
@@ -69,14 +80,20 @@ jobs:
           for i in $(seq 1 20); do
             if curl -sf http://localhost:4000/api/health > /dev/null; then
               echo "server started successfully from dist/"
-              kill $SERVER_PID
-              exit 0
+              break
+            fi
+            if [ "$i" -eq 20 ]; then
+              echo "server failed to start from dist/ within timeout"
+              kill $SERVER_PID 2>/dev/null || true
+              exit 1
             fi
             sleep 0.5
           done
-          echo "server failed to start from dist/ within timeout"
+          # 本番安定化指示書Stage12(15.3「追加」): critical E2E・Feature Flag false検証。
+          node scripts/ci-critical-smoke.mjs
+          SMOKE_STATUS=$?
           kill $SERVER_PID 2>/dev/null || true
-          exit 1
+          exit $SMOKE_STATUS
 
   client:
     runs-on: ubuntu-latest
