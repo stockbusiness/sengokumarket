@@ -16,11 +16,13 @@ import mypageRouter from './routes/mypage';
 import adminRouter from './routes/admin';
 import agencyRouter from './routes/agency';
 import integrationAgenciesRouter from './modules/agencies/http/agencyIntegration.routes';
+import walletClaimsRouter from './routes/integrations/walletClaims';
 import internalCronRouter from './routes/internalCron';
 import readyRouter from './routes/ready';
 import { stripeWebhookHandler } from './routes/stripeWebhook';
 import { requireSameOrigin } from './middleware/csrf';
 import { requireAgencyApiKey } from './middleware/integrationAuth';
+import { requireWalletClaimHmac } from './middleware/walletClaimHmac';
 import { requireCronSecret } from './middleware/cronAuth';
 import { dbRateLimit } from './middleware/dbRateLimit';
 import { hashRateLimitIdentifier } from './services/rateLimiter';
@@ -47,6 +49,37 @@ export function createApp(): Express {
   // Stripe Webhookは署名検証に生ボディが必要なため、express.json()より前に
   // express.raw()付きで登録する(仕様書v1.5 7.3参照。事故多発地帯につき順序厳守)。
   app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), stripeWebhookHandler);
+
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)8章: Claim確認APIも
+  // HMAC署名検証に生ボディが必要なため、Stripe Webhookと同様express.json()より前に
+  // express.raw()付きで登録する。IP制限をHMAC検証より前段に置く方針は/api/integrations/agencies
+  // と同じ(6.6「外部API」)。
+  const walletClaimIpLimiter = dbRateLimit({
+    windowMs: 60 * 1000,
+    limit: 120,
+    scope: 'wallet-claim-integration-ip',
+    errorFormat: 'integration',
+  });
+  const walletClaimKeyLimiter = dbRateLimit({
+    windowMs: 60 * 1000,
+    limit: 60,
+    scope: 'wallet-claim-integration-key',
+    errorFormat: 'integration',
+    includeCombinedBucket: false,
+    includeIpBucket: false,
+    identify: (req) => {
+      const keyId = req.header('x-sennokuni-key-id');
+      return keyId ? hashRateLimitIdentifier(keyId) : undefined;
+    },
+  });
+  app.use(
+    '/api/integrations/wallet-claims',
+    express.raw({ type: 'application/json' }),
+    walletClaimIpLimiter,
+    requireWalletClaimHmac,
+    walletClaimKeyLimiter,
+    walletClaimsRouter,
+  );
 
   app.use(express.json());
   app.use(cookieParser());

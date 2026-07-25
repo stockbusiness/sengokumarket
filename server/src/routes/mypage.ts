@@ -5,6 +5,8 @@ import { requireAuth } from '../middleware/auth';
 import { HttpError } from '../lib/httpError';
 import { pushAgencyCandidateToExternalSystem } from '../services/externalAgencySystem';
 import { createWalletVerificationChallenge, verifyAndRegisterWallet } from '../services/walletVerification';
+import { reissueWalletClaimToken } from '../services/walletClaim';
+import { getWalletClaimWebBaseUrl } from '../services/walletClaimConfig';
 
 const router = Router();
 
@@ -19,6 +21,10 @@ router.get('/orders', async (req, res) => {
     orderBy: { createdAt: 'desc' },
   });
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)7章「マイページ状態」。
+  const walletClaims = await prisma.walletClaim.findMany({ where: { orderId: { in: orders.map((o) => o.id) } } });
+  const walletClaimByOrderId = new Map(walletClaims.map((c) => [c.orderId, c]));
+
   res.json({
     orders: orders.map((order) => ({
       id: order.id,
@@ -28,6 +34,10 @@ router.get('/orders', async (req, res) => {
       orderStatus: order.orderStatus,
       paidAt: order.paidAt,
       createdAt: order.createdAt,
+      walletClaim: (() => {
+        const c = walletClaimByOrderId.get(order.id);
+        return c ? { status: c.status, expiresAt: c.expiresAt } : null;
+      })(),
       items: order.orderItems.map((item) => ({
         productName: item.productName,
         variantName: item.variantName,
@@ -50,6 +60,10 @@ router.get('/orders/:id', async (req, res) => {
     return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
   }
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)7章「マイページ状態」。
+  // 生トークンは表示しない(このAPIは状態のみを返す。URLは/wallet-claim/reissueで発行する)。
+  const walletClaim = await prisma.walletClaim.findUnique({ where: { orderId: order.id } });
+
   res.json({
     order: {
       id: order.id,
@@ -67,8 +81,33 @@ router.get('/orders/:id', async (req, res) => {
         unitPrice: item.unitPrice,
         subtotal: item.subtotal,
       })),
+      walletClaim: walletClaim ? { status: walletClaim.status, expiresAt: walletClaim.expiresAt } : null,
     },
   });
+});
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)6・7章: マイページの
+// 「NFTカードを受け取る」/「受取URLを再発行」操作。生トークンは注文確定時のメール以外では
+// 保存されないため、このAPIを呼ぶたびに新しいトークンを発行する(未使用の旧トークンは
+// 自動的に無効化される)。ENABLE_WALLET_CLAIMが無効・対象注文でない・既にCLAIMED以降まで
+// 進んでいる場合はURLを返せない。
+router.post('/orders/:id/wallet-claim/reissue', async (req, res) => {
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== req.authUser!.id) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
+  }
+
+  const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+  if (!token) {
+    return sendError(res, 400, 'WALLET_CLAIM_NOT_REISSUABLE', '受取URLを発行できる状態ではありません');
+  }
+
+  const base = await getWalletClaimWebBaseUrl();
+  if (!base) {
+    return sendError(res, 503, 'WALLET_CLAIM_URL_NOT_CONFIGURED', '受取URLの設定が完了していません');
+  }
+
+  res.json({ url: `${base}/claim/${token}` });
 });
 
 router.get('/nfts', async (req, res) => {

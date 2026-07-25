@@ -5,6 +5,7 @@ import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfill
 import { sendCartAbandonedEmail } from './mailTemplates';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { enqueueEntitlementEvents } from './integrationOutbox';
+import { applyWalletClaimRefundEffects } from './walletClaimRefund';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -47,7 +48,7 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
   // stripe_events登録済みのため、ここで例外を投げるとWebhookが二重処理されずリトライされなくなってしまう
   // (sendPostPaymentEmails内部で例外は握りつぶし済み)。
-  await sendPostPaymentEmails(result.order, result.items);
+  await sendPostPaymentEmails(result.order, result.items, result.walletClaimToken);
 
   // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
   // 上記トランザクション内で既に永続化済み。以前はここでベストエフォートの即時ディスパッチを
@@ -179,6 +180,10 @@ export async function handleChargeRefunded(event: Stripe.Event) {
     const refundedOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
     const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
     await enqueueEntitlementEvents(tx, refundedOrder, orderItems, 'entitlement.revoked');
+
+    // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)16章: WalletClaim/
+    // CollectibleDeliveryの進行段階に応じた取消処理(この注文にWalletClaimがなければno-op)。
+    await applyWalletClaimRefundEffects(tx, refundedOrder);
 
     const commission = await tx.commission.findUnique({ where: { orderId: order.id } });
     if (commission) {

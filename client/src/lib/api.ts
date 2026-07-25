@@ -155,6 +155,11 @@ export function confirmPasswordReset(token: string, newPassword: string) {
   return apiPost<{ ok: boolean }>('/auth/password-reset/confirm', { token, newPassword });
 }
 
+export interface MyWalletClaim {
+  status: string;
+  expiresAt: string;
+}
+
 export interface MyOrder {
   id: string;
   orderNumber: string;
@@ -163,6 +168,7 @@ export interface MyOrder {
   orderStatus: string;
   paidAt: string | null;
   createdAt: string;
+  walletClaim: MyWalletClaim | null;
   items: { productName: string; variantName: string | null; quantity: number; unitPrice: number; subtotal: number }[];
 }
 
@@ -202,6 +208,11 @@ export interface MyOrderDetail extends MyOrder {
 
 export function fetchMyOrder(id: string) {
   return apiFetch<{ order: MyOrderDetail }>(`/mypage/orders/${encodeURIComponent(id)}`);
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)6・7章: 受取URLの発行・再発行。
+export function reissueWalletClaimUrl(orderId: string) {
+  return apiPost<{ url: string }>(`/mypage/orders/${encodeURIComponent(orderId)}/wallet-claim/reissue`, {});
 }
 
 export function fetchMyNftIssues() {

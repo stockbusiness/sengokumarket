@@ -12,6 +12,8 @@ import {
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
 import { grantReward, reverseReward } from './oveWalletRewardClient';
 import { hashOutboxPayload } from './integrationOutbox';
+import { getOveWalletEventsCredentials, isDigitalCollectibleDeliveryEnabled } from './walletClaimConfig';
+import { DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT 9章・2026-07-22指示書対応):
 // integration_outbox_eventsの実送信ディスパッチャ。NFT自動発行の既存cron(nftMintProcessing.ts)と
@@ -158,6 +160,14 @@ async function reconcileEntitlementFields(
     assigned_agency_id: order.assignedAgentCode,
   };
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)18章: ENABLE_DIGITAL_COLLECTIBLE_DELIVERY
+  // (既定false)はSENNOKUNI_INTEGRATION_ENABLEDとは独立したキルスイッチ。後者が有効でも、こちらが
+  // 無効の間はdigital_collectibleイベントを送信せずblockedのまま保留する(WalletClaim・
+  // CollectibleDeliveryの作成自体はこのFlagと無関係に行われる)。
+  if (payload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE && !isDigitalCollectibleDeliveryEnabled()) {
+    return { blockedReason: 'digital_collectible_delivery_disabled', effectivePayload };
+  }
+
   // 本番安定化指示書Stage6(9.2): 1商品に複数ルールを持てるようになったため、product_idではなく
   // enqueue時点でスナップショットしたルールidで再取得する(product_idだけではどのルールに
   // 基づくイベントか一意に特定できない)。
@@ -291,6 +301,9 @@ async function sendAndRecordResult(
           },
         });
       }
+      if (updated.count > 0 && finalPayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE) {
+        await syncCollectibleDeliveryOnSend(tx, event.id, event.eventType, 'succeeded', null);
+      }
     });
     result.succeeded++;
   } catch (e) {
@@ -311,36 +324,51 @@ async function sendAndRecordResult(
       responseBodyExcerpt,
     });
 
+    const isCollectible = effectivePayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE;
+
     if (attemptNumber >= MAX_ATTEMPTS) {
-      await prisma.integrationOutboxEvent.updateMany({
-        where: { id: event.id, status: 'processing', processingToken },
-        data: {
-          status: 'dead',
-          attemptCount: attemptNumber,
-          lastError: message,
-          blockedReason: null,
-          deliveryPayload: effectivePayload as Prisma.InputJsonValue,
-          deliveryPayloadHash,
-          processingToken: null,
-          processingStartedAt: null,
-        },
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.integrationOutboxEvent.updateMany({
+          where: { id: event.id, status: 'processing', processingToken },
+          data: {
+            status: 'dead',
+            attemptCount: attemptNumber,
+            lastError: message,
+            blockedReason: null,
+            deliveryPayload: effectivePayload as Prisma.InputJsonValue,
+            deliveryPayloadHash,
+            processingToken: null,
+            processingStartedAt: null,
+          },
+        });
+        // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)15章「最大試行超過」:
+        // CollectibleDelivery=DEAD(管理者手動再送が必要)。
+        if (updated.count > 0 && isCollectible) {
+          await syncCollectibleDeliveryOnSend(tx, event.id, event.eventType, 'dead', message);
+        }
       });
       result.dead++;
     } else {
       const backoffMinutes = BACKOFF_MINUTES[Math.min(attemptNumber - 1, BACKOFF_MINUTES.length - 1)];
-      await prisma.integrationOutboxEvent.updateMany({
-        where: { id: event.id, status: 'processing', processingToken },
-        data: {
-          status: 'pending',
-          attemptCount: attemptNumber,
-          lastError: message,
-          blockedReason: null,
-          deliveryPayload: effectivePayload as Prisma.InputJsonValue,
-          deliveryPayloadHash,
-          processingToken: null,
-          processingStartedAt: null,
-          nextAttemptAt: new Date(Date.now() + backoffMinutes * 60 * 1000),
-        },
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.integrationOutboxEvent.updateMany({
+          where: { id: event.id, status: 'processing', processingToken },
+          data: {
+            status: 'pending',
+            attemptCount: attemptNumber,
+            lastError: message,
+            blockedReason: null,
+            deliveryPayload: effectivePayload as Prisma.InputJsonValue,
+            deliveryPayloadHash,
+            processingToken: null,
+            processingStartedAt: null,
+            nextAttemptAt: new Date(Date.now() + backoffMinutes * 60 * 1000),
+          },
+        });
+        // 15章「送信失敗」: Outboxはretryを続けつつ、CollectibleDelivery=FAILED・last_error保存。
+        if (updated.count > 0 && isCollectible) {
+          await syncCollectibleDeliveryOnSend(tx, event.id, event.eventType, 'failed', message);
+        }
       });
       result.retrying++;
     }
@@ -380,11 +408,133 @@ async function recordAttempt(input: {
   });
 }
 
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)15章「送付結果」: digital_collectible
+// イベントの送信結果をCollectibleDelivery(NftIssue単位)へ反映する。entitlement.grantedの成功は
+// DELIVERED、entitlement.revokedの成功はREVOKED、失敗はFAILED(Outboxはretryを継続)、
+// 最大試行超過はDEAD(管理者手動再送が必要)。outbox eventのステータス更新と同一トランザクションで
+// 呼ぶことで、片方だけ反映される状態を防ぐ。
+async function syncCollectibleDeliveryOnSend(
+  tx: Prisma.TransactionClient,
+  outboxEventId: string,
+  eventType: string,
+  outcome: 'succeeded' | 'failed' | 'dead',
+  errorMessage: string | null,
+): Promise<void> {
+  const delivery = await tx.collectibleDelivery.findFirst({ where: { outboxEventId } });
+  if (!delivery) return;
+
+  if (outcome === 'failed') {
+    await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'FAILED', lastError: errorMessage } });
+    return;
+  }
+  if (outcome === 'dead') {
+    await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'DEAD', lastError: errorMessage } });
+    return;
+  }
+
+  if (eventType === 'entitlement.revoked') {
+    await tx.collectibleDelivery.update({
+      where: { id: delivery.id },
+      data: { status: 'REVOKED', revokedAt: new Date(), lastError: null },
+    });
+    return;
+  }
+
+  await tx.collectibleDelivery.update({
+    where: { id: delivery.id },
+    data: { status: 'DELIVERED', deliveredAt: new Date(), lastError: null },
+  });
+
+  // 15章「全Delivery成功」: 同じWalletClaimに属する全CollectibleDeliveryがDELIVEREDになったら
+  // WalletClaim=DELIVEREDへ進める。
+  const remaining = await tx.collectibleDelivery.count({
+    where: { walletClaimId: delivery.walletClaimId, status: { not: 'DELIVERED' } },
+  });
+  if (remaining === 0) {
+    await tx.walletClaim.updateMany({
+      where: { id: delivery.walletClaimId, status: 'DELIVERY_PENDING' },
+      data: { status: 'DELIVERED', claimedAt: new Date() },
+    });
+  }
+}
+
 async function sendOutboxEvent(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   if (event.destinationSystemKey === 'ove-wallet') {
+    const payload = event.deliveryPayload as { entitlement_type?: string };
+    // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)14章: 送信先が同じove-walletでも、
+    // entitlement_type=digital_collectibleはreward付与/取消(X-OVE-*方式)ではなく
+    // Common Event API(共通契約 X-SenNoKuni-*方式)へ送る。既存のove_reward経路は変更しない。
+    if (payload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE) {
+      return sendDigitalCollectibleToOveWallet(event, stage);
+    }
     return sendToOveWallet(event, stage);
   }
   return sendViaCommonContract(event, stage);
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)14章: digital_collectible専用の
+// Common Event API送信。sendViaCommonContract(パスポート・AIアート教室向け)と同じ共通契約
+// (X-SenNoKuni-*)署名方式を使うが、宛先path・認証鍵はove_wallet_events_*専用のものを使う。
+// 「業務項目はトップレベルに置き、data内だけに格納しない」(14章)ため、envelopeのdataに加えて
+// 業務項目をトップレベルにも展開する。
+const OVE_WALLET_EVENTS_PATH = '/api/integrations/events';
+
+async function sendDigitalCollectibleToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
+  const credentials = await getOveWalletEventsCredentials();
+  if (!credentials) throw new Error('ove-wallet events HMAC credentials are not configured');
+
+  const payload = event.deliveryPayload as Record<string, unknown> & { common_user_id?: string | null };
+  const method = 'POST';
+  const envelope = {
+    event_id: event.eventId,
+    event_type: event.eventType,
+    event_version: event.eventVersion,
+    occurred_at: event.createdAt.toISOString(),
+    source_system_key: 'sengoku-market',
+    common_user_id: payload.common_user_id ?? null,
+    correlation_id: event.correlationId,
+    ...payload,
+    data: payload,
+  };
+  const rawBody = JSON.stringify(envelope);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const headers = buildSennokuniHeaders({
+    keyId: credentials.keyId,
+    secret: credentials.secret,
+    timestamp,
+    nonce,
+    method,
+    path: OVE_WALLET_EVENTS_PATH,
+    rawBody,
+    eventVersion: event.eventVersion,
+    idempotencyKey: event.eventId,
+    correlationId: event.correlationId ?? undefined,
+  });
+
+  const destinationUrl = `${credentials.baseUrl}${OVE_WALLET_EVENTS_PATH}`;
+
+  if (stage === 'dry_run') {
+    return { destinationUrl, responseBodyExcerpt: '[DRY_RUN] validated only, not sent (digital_collectible)' };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(destinationUrl, { method, headers, body: rawBody, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (e) {
+    throw new OutboxSendError(e instanceof Error ? e.message : String(e), { destinationUrl });
+  }
+
+  const responseBodyExcerpt = await res
+    .text()
+    .then((t) => t.slice(0, 500))
+    .catch(() => null);
+
+  if (!res.ok) {
+    throw new OutboxSendError(`destination returned non-2xx: ${res.status}`, { httpStatus: res.status, destinationUrl, responseBodyExcerpt });
+  }
+
+  return { destinationUrl, responseBodyExcerpt };
 }
 
 // 仕様書外の拡張: OVE Walletはentitlement.granted/revokedという概念を持たず、reward付与・取消

@@ -15,8 +15,8 @@ import {
 import { buildPasswordResetEmail } from '../modules/notifications/templates/passwordReset';
 import { buildWalletReminderEmail } from '../modules/notifications/templates/walletReminder';
 
-export async function sendPurchaseCompleteEmail(order: Order, items: OrderItem[]): Promise<void> {
-  await sendNotification(buildPurchaseCompleteEmail(order, items));
+export async function sendPurchaseCompleteEmail(order: Order, items: OrderItem[], walletClaimToken?: string | null): Promise<void> {
+  await sendNotification(await buildPurchaseCompleteEmail(order, items, walletClaimToken ?? null));
 }
 
 export async function sendBankTransferInstructionsEmail(order: Order, items: OrderItem[], bankInfo: string, expiryDays: number): Promise<void> {

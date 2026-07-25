@@ -197,22 +197,27 @@ model WalletChangeLog {
 }
 
 model Product {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String
-  slug        String   @unique
-  description String?
-  category    String
-  itemType    String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  slug             String   @unique
+  description      String?
+  category         String
+  itemType         String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
   // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
   // direct_allowed = 代理店なしで購入可, agent_required = 販売担当代理店が確定していないと
   // 購入不可, hybrid = 両方可(既存商品はすべてこれで初期化。紹介コードは従来通り任意入力)。
-  salesModel  String   @default("hybrid") @map("sales_model")
-  basePrice   Int      @map("base_price")
-  status      String   @default("draft") // draft | published | archived
+  salesModel       String   @default("hybrid") @map("sales_model")
+  basePrice        Int      @map("base_price")
+  status           String   @default("draft") // draft | published | archived
   // 仕様書外の拡張: 商品画像の複数枚対応。先頭(images[0])を一覧・OGP等のサムネイルとして扱う。
-  images      String[] @default([])
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  images           String[] @default([])
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: 不変のシリアル番号を
+  // 商品単位で発番するための原子カウンタ。UPDATE...RETURNING形式の行ロック更新でのみ
+  // インクリメントする(並行購入でも重複しないようにするため。nft_issues.serial_numberの
+  // 採番元であり、この値自体を直接表示・参照することはない)。
+  nftSerialCounter Int      @default(0) @map("nft_serial_counter")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   variants         ProductVariant[]
   orderItems       OrderItem[]
@@ -253,6 +258,12 @@ model ProductIntegrationRule {
   // 本番安定化指示書Stage6(9.5・9.7): 無効化したルールは送信対象から外す(行を削除せず
   // enabled=falseにするだけで一時停止できるようにする)。既定はtrue(既存の挙動を変えない)。
   enabled                    Boolean  @default(true)
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)11・13章: entitlementType=
+  // 'digital_collectible'の商品のみで使う、カード送付イベント用のメタデータ。他のentitlementType
+  // (ove_reward等)では常にnull。assetCodeはproductCode(汎用の商品コード)とは別に、
+  // カード種別を識別するための千ノ国ウォレット側のコード。
+  assetCode                  String?  @map("asset_code")
+  collectibleRarity          String?  @map("collectible_rarity")
   createdAt                  DateTime @default(now()) @map("created_at")
   updatedAt                  DateTime @updatedAt @map("updated_at")
 
@@ -353,12 +364,13 @@ model Order {
   createdAt                     DateTime  @default(now()) @map("created_at")
   updatedAt                     DateTime  @updatedAt @map("updated_at")
 
-  user        User?        @relation(fields: [userId], references: [id])
-  orderItems  OrderItem[]
-  nftIssues   NftIssue[]
-  commission  Commission?
-  couponUsage CouponUsage?
+  user               User?                    @relation(fields: [userId], references: [id])
+  orderItems         OrderItem[]
+  nftIssues          NftIssue[]
+  commission         Commission?
+  couponUsage        CouponUsage?
   walletTransactions OrderWalletTransaction[]
+  walletClaim        WalletClaim?
 
   @@index([paymentStatus])
   @@index([paidAt])
@@ -378,10 +390,10 @@ model OrderItem {
   subtotal    Int
   createdAt   DateTime @default(now()) @map("created_at")
 
-  order     Order           @relation(fields: [orderId], references: [id])
-  product   Product         @relation(fields: [productId], references: [id])
-  variant   ProductVariant? @relation(fields: [variantId], references: [id])
-  nftIssues NftIssue[]
+  order              Order                    @relation(fields: [orderId], references: [id])
+  product            Product                  @relation(fields: [productId], references: [id])
+  variant            ProductVariant?          @relation(fields: [variantId], references: [id])
+  nftIssues          NftIssue[]
   walletTransactions OrderWalletTransaction[]
 
   @@map("order_items")
@@ -410,6 +422,11 @@ model NftIssue {
   lastError         String?   @map("last_error")
   // このタイムスタンプが未来の間はcronの再試行対象から除外する(指数バックオフ/保留の実現)。
   nextAttemptAt     DateTime? @map("next_attempt_at")
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: マーケット側で発番する
+  // 不変のシリアル番号。digital_collectible対象の行のみ、WalletClaim作成と同一トランザクションで
+  // Product.nftSerialCounterから採番する(付与後は変更しない)。他の(既存の)NFT商品の行は
+  // 引き続きnullのまま(nftMintProcessing.tsが従来通りベストエフォートで別途採番する)。
+  serialNumber      Int?      @map("serial_number")
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
 
@@ -420,9 +437,94 @@ model NftIssue {
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
 
   walletReminderEmails WalletReminderEmail[]
+  collectibleDelivery  CollectibleDelivery?
 
+  @@unique([productId, serialNumber])
   @@index([status])
   @@map("nft_issues")
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)4章: NFT対象商品(digital_collectible)の
+// 購入後、決済確定と同一トランザクションで作成する注文単位のClaim。千ノ国ウォレット側でこのトークンを
+// 使ってログイン・本人確認したうえで、実際のカード送付(CollectibleDelivery)へ進む。
+model WalletClaim {
+  id           String    @id @default(uuid()) @db.Uuid
+  orderId      String    @unique @map("order_id") @db.Uuid
+  // 生トークンはURLにのみ含め、DBにはSHA-256ハッシュだけを保存する(仕様書16章「Token平文保存禁止」)。
+  tokenHash    String    @unique @map("token_hash")
+  status       String    @default("PENDING") // PENDING|CLAIMED|DELIVERY_PENDING|DELIVERED|EXPIRED|REVOKED|ERROR
+  expiresAt    DateTime  @map("expires_at")
+  claimedAt    DateTime? @map("claimed_at")
+  // Claim確認API(POST .../confirm)のリクエストで千ノ国ウォレットから渡された値をスナップショットする。
+  commonUserId String?   @map("common_user_id")
+  oveAccountId String?   @map("ove_account_id")
+  lastError    String?   @map("last_error")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  order      Order                 @relation(fields: [orderId], references: [id])
+  deliveries CollectibleDelivery[]
+  auditLogs  WalletClaimAuditLog[]
+
+  @@map("wallet_claims")
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)5章: NftIssue単位(1枚=1件)の
+// カード送付状況。WalletClaimはorder単位・こちらはNftIssue単位という粒度の違いに対応する。
+model CollectibleDelivery {
+  id            String    @id @default(uuid()) @db.Uuid
+  walletClaimId String    @map("wallet_claim_id") @db.Uuid
+  nftIssueId    String    @unique @map("nft_issue_id") @db.Uuid
+  // entitlement_id = NftIssue.id(仕様書5章)。NftIssue単位Outboxのpayload・
+  // 千ノ国ウォレット側の突合キーとして文字列のまま独立保持する。
+  entitlementId String    @unique @map("entitlement_id")
+  commonUserId  String    @map("common_user_id")
+  oveAccountId  String    @map("ove_account_id")
+  status        String    @default("PENDING") // PENDING|PROCESSING|DELIVERED|REVOKED|FAILED|DEAD
+  deliveredAt   DateTime? @map("delivered_at")
+  revokedAt     DateTime? @map("revoked_at")
+  lastError     String?   @map("last_error")
+  outboxEventId String?   @map("outbox_event_id") @db.Uuid
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  walletClaim WalletClaim             @relation(fields: [walletClaimId], references: [id])
+  nftIssue    NftIssue                @relation(fields: [nftIssueId], references: [id])
+  outboxEvent IntegrationOutboxEvent? @relation(fields: [outboxEventId], references: [id])
+
+  @@index([status])
+  @@map("collectible_deliveries")
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)9章: common_user_id本人確認の
+// 不一致・未解決等、セキュリティ上追跡すべきClaim確認APIの判定結果を記録する監査ログ。
+// admin_audit_logsは管理者(社内)の操作専用で、外部(千ノ国ウォレット)からのサーバー間呼び出し
+// には使えないため専用テーブルとして分離する。
+model WalletClaimAuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  walletClaimId String?  @map("wallet_claim_id") @db.Uuid
+  orderId       String?  @map("order_id") @db.Uuid
+  eventType     String   @map("event_type") // common_user_mismatch | common_user_unresolved | claim_confirmed | claim_reissued | claim_revoked 等
+  detail        Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  walletClaim WalletClaim? @relation(fields: [walletClaimId], references: [id])
+
+  @@index([walletClaimId])
+  @@index([createdAt])
+  @@map("wallet_claim_audit_logs")
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)8章: Claim確認APIのHMAC認証で
+// 使うnonceのリプレイ防止用記録。wallet_verification_noncesは会員自身のpersonal_sign用で
+// 用途が異なるため分離する(このテーブルは千ノ国ウォレット側が生成したnonceを記録するのみで、
+// このシステムからnonceを発行することはない)。
+model WalletClaimApiNonce {
+  id        String   @id @default(uuid()) @db.Uuid
+  nonce     String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("wallet_claim_api_nonces")
 }
 
 // 仕様書外の拡張: ウォレット未登録者一覧(admin/wallet-missing)から購入者へ送った登録案内
@@ -482,8 +584,9 @@ model IntegrationOutboxEvent {
   // (クラッシュ等で放置された行)を検知するために使う。NFT自動発行の既存のstale検知パターンを踏襲。
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
-  attempts IntegrationEventAttempt[]
-  walletTransactions OrderWalletTransaction[]
+  attempts              IntegrationEventAttempt[]
+  walletTransactions    OrderWalletTransaction[]
+  collectibleDeliveries CollectibleDelivery[]
 
   @@index([status])
   @@index([destinationSystemKey])
@@ -494,21 +597,21 @@ model IntegrationOutboxEvent {
 // (成功・失敗いずれも)につき1行作成する。blocked(送信を試みずに保留した回)は「試行」では
 // ないためここには記録しない。
 model IntegrationEventAttempt {
-  id              String    @id @default(uuid()) @db.Uuid
-  outboxEventId   String    @map("outbox_event_id") @db.Uuid
-  attemptNumber   Int       @map("attempt_number")
-  startedAt       DateTime  @map("started_at")
-  finishedAt      DateTime? @map("finished_at")
-  httpStatus      Int?      @map("http_status")
-  result          String // succeeded | failed
-  error           String?
-  processingToken String?   @map("processing_token")
+  id                  String    @id @default(uuid()) @db.Uuid
+  outboxEventId       String    @map("outbox_event_id") @db.Uuid
+  attemptNumber       Int       @map("attempt_number")
+  startedAt           DateTime  @map("started_at")
+  finishedAt          DateTime? @map("finished_at")
+  httpStatus          Int?      @map("http_status")
+  result              String // succeeded | failed
+  error               String?
+  processingToken     String?   @map("processing_token")
   // 本番安定化指示書Stage7(10.3「試行履歴」): この試行で実際に送信したdelivery_payloadの
   // hash(payload差分の追跡用)・送信先URL・応答本文の抜粋(秘密情報は含めない・長さ制限)。
-  requestPayloadHash  String? @map("request_payload_hash")
-  destinationUrl      String? @map("destination_url")
-  responseBodyExcerpt String? @map("response_body_excerpt")
-  createdAt       DateTime  @default(now()) @map("created_at")
+  requestPayloadHash  String?   @map("request_payload_hash")
+  destinationUrl      String?   @map("destination_url")
+  responseBodyExcerpt String?   @map("response_body_excerpt")
+  createdAt           DateTime  @default(now()) @map("created_at")
 
   outboxEvent IntegrationOutboxEvent @relation(fields: [outboxEventId], references: [id])
 
@@ -523,27 +626,27 @@ model IntegrationEventAttempt {
 // productIntegrationRuleIdも保持して一意に特定する。1行 = 1回のgrant成功 または 1回のreversal成功
 // (dry_run・失敗した試行はここに書かない。試行そのものの記録はintegration_event_attemptsが担う)。
 model OrderWalletTransaction {
-  id                        String   @id @default(uuid()) @db.Uuid
-  orderId                   String   @map("order_id") @db.Uuid
-  orderItemId               String   @map("order_item_id") @db.Uuid
-  outboxEventId             String   @map("outbox_event_id") @db.Uuid
+  id                          String   @id @default(uuid()) @db.Uuid
+  orderId                     String   @map("order_id") @db.Uuid
+  orderItemId                 String   @map("order_item_id") @db.Uuid
+  outboxEventId               String   @map("outbox_event_id") @db.Uuid
   // 同一order_item_idに複数のOVE向けルールが設定されている場合の原付与特定に使う。
-  productIntegrationRuleId  String?  @map("product_integration_rule_id") @db.Uuid
-  commonUserId              String?  @map("common_user_id")
-  transactionType           String   @map("transaction_type") // grant | reversal
-  amount                    Int
-  rewardRuleId              String?  @map("reward_rule_id")
+  productIntegrationRuleId    String?  @map("product_integration_rule_id") @db.Uuid
+  commonUserId                String?  @map("common_user_id")
+  transactionType             String   @map("transaction_type") // grant | reversal
+  amount                      Int
+  rewardRuleId                String?  @map("reward_rule_id")
   // transactionType=grant: OVE Wallet側が発行したtransaction_id。
   // transactionType=reversal: OVE Wallet側のreversal API呼び出し自体は別IDを返さないため通常null。
-  walletTransactionId       String?  @map("wallet_transaction_id")
+  walletTransactionId         String?  @map("wallet_transaction_id")
   // transactionType=reversalの行にのみ設定。取消対象となった原付与行のwalletTransactionId。
-  originalWalletTransactionId String? @map("original_wallet_transaction_id")
+  originalWalletTransactionId String?  @map("original_wallet_transaction_id")
   // 冪等キー。原則としてこの行の元になったintegration_outbox_events.event_idをそのまま使う
   // (1 outbox event成功につき1行のみ作成されることをDB制約でも保証する)。
-  idempotencyKey            String   @unique @map("idempotency_key")
-  status                    String   @default("succeeded") // succeeded(現状これのみ書き込まれる)
-  createdAt                 DateTime @default(now()) @map("created_at")
-  updatedAt                 DateTime @updatedAt @map("updated_at")
+  idempotencyKey              String   @unique @map("idempotency_key")
+  status                      String   @default("succeeded") // succeeded(現状これのみ書き込まれる)
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
 
   order       Order                  @relation(fields: [orderId], references: [id])
   orderItem   OrderItem              @relation(fields: [orderItemId], references: [id])

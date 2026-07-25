@@ -56,7 +56,7 @@ export async function confirmBankTransferPayment(orderId: string) {
     return applyPaidOrderSideEffects(tx, updatedOrder);
   });
 
-  await sendPostPaymentEmails(result.order, result.items);
+  await sendPostPaymentEmails(result.order, result.items, result.walletClaimToken);
   // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
   // 上記トランザクション内(applyPaidOrderSideEffects)で既に永続化済み。以前はここで
   // ベストエフォートの即時ディスパッチを試みていたが、管理者の入金確認操作(この関数の

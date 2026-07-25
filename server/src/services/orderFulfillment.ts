@@ -5,6 +5,9 @@ import { confirmCouponUsage } from './coupon';
 import { getNftChain } from './nftMint';
 import { enqueueEntitlementEvents } from './integrationOutbox';
 import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
+import { isWalletClaimEnabled } from './walletClaimConfig';
+import { getDigitalCollectibleRule, incrementProductSerialCounter } from './digitalCollectible';
+import { createWalletClaimIfEligible } from './walletClaim';
 
 type Tx = Prisma.TransactionClient;
 
@@ -22,17 +25,27 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
   const hasVerifiedWallet = Boolean(wallet?.verified);
 
   for (const item of orderItems) {
-    const rows = Array.from({ length: item.quantity }, () => ({
-      orderId,
-      orderItemId: item.id,
-      userId,
-      productId: item.productId,
-      variantId: item.variantId,
-      status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
-      walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
-      // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
-      chain: getNftChain(),
-    }));
+    // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: digital_collectible対象の
+    // 商品のみ、マーケット側で不変のシリアル番号を発番する(既存の他NFT商品はnullのまま。
+    // 引き続きnftMintProcessing.tsが従来通りベストエフォートで別途採番する)。
+    const digitalCollectibleRule = isWalletClaimEnabled() ? await getDigitalCollectibleRule(tx, item.productId) : null;
+
+    const rows: Prisma.NftIssueCreateManyInput[] = [];
+    for (let i = 0; i < item.quantity; i += 1) {
+      const serialNumber = digitalCollectibleRule ? await incrementProductSerialCounter(tx, item.productId) : null;
+      rows.push({
+        orderId,
+        orderItemId: item.id,
+        userId,
+        productId: item.productId,
+        variantId: item.variantId,
+        status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
+        walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
+        // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
+        chain: getNftChain(),
+        serialNumber,
+      });
+    }
     await tx.nftIssue.createMany({ data: rows });
   }
 }
@@ -90,13 +103,18 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
     await enqueueReferralConfirmPurchaseJob(tx, order.id);
   }
 
-  return { order, items: orderItems };
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)4章: `paymentStatus=paid`確定と
+  // 同一トランザクションでWalletClaimを作成する。生トークンはこの1回しか取得できないため、
+  // 呼び出し元がsendPostPaymentEmailsへ引き渡して受取URLをメールへ含める。
+  const walletClaimToken = await createWalletClaimIfEligible(tx, order, orderItems);
+
+  return { order, items: orderItems, walletClaimToken };
 }
 
 // メール送信はトランザクション外で行い、失敗しても決済確定処理自体は失敗させない(仕様書v1.5 7.2 手順8 / 7.6)。
-export async function sendPostPaymentEmails(order: Order, items: OrderItem[]) {
+export async function sendPostPaymentEmails(order: Order, items: OrderItem[], walletClaimToken?: string | null) {
   try {
-    await sendPurchaseCompleteEmail(order, items);
+    await sendPurchaseCompleteEmail(order, items, walletClaimToken ?? null);
 
     if (order.guestAccountCreated && order.userId) {
       const token = await createPasswordResetToken(order.userId);

@@ -1,5 +1,6 @@
 import crypto from 'crypto';
-import type { Order, OrderItem, Prisma } from '@prisma/client';
+import type { NftIssue, Order, OrderItem, Prisma, Product, ProductIntegrationRule } from '@prisma/client';
+import { buildCollectibleSnapshot, DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 type Tx = Prisma.TransactionClient;
 
@@ -41,9 +42,11 @@ export function hashOutboxPayload(payload: unknown): string {
 // 本番安定化指示書Stage7(10.2): original_payload(enqueue時点、以後不変)と
 // delivery_payload(実際に送信を試みる値。ディスパッチャの再取得のたびに更新)を分離する。
 // enqueue時点では両者は同じ値・同じhashで初期化する。
-export async function enqueueOutboxEvent(tx: Tx, input: EnqueueOutboxEventInput): Promise<void> {
+// 戻り値(作成したintegration_outbox_events.id)は、NftIssue単位の送付(CollectibleDelivery)側で
+// outbox_event_idを紐づけるために使う(既存の呼び出し元は戻り値を無視するため後方互換)。
+export async function enqueueOutboxEvent(tx: Tx, input: EnqueueOutboxEventInput): Promise<string> {
   const payloadHash = hashOutboxPayload(input.payload);
-  await tx.integrationOutboxEvent.create({
+  const created = await tx.integrationOutboxEvent.create({
     data: {
       eventId: buildEventId(),
       eventType: input.eventType,
@@ -55,6 +58,7 @@ export async function enqueueOutboxEvent(tx: Tx, input: EnqueueOutboxEventInput)
       correlationId: input.correlationId ?? null,
     },
   });
+  return created.id;
 }
 
 function baseEventPayload(order: Order) {
@@ -99,6 +103,11 @@ export async function enqueueEntitlementEvents(
       if (!rule.enabled) continue;
       if (!rule.entitlementTargetSystemKey) continue;
       if (eventType === 'entitlement.revoked' && !rule.revokeOnRefund) continue;
+      // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)11章: digital_collectibleは
+      // OrderItem単位(quantityまとめ・entitlement_idなし)のこの経路では扱わない。
+      // NftIssue単位(quantity=1・entitlement_id=NftIssue.id)のenqueueDigitalCollectibleEvent
+      // (WalletClaim確認時にのみ呼ばれる)が専用に処理する。
+      if (rule.entitlementType === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE) continue;
 
       await enqueueOutboxEvent(tx, {
         eventType,
@@ -124,4 +133,52 @@ export async function enqueueEntitlementEvents(
       });
     }
   }
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)11章: 既存のentitlement系Outbox
+// (enqueueEntitlementEvents)がOrderItem単位でquantityをまとめて送るのに対し、digital_collectible
+// はNftIssue単位(1枚=1件、quantity=1、entitlement_id=NftIssue.id)でイベントを作る。
+// ove_reward等の既存経路には一切手を加えず、この関数はWalletClaim確認時(walletClaimConfirm.ts)
+// からのみ呼ばれる新しい経路として追加する。
+export async function enqueueDigitalCollectibleEvent(
+  tx: Tx,
+  input: {
+    order: Order;
+    orderItem: OrderItem;
+    nftIssue: NftIssue;
+    rule: ProductIntegrationRule;
+    product: Product;
+    commonUserId: string;
+    eventType: 'entitlement.granted' | 'entitlement.revoked';
+  },
+): Promise<string> {
+  const snapshot = buildCollectibleSnapshot(input.rule, input.product);
+
+  return enqueueOutboxEvent(tx, {
+    eventType: input.eventType,
+    destinationSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+    correlationId: input.order.correlationId ?? input.order.id,
+    payload: {
+      ...baseEventPayload(input.order),
+      // 本番安定化指示書Stage6由来のreconcileEntitlementFieldsが再取得の起点にするため、
+      // 既存のentitlement系payloadと同じキー名(order_item_id・product_integration_rule_id)を保つ。
+      order_item_id: input.orderItem.id,
+      product_id: input.orderItem.productId,
+      product_integration_rule_id: input.rule.id,
+      product_code: input.rule.productCode,
+      entitlement_type: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+      quantity: 1,
+      nft_issue_id: input.nftIssue.id,
+      entitlement_id: input.nftIssue.id,
+      asset_code: snapshot.assetCode,
+      serial_number: input.nftIssue.serialNumber,
+      name: snapshot.name,
+      description: snapshot.description,
+      image_url: snapshot.imageUrl,
+      thumbnail_url: snapshot.thumbnailUrl,
+      image_hash: snapshot.imageHash,
+      rarity: snapshot.rarity,
+      common_user_id: input.commonUserId,
+    },
+  });
 }
