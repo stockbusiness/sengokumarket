@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 import { enqueueOutboxEvent } from '../../services/integrationOutbox';
 import { setSetting } from '../../services/settings';
+import { setSennokuniIntegrationStageSetting } from '../../services/sennokuniIntegrationConfig';
 
 const app = createApp();
 
@@ -113,7 +114,18 @@ describe('管理API: 連携Outbox手動再送(残課題指示書Stage7)', () => 
     vi.unstubAllGlobals();
     process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
     await prisma.setting.deleteMany({
-      where: { key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url', 'integration_endpoint_sengoku_passport'] } },
+      where: {
+        key: {
+          in: [
+            'sennokuni_hmac_key_id',
+            'sennokuni_hmac_secret',
+            'sennokuni_agency_hub_base_url',
+            'integration_endpoint_sengoku_passport',
+            'integration_endpoint_path_sengoku_passport',
+            'sennokuni_integration_stage',
+          ],
+        },
+      },
     });
   });
 
@@ -143,6 +155,10 @@ describe('管理API: 連携Outbox手動再送(残課題指示書Stage7)', () => 
     await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
+    // 本番安定化指示書Stage8(11.4): 既定はdry_run(実送信しない)になったため、実際にfetchが
+    // 呼ばれることを検証するこのテストではproductionへ明示的に固定する。
+    await setSennokuniIntegrationStageSetting('production');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
 
     const { agent } = await createAdminAgent(app);

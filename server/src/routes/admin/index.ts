@@ -23,6 +23,7 @@ import stripeEventsRouter from './stripeEvents';
 import integrationOutboxRouter from './integrationOutbox';
 import notificationOutboxRouter from './notificationOutbox';
 import orderLinkingJobsRouter from './orderLinkingJobs';
+import integrationPreflightRouter from './integrationPreflight';
 
 const router = Router();
 
@@ -61,5 +62,6 @@ router.use(orderLinkingJobsRouter);
 // 本番安定化指示書Stage6: 商品ごとの権利付与ルーティング・OVEポイント計算設定は、日次業務
 // (在庫・注文対応等)ではなく代理店設定等と同様の高度な設定操作のため、staffには公開しない。
 router.use(productIntegrationRulesRouter);
+router.use(integrationPreflightRouter);
 
 export default router;

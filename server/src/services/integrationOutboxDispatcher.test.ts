@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import { prisma } from '../lib/prisma';
 import { setSetting } from './settings';
 import { enqueueEntitlementEvents, enqueueOutboxEvent } from './integrationOutbox';
+import { setSennokuniIntegrationStageSetting } from './sennokuniIntegrationConfig';
 
 const grantRewardMock = vi.fn();
 const reverseRewardMock = vi.fn();
@@ -21,10 +22,14 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
   const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
   const correlationPrefix = 'outbox-dispatcher-test-';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
     grantRewardMock.mockReset();
     reverseRewardMock.mockReset();
+    // 本番安定化指示書Stage8(11.4): 既定はdry_run(実送信しない)になったため、この
+    // ファイルの既存テスト(実際にfetch/grantRewardが呼ばれることを検証する)は
+    // productionへ明示的に固定する。dry_run自体の挙動は専用のdescribeブロックで検証する。
+    await setSennokuniIntegrationStageSetting('production');
   });
 
   afterEach(async () => {
@@ -47,6 +52,8 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
             'sennokuni_hmac_secret',
             'sennokuni_agency_hub_base_url',
             'integration_endpoint_sengoku_passport',
+            'integration_endpoint_path_sengoku_passport',
+            'sennokuni_integration_stage',
           ],
         },
       },
@@ -258,6 +265,8 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    // 本番安定化指示書Stage8(11.1・11.5): pathの暫定フォールバックを廃止したため明示的に設定する。
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
 
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal('fetch', fetchMock);
@@ -342,6 +351,7 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
 
     const failCorrelationId = `${correlationPrefix}attempt-fail-${Date.now()}`;
     await createEvent({ correlationId: failCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
@@ -383,6 +393,7 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('') }));
 
     const correlationId = `${correlationPrefix}payload-hash-${Date.now()}`;
@@ -471,22 +482,155 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
   });
 });
 
+// 本番安定化指示書Stage8(11.4「dry_run」・11.5「dry_runで送信内容を確認可能」)。
+describe('integrationOutboxDispatcher: dry_run(本番安定化指示書Stage8)', () => {
+  const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
+  const correlationPrefix = 'outbox-dispatcher-dryrun-test-';
+
+  beforeEach(async () => {
+    delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
+    grantRewardMock.mockReset();
+    reverseRewardMock.mockReset();
+    await setSennokuniIntegrationStageSetting('dry_run');
+  });
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
+    const eventIds = (
+      await prisma.integrationOutboxEvent.findMany({
+        where: { correlationId: { startsWith: correlationPrefix } },
+        select: { id: true },
+      })
+    ).map((e) => e.id);
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: eventIds } } });
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: { startsWith: correlationPrefix } } });
+    await prisma.setting.deleteMany({
+      where: {
+        key: {
+          in: [
+            'sennokuni_hmac_key_id',
+            'sennokuni_hmac_secret',
+            'sennokuni_agency_hub_base_url',
+            'integration_endpoint_sengoku_passport',
+            'integration_endpoint_path_sengoku_passport',
+            'sennokuni_integration_stage',
+          ],
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function createEvent(overrides: {
+    correlationId: string;
+    eventType: 'entitlement.granted' | 'entitlement.revoked';
+    destinationSystemKey: string;
+    orderItemId?: string;
+  }) {
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: overrides.eventType,
+        destinationSystemKey: overrides.destinationSystemKey,
+        correlationId: overrides.correlationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_item_id: overrides.orderItemId ?? 'order-item-1',
+          quantity: 1,
+          reward_amount: 1,
+        },
+      });
+    });
+    return prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: overrides.correlationId } });
+  }
+
+  it('sengoku-passport宛(共通契約)はdry_runでは実際にfetchを呼ばず、署名・URLを生成してvalidationのみ行う', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const correlationId = `${correlationPrefix}passport-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.succeeded).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    expect(row.status).toBe('succeeded');
+    const attempt = await prisma.integrationEventAttempt.findFirstOrThrow({ where: { outboxEventId: row.id } });
+    expect(attempt.responseBodyExcerpt).toContain('[DRY_RUN]');
+    expect(attempt.destinationUrl).toBe('https://passport.example.com/shopping/webhook');
+    expect(attempt.requestPayloadHash).toBeTruthy();
+  });
+
+  it('設定不備(path未設定)はdry_runでも通常通り失敗として扱われる(validationは省略しない)', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    // integration_endpoint_path_sengoku_passportをあえて設定しない。
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const correlationId = `${correlationPrefix}passport-missing-path-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport' });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.retrying).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('ove-wallet宛はdry_runではgrantRewardを呼ばず、ove_transaction_idも記録しない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const correlationId = `${correlationPrefix}ove-grant-${Date.now()}`;
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-dryrun-1' });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.succeeded).toBe(1);
+    expect(grantRewardMock).not.toHaveBeenCalled();
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    expect((row.deliveryPayload as Record<string, unknown>).ove_transaction_id).toBeUndefined();
+    const attempt = await prisma.integrationEventAttempt.findFirstOrThrow({ where: { outboxEventId: row.id } });
+    expect(attempt.responseBodyExcerpt).toContain('[DRY_RUN]');
+  });
+});
+
 // 残課題指示書Stage6: 共通ID未解決イベントの送信保留。実際の注文・商品・ルールを使い、
 // enqueueEntitlementEvents経由でorder_id/product_idを含む本番相当のpayloadを作る。
 describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保留(残課題指示書Stage6)', () => {
   const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
   const productNamePrefix = 'stage6-blocking-test';
 
-  beforeEach(() => {
+  beforeEach(async () => {
     delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
     grantRewardMock.mockReset();
+    await setSennokuniIntegrationStageSetting('production');
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
     process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
     await prisma.setting.deleteMany({
-      where: { key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url'] } },
+      where: {
+        key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url', 'sennokuni_integration_stage'] },
+      },
     });
     // 各テストが作成したイベント・注文・商品を都度片付け、次のテストのdispatch結果へ
     // 再claimされて混入しないようにする(blocked行は毎回再評価対象に含まれるため特に重要)。

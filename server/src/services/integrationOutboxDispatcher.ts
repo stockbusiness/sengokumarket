@@ -6,6 +6,8 @@ import {
   getSennokuniHubCredentials,
   getIntegrationEndpointBaseUrl,
   getIntegrationEndpointPath,
+  getSennokuniIntegrationStage,
+  type SennokuniIntegrationStage,
 } from './sennokuniIntegrationConfig';
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
 import { grantReward, reverseReward } from './oveWalletRewardClient';
@@ -61,6 +63,10 @@ export async function dispatchPendingOutboxEvents(): Promise<DispatchOutboxResul
 
   if (!isSennokuniIntegrationEnabled()) return result;
 
+  // 本番安定化指示書Stage8(11.4「段階化」): dry_runでは実送信を一切行わず、署名・payload・
+  // URLの生成とvalidationのみ行う(sendOutboxEvent内で分岐する)。
+  const stage = await getSennokuniIntegrationStage();
+
   const dispatchStartedAt = Date.now();
 
   // 1) staleなprocessing行(クラッシュ等で放置)を先にpending・token解除の状態へ戻す。
@@ -106,7 +112,7 @@ export async function dispatchPendingOutboxEvents(): Promise<DispatchOutboxResul
       continue;
     }
     result.claimed++;
-    await sendAndRecordResult({ ...row, status: 'processing', processingToken }, result);
+    await sendAndRecordResult({ ...row, status: 'processing', processingToken }, result, stage);
   }
 
   return result;
@@ -191,7 +197,11 @@ interface SendOutcome {
   responseBodyExcerpt: string | null;
 }
 
-async function sendAndRecordResult(event: IntegrationOutboxEvent, result: DispatchOutboxResult): Promise<void> {
+async function sendAndRecordResult(
+  event: IntegrationOutboxEvent,
+  result: DispatchOutboxResult,
+  stage: SennokuniIntegrationStage,
+): Promise<void> {
   const processingToken = event.processingToken!;
   const { blockedReason, effectivePayload } = await reconcileEntitlementFields(event);
   // 本番安定化指示書Stage7(10.1・10.2): delivery_payloadを更新する際は必ずhashも
@@ -213,7 +223,7 @@ async function sendAndRecordResult(event: IntegrationOutboxEvent, result: Dispat
   const startedAt = new Date();
 
   try {
-    const outcome = await sendOutboxEvent(effectiveEvent);
+    const outcome = await sendOutboxEvent(effectiveEvent, stage);
     await recordAttempt({
       event,
       attemptNumber,
@@ -332,11 +342,11 @@ async function recordAttempt(input: {
   });
 }
 
-async function sendOutboxEvent(event: IntegrationOutboxEvent): Promise<SendOutcome> {
+async function sendOutboxEvent(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   if (event.destinationSystemKey === 'ove-wallet') {
-    return sendToOveWallet(event);
+    return sendToOveWallet(event, stage);
   }
-  return sendViaCommonContract(event);
+  return sendViaCommonContract(event, stage);
 }
 
 // 仕様書外の拡張: OVE Walletはentitlement.granted/revokedという概念を持たず、reward付与・取消
@@ -345,7 +355,7 @@ async function sendOutboxEvent(event: IntegrationOutboxEvent): Promise<SendOutco
 // 抽象化されたクライアントのため、この経路ではdestinationUrl/responseBodyExcerptは取得できず
 // 常にnullとなる(既知の制約。変更する場合はoveWalletRewardClient.tsのインターフェース自体の
 // 見直しが必要なため、今回は対象外とする)。
-async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<SendOutcome> {
+async function sendToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   const payload = event.deliveryPayload as {
     common_user_id?: string | null;
     source_user_id?: string | null;
@@ -363,6 +373,16 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<SendOutco
     if (typeof payload.reward_amount !== 'number') {
       throw new Error('reward_amount is missing on entitlement.granted payload for ove-wallet');
     }
+
+    // 本番安定化指示書Stage8(11.4「dry_run」): 実際にはgrantReward(実送信・実際にポイントが
+    // 付与される)を呼ばず、必須項目のvalidationのみ行う。ove_transaction_idは記録しない
+    // (dry_runでは実際の付与が起きていないため、後続のentitlement.revokedが誤って
+    // 「取消対象が見つかった」と誤認しないようにするため)。
+    if (stage === 'dry_run') {
+      if (!payload.source_user_id) throw new Error('source_user_id is missing on entitlement.granted payload for ove-wallet');
+      return { destinationUrl: null, responseBodyExcerpt: '[DRY_RUN] validated only, not sent (ove-wallet grant)' };
+    }
+
     const grantResult = await grantReward({
       externalUserId: payload.source_user_id ?? '',
       commonUserId: payload.common_user_id ?? null,
@@ -396,6 +416,11 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<SendOutco
     if (!priorPayload?.ove_transaction_id) {
       throw new Error('cannot reverse OVE wallet reward: no matching prior grant transaction found');
     }
+
+    if (stage === 'dry_run') {
+      return { destinationUrl: null, responseBodyExcerpt: '[DRY_RUN] validated only, not sent (ove-wallet reversal)' };
+    }
+
     const reversed = await reverseReward(priorPayload.ove_transaction_id, 'entitlement revoked (refund)');
     if (!reversed) throw new Error('OVE wallet reward reversal failed');
     return { destinationUrl: null, responseBodyExcerpt: null };
@@ -406,9 +431,10 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<SendOutco
 
 // 仕様書外の拡張(残課題指示書Stage7・9.2「正式URL」): パスポート・AIアート教室向けは共通契約
 // (X-SenNoKuni-*)のイベントEnvelopeで送信する。受信pathは送信先ごとの設定値
-// (getIntegrationEndpointPath)から取得し、コード固定しない。未設定時のみ暫定値
-// (/shopping/webhook)にフォールバックする。
-async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<SendOutcome> {
+// (getIntegrationEndpointPath)から取得し、コード固定しない。
+// 本番安定化指示書Stage8(11.1・11.5): 未設定時の暫定path('/shopping/webhook')への
+// 自動フォールバックは廃止した。未設定はfail-close(送信せず失敗させる)。
+async function sendViaCommonContract(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   const baseUrl = await getIntegrationEndpointBaseUrl(event.destinationSystemKey);
   if (!baseUrl) throw new Error(`no endpoint configured for destination: ${event.destinationSystemKey}`);
 
@@ -416,6 +442,7 @@ async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<Sen
   if (!credentials) throw new Error('sennokuni HMAC credentials are not configured');
 
   const path = await getIntegrationEndpointPath(event.destinationSystemKey);
+  if (!path) throw new Error(`no endpoint path configured for destination: ${event.destinationSystemKey}`);
   const method = 'POST';
   const payload = event.deliveryPayload as { common_user_id?: string | null };
   const envelope = {
@@ -446,6 +473,13 @@ async function sendViaCommonContract(event: IntegrationOutboxEvent): Promise<Sen
   });
 
   const destinationUrl = `${baseUrl}${path}`;
+
+  // 本番安定化指示書Stage8(11.4「dry_run」): ここまででURL・HMAC署名・payloadは実際に
+  // 生成済み(validationも通過している)。実際のfetch()は行わず、検証のみで完了とする。
+  if (stage === 'dry_run') {
+    return { destinationUrl, responseBodyExcerpt: '[DRY_RUN] validated only, not sent' };
+  }
+
   let res: Response;
   try {
     res = await fetch(destinationUrl, {
@@ -496,7 +530,8 @@ export async function retryOutboxEvent(id: string): Promise<{ ok: boolean; statu
   if (claim.count === 0) return { ok: false };
 
   const result: DispatchOutboxResult = { claimed: 1, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 };
-  await sendAndRecordResult({ ...existing, status: 'processing', processingToken }, result);
+  const stage = await getSennokuniIntegrationStage();
+  await sendAndRecordResult({ ...existing, status: 'processing', processingToken }, result, stage);
 
   const refreshed = await prisma.integrationOutboxEvent.findUnique({ where: { id } });
   return { ok: true, status: refreshed?.status };
