@@ -3,6 +3,7 @@ import { recoverMessageAddress } from 'viem';
 import type { Prisma } from '@prisma/client';
 import { HttpError } from '../lib/httpError';
 import { getNftChain } from './nftMint';
+import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 type Tx = Prisma.TransactionClient;
 
@@ -100,8 +101,23 @@ export async function verifyAndRegisterWallet(
     },
   });
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
+  // digital_collectible対象商品のNftIssueは、ウォレット確認が完了してもready_to_issueへ
+  // 自動遷移させない(このシステム内の他のNFT商品の挙動は変更しない)。
   await tx.nftIssue.updateMany({
-    where: { userId: params.userId, status: 'wallet_required' },
+    where: {
+      userId: params.userId,
+      status: 'wallet_required',
+      product: {
+        integrationRules: {
+          none: {
+            enabled: true,
+            entitlementTargetSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+            entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+          },
+        },
+      },
+    },
     data: { status: 'ready_to_issue', walletAddress: params.walletAddress },
   });
 

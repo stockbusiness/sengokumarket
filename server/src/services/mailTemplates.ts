@@ -14,6 +14,7 @@ import {
 } from '../modules/notifications/templates/passwordSetup';
 import { buildPasswordResetEmail } from '../modules/notifications/templates/passwordReset';
 import { buildWalletReminderEmail } from '../modules/notifications/templates/walletReminder';
+import { buildWalletClaimReissuedEmail } from '../modules/notifications/templates/walletClaimReissued';
 
 export async function sendPurchaseCompleteEmail(order: Order, items: OrderItem[], walletClaimToken?: string | null): Promise<void> {
   await sendNotification(await buildPurchaseCompleteEmail(order, items, walletClaimToken ?? null));
@@ -49,4 +50,8 @@ export async function sendWalletReminderEmail(email: string, name: string, order
 
 export async function sendPasswordResetEmail(email: string, name: string, token: string): Promise<void> {
   await sendNotification(buildPasswordResetEmail(email, name, token));
+}
+
+export async function sendWalletClaimReissuedEmail(email: string, name: string, claimUrl: string): Promise<void> {
+  await sendNotification(buildWalletClaimReissuedEmail(email, name, claimUrl));
 }

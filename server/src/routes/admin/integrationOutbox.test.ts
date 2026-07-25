@@ -60,6 +60,33 @@ describe('管理API: 連携Outbox一覧(仕様書外の拡張・千ノ国全体�
     );
   });
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)19章「Digital Collectible Outbox」:
+  // 専用一覧を新設する代わりに、この既存一覧へentitlement_id・destinationSystemKeyでの
+  // 絞り込みを追加した(重複した一覧実装を避けるための再利用)。
+  it('entitlementId・destinationSystemKeyで絞り込める', async () => {
+    const { agent: adminAgent } = await createAdminAgent(app);
+    const dcCorrelationId = `${correlationId}-dc`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'ove-wallet',
+        payload: { entitlement_id: 'nft-issue-entitlement-test-1', entitlement_type: 'digital_collectible' },
+        correlationId: dcCorrelationId,
+      });
+    });
+
+    const res = await adminAgent.get('/api/admin/integration-outbox?entitlementId=nft-issue-entitlement-test-1');
+    expect(res.status).toBe(200);
+    expect(res.body.outboxEvents).toHaveLength(1);
+    expect(res.body.outboxEvents[0].correlationId).toBe(dcCorrelationId);
+
+    const byDestination = await adminAgent.get('/api/admin/integration-outbox?destinationSystemKey=ove-wallet');
+    expect(byDestination.status).toBe(200);
+    expect(byDestination.body.outboxEvents.every((e: { destinationSystemKey: string }) => e.destinationSystemKey === 'ove-wallet')).toBe(true);
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: dcCorrelationId } });
+  });
+
   it('残課題指示書Stage6: status=blockedで絞り込み、blocked理由(blockedReason)を確認できる', async () => {
     const { agent } = await createAdminAgent(app);
     const blockedCorrelationId = `${correlationId}-blocked`;

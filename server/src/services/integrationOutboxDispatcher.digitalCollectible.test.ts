@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../lib/prisma';
 import { setSetting } from './settings';
@@ -7,6 +9,23 @@ import { setSennokuniIntegrationStageSetting } from './sennokuniIntegrationConfi
 // vi.mockはホイストされるため動的importで遅延ロードする(既存integrationOutboxDispatcher.test.tsと同じ方針)。
 async function loadDispatcher() {
   return import('./integrationOutboxDispatcher');
+}
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)20章「契約Fixture」:
+// ウォレット側と同一のJSON形状であることを検証する(値そのものではなくキー構造の一致を見る。
+// event_id・occurred_at・実際のUUID等は呼び出しごとに異なるため)。
+function loadFixture(name: string): unknown {
+  const fixturePath = path.resolve(__dirname, '../../../docs/contracts/fixtures', name);
+  return JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+}
+
+function sortedKeyPaths(value: unknown, prefix = ''): string[] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return prefix ? [prefix] : [];
+  }
+  return Object.keys(value as Record<string, unknown>)
+    .sort()
+    .flatMap((key) => sortedKeyPaths((value as Record<string, unknown>)[key], prefix ? `${prefix}.${key}` : key));
 }
 
 const PRODUCT_PREFIX = 'digital-collectible-dispatcher-test-';
@@ -162,6 +181,67 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     expect(updatedClaim.claimedAt).not.toBeNull();
 
     await cleanup(order.id, product.id, walletClaim.id, outboxEventId);
+  });
+
+  it('entitlement.grantedの送信payloadは契約Fixture(digital-collectible-granted.v1.json)と同じキー構造を持つ', async () => {
+    const { product, order, walletClaim, outboxEventId } = await createEligibleFixture('fixture-granted');
+    let sentBody: unknown = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, options: { body: string }) => {
+        sentBody = JSON.parse(options.body);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      }),
+    );
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    await dispatchPendingOutboxEvents();
+
+    const fixture = loadFixture('digital-collectible-granted.v1.json');
+    expect(sortedKeyPaths(sentBody)).toEqual(sortedKeyPaths(fixture));
+
+    await cleanup(order.id, product.id, walletClaim.id, outboxEventId);
+  });
+
+  it('entitlement.revokedの送信payloadは契約Fixture(digital-collectible-revoked.v1.json)と同じキー構造を持つ', async () => {
+    const { product, order, orderItem, nftIssue, walletClaim, delivery, outboxEventId: grantedEventId } =
+      await createEligibleFixture('fixture-revoked');
+    await prisma.integrationOutboxEvent.update({ where: { id: grantedEventId }, data: { status: 'succeeded', processedAt: new Date() } });
+    await prisma.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'DELIVERED', deliveredAt: new Date() } });
+
+    const productRow = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
+    const rule = await prisma.productIntegrationRule.findFirstOrThrow({ where: { productId: product.id } });
+    const orderRow = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    const revokedEventId = await prisma.$transaction((tx) =>
+      enqueueDigitalCollectibleEvent(tx, {
+        order: orderRow,
+        orderItem,
+        nftIssue,
+        rule,
+        product: productRow,
+        commonUserId: 'cu_test_00000001',
+        eventType: 'entitlement.revoked',
+      }),
+    );
+    await prisma.collectibleDelivery.update({ where: { id: delivery.id }, data: { outboxEventId: revokedEventId, status: 'PENDING' } });
+
+    let sentBody: unknown = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: string, options: { body: string }) => {
+        sentBody = JSON.parse(options.body);
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('{}') });
+      }),
+    );
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    await dispatchPendingOutboxEvents();
+
+    const fixture = loadFixture('digital-collectible-revoked.v1.json');
+    expect(sortedKeyPaths(sentBody)).toEqual(sortedKeyPaths(fixture));
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { id: grantedEventId } });
+    await cleanup(order.id, product.id, walletClaim.id, revokedEventId);
   });
 
   it('dry_runでは実際にfetchを呼ばず、CollectibleDeliveryも変更しない(送信自体を試みていないため)', async () => {

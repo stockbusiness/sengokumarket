@@ -230,4 +230,63 @@ describe('processNftMints(仕様書外の拡張)', () => {
     const afterSecond = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(afterSecond.status).toBe('issued');
   });
+
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
+  // 正規の経路(orderFulfillment.ts・walletVerification.ts)ではdigital_collectible対象商品の
+  // 行はready_to_issueにならない設計だが、万一到達してしまった場合の二重の安全策を確認する。
+  it('digital_collectible対象商品のready_to_issue行はclaim対象から除外される(二重の安全策)', async () => {
+    const dcProduct = await prisma.product.create({
+      data: {
+        name: `NFT自動発行テスト_digital-collectible_${Date.now()}`,
+        slug: `nftmint-processing-dc-test-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    await prisma.productIntegrationRule.create({
+      data: { productId: dcProduct.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `SG-NFTMINTTEST-DC-${Math.random().toString(36).slice(2)}`,
+        userId,
+        totalAmount: 10000,
+        originalAmount: 10000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: 'テスト',
+        customerEmail: 'nftmint-processing-test@example.com',
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    const orderItem = await prisma.orderItem.create({
+      data: { orderId: order.id, productId: dcProduct.id, productName: dcProduct.name, itemType: 'nft', quantity: 1, unitPrice: 10000, subtotal: 10000 },
+    });
+    // 本来到達しないはずの状態(ready_to_issue)を直接作り、二重の安全策が機能することを確認する。
+    const issue = await prisma.nftIssue.create({
+      data: {
+        orderId: order.id,
+        orderItemId: orderItem.id,
+        userId,
+        productId: dcProduct.id,
+        status: 'ready_to_issue',
+        walletAddress: '0x2222222222222222222222222222222222222222',
+      },
+    });
+
+    const result = await processNftMints();
+
+    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
+    expect(after.status).toBe('ready_to_issue'); // claimされず、変更されない
+    expect(result.claimed).toBe(0);
+
+    await prisma.nftIssue.deleteMany({ where: { productId: dcProduct.id } });
+    await prisma.orderItem.deleteMany({ where: { productId: dcProduct.id } });
+    await prisma.order.deleteMany({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: dcProduct.id } });
+    await prisma.product.delete({ where: { id: dcProduct.id } });
+  });
 });

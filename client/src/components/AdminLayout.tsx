@@ -85,6 +85,8 @@ const NAV_GROUPS: {
       },
       { to: '/admin/wallet-transactions', label: 'OVEウォレット取引履歴', icon: IconWallet, staffHidden: true },
       { to: '/admin/integration-rules', label: '商品連携ルール一覧', icon: IconBox, staffHidden: true },
+      { to: '/admin/wallet-claims', label: 'Wallet Claims', icon: IconBadge, staffHidden: true },
+      { to: '/admin/collectible-deliveries', label: 'Collectible Deliveries', icon: IconWallet, staffHidden: true },
       { to: '/admin/notification-outbox', label: '通知Outbox', icon: IconMegaphone, muted: true, staffHidden: true },
     ],
   },

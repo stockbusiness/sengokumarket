@@ -33,14 +33,19 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
     const rows: Prisma.NftIssueCreateManyInput[] = [];
     for (let i = 0; i < item.quantity; i += 1) {
       const serialNumber = digitalCollectibleRule ? await incrementProductSerialCounter(tx, item.productId) : null;
+      // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
+      // digital_collectible対象商品は、検証済みウォレットを持つ購入者でもready_to_issueへ
+      // 自動遷移させない(MVPでは自動Mintしない方針)。カード送付はWalletClaim/
+      // CollectibleDeliveryの経路で行われ、この行のwalletAddress/statusは使わない。
+      const readyToIssue = hasVerifiedWallet && !digitalCollectibleRule;
       rows.push({
         orderId,
         orderItemId: item.id,
         userId,
         productId: item.productId,
         variantId: item.variantId,
-        status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
-        walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
+        status: readyToIssue ? 'ready_to_issue' : 'wallet_required',
+        walletAddress: readyToIssue ? wallet!.walletAddress : null,
         // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
         chain: getNftChain(),
         serialNumber,

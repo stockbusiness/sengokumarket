@@ -1,11 +1,12 @@
 import crypto from 'crypto';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { setSetting } from '../../services/settings';
 import { buildSennokuniHeaders } from '../../lib/sennokuniHmac';
 import { hashClaimToken } from '../../services/walletClaim';
+import { setSennokuniIntegrationStageSetting } from '../../services/sennokuniIntegrationConfig';
 
 const app = createApp();
 const KEY_ID = 'wallet-claim-test-key';
@@ -187,6 +188,123 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
     const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
     expect(confirmRes.status).toBe(409);
     expect(confirmRes.body.error.code).toBe('COMMON_USER_MISMATCH');
+
+    await cleanupOrder(order.id, product.id);
+  });
+});
+
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)21章「Dispatcher: dry_run」・
+// 23章「dry_run成功」: Claim確認API(HTTP・HMAC)→ NftIssue単位Outbox enqueue → dry_run
+// ディスパッチまでを一気通貫で確認する結合テスト。dry_runでは実際にfetchを呼ばないことを
+// 明示的に検証する(呼ばれたら即座にテストを失敗させる)。
+describe('dry_run結合テスト: Claim確認 → NftIssue単位Outbox → dry_runディスパッチ', () => {
+  const originalWalletClaimFlag = process.env.ENABLE_WALLET_CLAIM;
+  const originalIntegrationFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
+  const originalDeliveryFlag = process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY;
+
+  beforeAll(async () => {
+    await setSetting('wallet_claim_inbound_key_id', KEY_ID);
+    await setSetting('wallet_claim_inbound_hmac_secret', SECRET);
+    await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
+    await setSetting('ove_wallet_events_key_id', 'events-key-dryrun');
+    await setSetting('ove_wallet_events_hmac_secret', 'events-secret-dryrun');
+  });
+
+  beforeEach(async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY = 'true';
+    await setSennokuniIntegrationStageSetting('dry_run');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    process.env.ENABLE_WALLET_CLAIM = originalWalletClaimFlag;
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = originalIntegrationFlag;
+    process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY = originalDeliveryFlag;
+  });
+
+  afterAll(async () => {
+    await prisma.setting.deleteMany({
+      where: {
+        key: {
+          in: [
+            'wallet_claim_inbound_key_id',
+            'wallet_claim_inbound_hmac_secret',
+            'ove_wallet_base_url',
+            'ove_wallet_events_key_id',
+            'ove_wallet_events_hmac_secret',
+            'sennokuni_integration_stage',
+          ],
+        },
+      },
+    });
+    await prisma.$disconnect();
+  });
+
+  it('quantity=2の注文がClaim確認→Outbox enqueue→dry_runディスパッチまで実ネットワーク呼び出し無しで完了する', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const token = 'wc-dryrun-integration-token';
+    const product = await prisma.product.create({
+      data: {
+        name: `${PRODUCT_PREFIX}dryrun`,
+        slug: `${PRODUCT_PREFIX}dryrun`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    await prisma.productIntegrationRule.create({
+      data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `${ORDER_PREFIX}dryrun`,
+        totalAmount: 20000,
+        originalAmount: 20000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: 'dry_run結合テスト太郎',
+        customerEmail: 'wc-dryrun-integration-test@example.com',
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+        commonUserId: 'cu_test_00000001',
+        commonUserResolutionStatus: 'resolved',
+      },
+    });
+    const orderItem = await prisma.orderItem.create({
+      data: { orderId: order.id, productId: product.id, productName: product.name, itemType: 'nft', quantity: 2, unitPrice: 10000, subtotal: 20000 },
+    });
+    await prisma.nftIssue.createMany({
+      data: [
+        { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
+        { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 2 },
+      ],
+    });
+    await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken(token), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) },
+    });
+
+    const confirmPath = `/api/integrations/wallet-claims/${token}/confirm`;
+    const body = JSON.stringify({ ove_account_id: 'ove-acc-dryrun', common_user_id: 'cu_test_00000001' });
+    const confirmHeaders = signedHeaders({ method: 'POST', path: confirmPath, rawBody: body });
+    const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
+    expect(confirmRes.status).toBe(200);
+    expect(confirmRes.body.status).toBe('DELIVERY_PENDING');
+
+    // confirmWalletClaim内部でtriggerImmediateOutboxDispatchが呼ばれるため、追加のcron呼び出しなしで
+    // dry_runディスパッチまで完了しているはずである。
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const deliveries = await prisma.collectibleDelivery.findMany({ where: { walletClaim: { orderId: order.id } } });
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries.every((d) => d.status === 'DELIVERED')).toBe(true);
+
+    const claim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+    expect(claim.status).toBe('DELIVERED');
 
     await cleanupOrder(order.id, product.id);
   });
