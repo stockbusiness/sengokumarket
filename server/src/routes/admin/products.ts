@@ -37,8 +37,13 @@ router.get('/products', async (_req, res) => {
 });
 
 // 仕様書外の拡張: 商品編集ページ用に単体取得。
+// 本番安定化指示書Stage6(9.5): 連携ルール(product_integration_rules)も編集画面が1回で
+// 取得できるよう含める。
 router.get('/products/:id', async (req, res) => {
-  const product = await prisma.product.findUnique({ where: { id: req.params.id }, include: { variants: true } });
+  const product = await prisma.product.findUnique({
+    where: { id: req.params.id },
+    include: { variants: true, integrationRules: { orderBy: { createdAt: 'asc' } } },
+  });
   if (!product) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
   res.json({ product });
 });

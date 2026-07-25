@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  createAdminProductIntegrationRule,
   deleteAdminProduct,
   deleteAdminProductVariant,
   fetchAdminProduct,
   updateAdminProduct,
+  updateAdminProductIntegrationRule,
   uploadAdminProductImage,
   type AdminProduct,
+  type AdminProductIntegrationRule,
+  type IntegrationRuleRequest,
 } from '../../lib/adminApi';
 import {
   ITEM_TYPES,
@@ -18,7 +22,22 @@ import {
   type PriceMode,
   type VariantRow,
 } from '../../lib/productPricing';
+import { ENTITLEMENT_TARGET_SYSTEM_KEYS, REWARD_CALCULATION_MODES } from '@sengoku/contracts';
 import StatusBadge from '../../components/StatusBadge';
+
+const EMPTY_RULE_FORM: IntegrationRuleRequest = {
+  entitlementTargetSystemKey: '',
+  entitlementType: '',
+  productCode: '',
+  rewardRuleId: '',
+  rewardAmountPerUnit: null,
+  rewardCalculationMode: '',
+  revokeOnRefund: true,
+  requireCommonUserId: false,
+  requireSalesAgentId: false,
+  requireClosingAgentId: false,
+  requireReferralSessionKey: false,
+};
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
 
@@ -44,6 +63,8 @@ export default function AdminProductEditPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
   const [newVariant, setNewVariant] = useState<VariantRow>({ name: '', stock: 0, price: 0 });
+  const [newRule, setNewRule] = useState<IntegrationRuleRequest>(EMPTY_RULE_FORM);
+  const [ruleSubmitting, setRuleSubmitting] = useState(false);
   const priceInputRef = useRef<HTMLInputElement | null>(null);
 
   function load() {
@@ -180,6 +201,51 @@ export default function AdminProductEditPage() {
       load();
     } catch (e) {
       notify('error', e instanceof Error ? e.message : 'バリエーションの追加に失敗しました');
+    }
+  }
+
+  // 本番安定化指示書Stage6(9.5): 商品ごとの権利付与ルーティング設定(連携ルール)の追加・更新。
+  // 1商品から複数の送信先へ設定できる(1:N化)ため、削除ではなく有効/無効(enabled)の
+  // 切り替えで一時停止する運用にする(既存のNFT発行と同様、外部連携は一度送ると取り消せない
+  // 操作を含むため、行の物理削除は用意しない)。
+  function normalizeRulePayload(input: IntegrationRuleRequest): IntegrationRuleRequest {
+    return {
+      ...input,
+      entitlementTargetSystemKey: input.entitlementTargetSystemKey?.trim() || null,
+      entitlementType: input.entitlementType?.trim() || null,
+      productCode: input.productCode?.trim() || null,
+      rewardRuleId: input.rewardRuleId?.trim() || null,
+      rewardCalculationMode: input.rewardCalculationMode?.trim() || null,
+    };
+  }
+
+  async function handleAddRule() {
+    if (!product) return;
+    if (!newRule.entitlementTargetSystemKey) {
+      notify('error', '送信先を選択してください');
+      return;
+    }
+    setRuleSubmitting(true);
+    try {
+      await createAdminProductIntegrationRule(product.id, normalizeRulePayload(newRule));
+      notify('success', '連携ルールを追加しました');
+      setNewRule(EMPTY_RULE_FORM);
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '連携ルールの追加に失敗しました');
+    } finally {
+      setRuleSubmitting(false);
+    }
+  }
+
+  async function handleUpdateRule(rule: AdminProductIntegrationRule, patch: IntegrationRuleRequest) {
+    if (!product) return;
+    try {
+      await updateAdminProductIntegrationRule(product.id, rule.id, patch);
+      notify('success', '連携ルールを更新しました');
+      load();
+    } catch (e) {
+      notify('error', e instanceof Error ? e.message : '連携ルールの更新に失敗しました');
     }
   }
 
@@ -404,6 +470,140 @@ export default function AdminProductEditPage() {
             />
           </label>
           <button type="button" className="btn-secondary btn-small" onClick={handleAddVariant}>
+            追加
+          </button>
+        </div>
+      </div>
+
+      <div className="admin-form-card admin-form-card--wide">
+        <h2 className="admin-form-section__title">連携ルール(千ノ国連携)</h2>
+        <p className="admin-form-section__hint">
+          この商品を購入した際に、外部システムへ権利(パスポート・AIアート教室受講権・OVEポイント等)を送信する設定です。
+          1商品につき複数の送信先を設定できます。まだ連携は本番で有効化されていません(設定しても実際には送信されません)。
+        </p>
+        {(product.integrationRules ?? []).map((rule) => (
+          <div className="admin-variant-row" key={rule.id}>
+            <span className="admin-variant-row__name">
+              {rule.entitlementTargetSystemKey ?? '(未設定)'}
+              {rule.entitlementType ? ` / ${rule.entitlementType}` : ''}
+              {!rule.enabled && <span className="status-badge status-badge--muted">無効</span>}
+            </span>
+            {rule.entitlementTargetSystemKey === 'ove-wallet' && (
+              <>
+                <label className="admin-variant-row__price">
+                  1個当たりポイント
+                  <input
+                    type="number"
+                    min={0}
+                    defaultValue={rule.rewardAmountPerUnit ?? 0}
+                    onBlur={(e) => {
+                      const next = Number(e.target.value);
+                      if (next !== (rule.rewardAmountPerUnit ?? 0)) handleUpdateRule(rule, { rewardAmountPerUnit: next });
+                    }}
+                  />
+                </label>
+                <label className="admin-variant-row__stock">
+                  計算方式
+                  <select
+                    defaultValue={rule.rewardCalculationMode ?? ''}
+                    onChange={(e) => handleUpdateRule(rule, { rewardCalculationMode: e.target.value || null })}
+                  >
+                    <option value="">(未設定)</option>
+                    {REWARD_CALCULATION_MODES.map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            )}
+            <label>
+              返金時に取消
+              <input
+                type="checkbox"
+                checked={rule.revokeOnRefund}
+                onChange={(e) => handleUpdateRule(rule, { revokeOnRefund: e.target.checked })}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn-secondary btn-small"
+              onClick={() => handleUpdateRule(rule, { enabled: !rule.enabled })}
+            >
+              {rule.enabled ? '無効化する' : '有効化する'}
+            </button>
+          </div>
+        ))}
+
+        <div className="admin-variant-row">
+          <label className="admin-variant-row__name">
+            送信先
+            <select
+              value={newRule.entitlementTargetSystemKey ?? ''}
+              onChange={(e) => setNewRule((prev) => ({ ...prev, entitlementTargetSystemKey: e.target.value }))}
+            >
+              <option value="">選択してください</option>
+              {ENTITLEMENT_TARGET_SYSTEM_KEYS.map((k) => (
+                <option key={k} value={k}>
+                  {k}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="admin-variant-row__price">
+            entitlement type
+            <input
+              type="text"
+              placeholder="例: castle_lord_contract"
+              value={newRule.entitlementType ?? ''}
+              onChange={(e) => setNewRule((prev) => ({ ...prev, entitlementType: e.target.value }))}
+            />
+          </label>
+          <label className="admin-variant-row__stock">
+            product code
+            <input
+              type="text"
+              value={newRule.productCode ?? ''}
+              onChange={(e) => setNewRule((prev) => ({ ...prev, productCode: e.target.value }))}
+            />
+          </label>
+          {newRule.entitlementTargetSystemKey === 'ove-wallet' && (
+            <>
+              <label className="admin-variant-row__price">
+                1個当たりポイント
+                <input
+                  type="number"
+                  min={0}
+                  value={newRule.rewardAmountPerUnit ?? 0}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, rewardAmountPerUnit: Number(e.target.value) }))}
+                />
+              </label>
+              <label className="admin-variant-row__stock">
+                計算方式
+                <select
+                  value={newRule.rewardCalculationMode ?? ''}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, rewardCalculationMode: e.target.value }))}
+                >
+                  <option value="">(未設定)</option>
+                  {REWARD_CALCULATION_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="admin-variant-row__price">
+                OVE reward rule ID
+                <input
+                  type="text"
+                  value={newRule.rewardRuleId ?? ''}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, rewardRuleId: e.target.value }))}
+                />
+              </label>
+            </>
+          )}
+          <button type="button" className="btn-secondary btn-small" disabled={ruleSubmitting} onClick={handleAddRule}>
             追加
           </button>
         </div>

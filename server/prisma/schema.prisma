@@ -76,19 +76,19 @@ model AdminAuditLog {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  name         String
-  email        String   @unique
-  phone        String?
-  passwordHash String   @map("password_hash")
-  role         String   @default("user") // user | admin | admin_viewer(閲覧専用管理者。仕様書外の拡張) | staff(仕様書外の拡張) | agency
-  agencyId     String?  @map("agency_id") @db.Uuid // role=agencyの場合のみ設定(仕様書外の拡張: 代理店ポータルログイン)
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  email          String   @unique
+  phone          String?
+  passwordHash   String   @map("password_hash")
+  role           String   @default("user") // user | admin | admin_viewer(閲覧専用管理者。仕様書外の拡張) | staff(仕様書外の拡張) | agency
+  agencyId       String?  @map("agency_id") @db.Uuid // role=agencyの場合のみ設定(仕様書外の拡張: 代理店ポータルログイン)
   // 仕様書外の拡張(残課題指示書Stage11): JWTの即時失効用。role・agencyId変更、パスワード変更、
   // アカウント停止、強制ログアウト時にインクリメントする。JWT発行時にスナップショットし、
   // requireAuthでDBの最新値と照合することで、旧Cookieを即座に無効化する。
-  sessionVersion Int    @default(1) @map("session_version")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  sessionVersion Int      @default(1) @map("session_version")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   // 仕様書外の拡張: 初回購入時に紐づいた代理店への永久帰属(first-touch)。
   // 一度設定したら変更しない。以降の全ての注文はこの代理店/インフルエンサーに
@@ -214,11 +214,11 @@ model Product {
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
 
-  variants        ProductVariant[]
-  orderItems      OrderItem[]
-  nftIssues       NftIssue[]
-  couponEntries   CouponProduct[]
-  integrationRule ProductIntegrationRule?
+  variants         ProductVariant[]
+  orderItems       OrderItem[]
+  nftIssues        NftIssue[]
+  couponEntries    CouponProduct[]
+  integrationRules ProductIntegrationRule[]
 
   @@map("products")
 }
@@ -226,13 +226,23 @@ model Product {
 // 仕様書外の拡張(千ノ国全体統合 共通実装契約 2026-07-21 5.6章): 商品名の文字列判定ではなく、
 // 商品ごとにentitlement(権利)の送信先・種別を設定できるようにするルーティング設定。
 // 送信先の実エンドポイントが未確定のため、設定してもOutboxはpendingのまま留まり実送信はされない。
+// 本番安定化指示書Stage6(9.1・9.2): 1商品につき1送信先だと、例えばAIアート教室の権利付与と
+// OVEポイント付与を同時に行えない。productIdのunique制約を外し、1商品から複数のルール
+// (送信先ごとに1行)を持てるようにする(1:N化)。
 model ProductIntegrationRule {
   id                         String   @id @default(uuid()) @db.Uuid
-  productId                  String   @unique @map("product_id") @db.Uuid
+  productId                  String   @map("product_id") @db.Uuid
   productCode                String?  @map("product_code")
   entitlementTargetSystemKey String?  @map("entitlement_target_system_key") // sengoku-passport | ove-wallet | ai-art-school
   entitlementType            String?  @map("entitlement_type")
   rewardRuleId               String?  @map("reward_rule_id")
+  // 本番安定化指示書Stage6(9.3・9.4): OVE Wallet向けのポイント計算設定。商品の購入数量を
+  // そのままポイント数として送らず、この設定に基づいて計算する。
+  // rewardCalculationMode: fixed_per_order(注文単位で固定額) | per_quantity(数量に比例) |
+  // fixed_total(常に固定額。fixed_per_orderと現状同じ扱いだが、将来の計算方式追加に備えて
+  // 意味を分けておく)。
+  rewardAmountPerUnit        Int?     @map("reward_amount_per_unit")
+  rewardCalculationMode      String?  @map("reward_calculation_mode")
   revokeOnRefund             Boolean  @default(true) @map("revoke_on_refund")
   // 仕様書外の拡張(残課題指示書Stage6・8.3): 送信先ごとに必須とするIDを設定可能にする。
   // 既定値はすべてfalse(現状どおり未解決のnullがあっても送信する)であり、既存の挙動を変えない。
@@ -240,11 +250,15 @@ model ProductIntegrationRule {
   requireSalesAgentId        Boolean  @default(false) @map("require_sales_agent_id")
   requireClosingAgentId      Boolean  @default(false) @map("require_closing_agent_id")
   requireReferralSessionKey  Boolean  @default(false) @map("require_referral_session_key")
+  // 本番安定化指示書Stage6(9.5・9.7): 無効化したルールは送信対象から外す(行を削除せず
+  // enabled=falseにするだけで一時停止できるようにする)。既定はtrue(既存の挙動を変えない)。
+  enabled                    Boolean  @default(true)
   createdAt                  DateTime @default(now()) @map("created_at")
   updatedAt                  DateTime @updatedAt @map("updated_at")
 
   product Product @relation(fields: [productId], references: [id])
 
+  @@unique([productId, entitlementTargetSystemKey, entitlementType])
   @@map("product_integration_rules")
 }
 
@@ -493,27 +507,27 @@ model IntegrationEventAttempt {
 // captureを注文作成(・会員登録)と同一トランザクションでこのテーブルへ記録する永続ジョブ化する。
 // referral confirm(event=registration/purchase)は残課題指示書Stage5で別途追加する。
 model OrderLinkingJob {
-  id           String  @id @default(uuid()) @db.Uuid
-  jobType      String  @map("job_type") // common_user_resolve | referral_capture | referral_confirm_purchase
-  userId       String? @map("user_id") @db.Uuid
-  orderId      String? @map("order_id") @db.Uuid
+  id                  String    @id @default(uuid()) @db.Uuid
+  jobType             String    @map("job_type") // common_user_resolve | referral_capture | referral_confirm_purchase
+  userId              String?   @map("user_id") @db.Uuid
+  orderId             String?   @map("order_id") @db.Uuid
   // 本番安定化指示書Stage5(8.1): 同一user/orderに対する重複enqueueを防ぐ。
   // 例: common-user-resolve:<user_id> / referral-capture:<order_id> /
   // referral-confirm-purchase:<order_id>。enqueue側はcreateではなくupsert(重複時no-op)で使う。
-  deduplicationKey String? @unique @map("deduplication_key")
-  status           String  @default("pending") // pending | processing | blocked | succeeded | failed | dead | skipped
-  attemptCount     Int     @default(0) @map("attempt_count")
-  processingToken  String? @map("processing_token")
+  deduplicationKey    String?   @unique @map("deduplication_key")
+  status              String    @default("pending") // pending | processing | blocked | succeeded | failed | dead | skipped
+  attemptCount        Int       @default(0) @map("attempt_count")
+  processingToken     String?   @map("processing_token")
   processingStartedAt DateTime? @map("processing_started_at")
   nextAttemptAt       DateTime? @map("next_attempt_at")
   lastError           String?   @map("last_error")
   // 本番安定化指示書Stage5(8.3): 依存先ジョブの完了待ちでblockedになった理由
   // (common_user_unresolved | referral_session_unresolved)。blockedはattempt_countを
   // 増やさない(依存待ちだけで再試行上限を消費してdeadにならないようにするため)。
-  blockedReason String?  @map("blocked_reason")
-  processedAt   DateTime? @map("processed_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  blockedReason       String?   @map("blocked_reason")
+  processedAt         DateTime? @map("processed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   @@index([status, nextAttemptAt])
   @@map("order_linking_jobs")
@@ -525,23 +539,23 @@ model OrderLinkingJob {
 // 復旧後に再送できる(integration_outbox_eventsと異なりprocessing_token/processing_started_atを
 // 最初から持たせ、Dispatcherの所有権管理を明確にする)。
 model NotificationOutboxEvent {
-  id                  String    @id @default(uuid()) @db.Uuid
-  eventType           String    @map("event_type") // agency_account_setup | agency_access_granted
-  recipient           String
-  payload             Json
-  status              String    @default("pending") // pending | processing | succeeded | failed | dead
-  attemptCount        Int       @default(0) @map("attempt_count")
-  processingToken     String?   @map("processing_token")
-  processingStartedAt DateTime? @map("processing_started_at")
-  nextAttemptAt       DateTime? @map("next_attempt_at")
-  lastError           String?   @map("last_error")
+  id                   String    @id @default(uuid()) @db.Uuid
+  eventType            String    @map("event_type") // agency_account_setup | agency_access_granted
+  recipient            String
+  payload              Json
+  status               String    @default("pending") // pending | processing | succeeded | failed | dead
+  attemptCount         Int       @default(0) @map("attempt_count")
+  processingToken      String?   @map("processing_token")
+  processingStartedAt  DateTime? @map("processing_started_at")
+  nextAttemptAt        DateTime? @map("next_attempt_at")
+  lastError            String?   @map("last_error")
   // setup系通知でDispatcherが発行したパスワード設定トークンの参照(生トークンは保存しない)。
   // 再試行時にこのトークンを無効化してから新規発行することで、無制限に有効トークンが
   // 増えるのを防ぐ(残課題指示書5.5)。
-  passwordResetTokenId String?  @map("password_reset_token_id") @db.Uuid
-  processedAt         DateTime? @map("processed_at")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  passwordResetTokenId String?   @map("password_reset_token_id") @db.Uuid
+  processedAt          DateTime? @map("processed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
 
   @@index([status, nextAttemptAt])
   @@map("notification_outbox_events")

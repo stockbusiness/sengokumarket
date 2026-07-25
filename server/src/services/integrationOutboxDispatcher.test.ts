@@ -76,6 +76,12 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
           source_user_id: 'user-1',
           order_item_id: overrides.orderItemId ?? 'order-item-1',
           quantity: 1,
+          // 本番安定化指示書Stage6(9.4): 実際の運用ではenqueueEntitlementEvents経由で必ず
+          // 付与される値(商品数量をそのままポイント数にしないための計算済み額)。この
+          // テストはdispatcherの送信メカニズム自体の検証が目的でorder_idを持たせず
+          // reconcileEntitlementFieldsのルール再取得をスキップさせているため、ここで明示的に
+          // 用意する。
+          reward_amount: 1,
         },
       });
     });
@@ -129,6 +135,61 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
     expect(row.status).toBe('succeeded');
     expect((row.payload as Record<string, unknown>).ove_transaction_id).toBe('tx_test_001');
+  });
+
+  // 本番安定化指示書Stage6(9.4「商品数量をそのままポイント数にしない」)。
+  it('ove-wallet宛entitlement.grantedはpayload.quantityではなくpayload.reward_amount/reward_rule_idをgrantRewardへ渡す', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_reward_amount' });
+    const correlationId = `${correlationPrefix}reward-amount-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'ove-wallet',
+        correlationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_item_id: 'oi-reward-amount-1',
+          quantity: 99, // 数量は大きいが、reward_amountとは無関係であることの確認
+          reward_amount: 250,
+          reward_rule_id: 'rule_test_001',
+        },
+      });
+    });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.succeeded).toBe(1);
+    expect(grantRewardMock).toHaveBeenCalledWith(expect.objectContaining({ amount: 250, rewardRuleId: 'rule_test_001' }));
+  });
+
+  it('reward_amountが数値でない場合は送信を試みず再試行になる(暗黙にquantityへフォールバックしない)', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const correlationId = `${correlationPrefix}reward-amount-missing-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'ove-wallet',
+        correlationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_item_id: 'oi-reward-amount-missing-1',
+          quantity: 3,
+        },
+      });
+    });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(grantRewardMock).not.toHaveBeenCalled();
+    expect(result.retrying).toBe(1);
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
+    expect(row.status).toBe('pending');
+    expect(row.lastError).toContain('reward_amount');
   });
 
   it('ove-wallet宛entitlement.revokedは対応するgranted成功行のtransaction_idでreverseRewardを呼ぶ', async () => {
@@ -428,7 +489,7 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
         status: 'published',
       },
     });
-    await prisma.productIntegrationRule.create({
+    const rule = await prisma.productIntegrationRule.create({
       data: {
         productId: product.id,
         productCode: 'STAGE6-TEST',
@@ -468,7 +529,7 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
     });
 
     const event = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: order.id } });
-    return { product, order, orderItem, event };
+    return { product, order, orderItem, event, rule };
   }
 
   it('必須(requireCommonUserId=true)なのにcommon_user_idが未解決ならblockedになり送信しない', async () => {
@@ -538,5 +599,23 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
     expect(grantRewardMock).toHaveBeenCalledWith(expect.objectContaining({ commonUserId: 'cu_stage6_fresh' }));
     const row = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
     expect((row.payload as Record<string, unknown>).common_user_id).toBe('cu_stage6_fresh');
+  });
+
+  // 本番安定化指示書Stage6(9.5・9.7「無効ルールは送信しない」): enqueue後(pendingのまま)に
+  // 管理者がルールを無効化した場合でも、送信前の再取得(reconcileEntitlementFields)で検知して
+  // 送信を止める。
+  it('enqueue後にルールがenabled=falseへ変更されると、送信せずblockedになる', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const { event, rule } = await createEntitlementEvent({ requireCommonUserId: false, orderCommonUserId: 'cu_stage6_disabled_rule' });
+    await prisma.productIntegrationRule.update({ where: { id: rule.id }, data: { enabled: false } });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.blocked).toBe(1);
+    expect(grantRewardMock).not.toHaveBeenCalled();
+    const row = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+    expect(row.status).toBe('blocked');
+    expect(row.blockedReason).toBe('integration_rule_disabled');
   });
 });

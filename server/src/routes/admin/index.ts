@@ -5,6 +5,7 @@ import auditLogsRouter from './auditLogs';
 import adminUsersRouter from './adminUsers';
 import dashboardRouter from './dashboard';
 import productsRouter from './products';
+import productIntegrationRulesRouter from './productIntegrationRules';
 import ordersRouter from './orders';
 import externalOrdersRouter from './externalOrders';
 import nftIssuesRouter from './nftIssues';
@@ -57,5 +58,8 @@ router.use(stripeEventsRouter);
 router.use(integrationOutboxRouter);
 router.use(notificationOutboxRouter);
 router.use(orderLinkingJobsRouter);
+// 本番安定化指示書Stage6: 商品ごとの権利付与ルーティング・OVEポイント計算設定は、日次業務
+// (在庫・注文対応等)ではなく代理店設定等と同様の高度な設定操作のため、staffには公開しない。
+router.use(productIntegrationRulesRouter);
 
 export default router;

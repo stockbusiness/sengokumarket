@@ -101,7 +101,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
 
   it('ProductIntegrationRuleが設定されている商品はentitlement.grantedを正しい形でエンキューする', async () => {
     const product = await createTestProduct('with-rule-grant');
-    await prisma.productIntegrationRule.create({
+    const rule = await prisma.productIntegrationRule.create({
       data: {
         productId: product.id,
         productCode: 'PASSPORT-GOLD',
@@ -134,6 +134,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
       order_id: order.id,
       order_item_id: orderItem.id,
       product_id: product.id,
+      product_integration_rule_id: rule.id,
       product_code: 'PASSPORT-GOLD',
       entitlement_type: 'castle_lord_contract',
       quantity: 3,
@@ -142,7 +143,7 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
     await prisma.orderItem.delete({ where: { id: orderItem.id } });
     await prisma.order.delete({ where: { id: order.id } });
-    await prisma.productIntegrationRule.delete({ where: { productId: product.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
     await prisma.product.delete({ where: { id: product.id } });
   });
 
@@ -173,7 +174,105 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
     await prisma.orderItem.delete({ where: { id: orderItem.id } });
     await prisma.order.delete({ where: { id: order.id } });
-    await prisma.productIntegrationRule.delete({ where: { productId: product.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  // 本番安定化指示書Stage6(9.1・9.2・9.7): 1商品から複数の送信先へ同時に権利付与できること
+  // (受入条件「1商品から複数システムへ送信可能」「AIアート教室権利＋OVEポイントを同時付与可能」)。
+  it('1商品に複数のルールがある場合、それぞれの送信先へ個別にエンキューする', async () => {
+    const product = await createTestProduct('multi-rule');
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ai-art-school',
+        entitlementType: 'course_access',
+      },
+    });
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'reward_point',
+        rewardAmountPerUnit: 100,
+        rewardCalculationMode: 'per_quantity',
+      },
+    });
+    const { order, orderItem } = await createTestOrder(product.id, { quantity: 2 });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueEntitlementEvents(tx, order, [orderItem], 'entitlement.granted');
+    });
+
+    const rows = await prisma.integrationOutboxEvent.findMany({ where: { correlationId: order.id } });
+    expect(rows).toHaveLength(2);
+    const destinations = rows.map((r) => r.destinationSystemKey).sort();
+    expect(destinations).toEqual(['ai-art-school', 'ove-wallet']);
+
+    const oveRow = rows.find((r) => r.destinationSystemKey === 'ove-wallet')!;
+    const ovePayload = oveRow.payload as Record<string, unknown>;
+    // 本番安定化指示書Stage6(9.4): 商品数量(2)をそのままポイント数にせず、
+    // reward_amount_per_unit(100) * quantity(2) = 200として計算する(per_quantity)。
+    expect(ovePayload.reward_amount).toBe(200);
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
+    await prisma.orderItem.delete({ where: { id: orderItem.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  it('rewardCalculationMode=fixed_per_orderの場合、数量に関わらずreward_amount_per_unitをそのまま使う', async () => {
+    const product = await createTestProduct('fixed-reward');
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'reward_point',
+        rewardAmountPerUnit: 500,
+        rewardCalculationMode: 'fixed_per_order',
+      },
+    });
+    const { order, orderItem } = await createTestOrder(product.id, { quantity: 5 });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueEntitlementEvents(tx, order, [orderItem], 'entitlement.granted');
+    });
+
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: order.id } });
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.reward_amount).toBe(500);
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
+    await prisma.orderItem.delete({ where: { id: orderItem.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  // 本番安定化指示書Stage6(9.5・9.7): 無効化したルールは送信対象から外す。
+  it('enabled=falseのルールはエンキュー対象外になる', async () => {
+    const product = await createTestProduct('disabled-rule');
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'sengoku-passport',
+        entitlementType: 'castle_lord_contract',
+        enabled: false,
+      },
+    });
+    const { order, orderItem } = await createTestOrder(product.id);
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueEntitlementEvents(tx, order, [orderItem], 'entitlement.granted');
+    });
+
+    const rows = await prisma.integrationOutboxEvent.findMany({ where: { correlationId: order.id } });
+    expect(rows).toHaveLength(0);
+
+    await prisma.orderItem.delete({ where: { id: orderItem.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
     await prisma.product.delete({ where: { id: product.id } });
   });
 });

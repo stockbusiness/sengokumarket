@@ -148,9 +148,13 @@ async function reconcileEntitlementFields(
     assigned_agency_id: order.assignedAgentCode,
   };
 
-  const productId = typeof payload.product_id === 'string' ? payload.product_id : null;
-  const rule = productId ? await prisma.productIntegrationRule.findUnique({ where: { productId } }) : null;
+  // 本番安定化指示書Stage6(9.2): 1商品に複数ルールを持てるようになったため、product_idではなく
+  // enqueue時点でスナップショットしたルールidで再取得する(product_idだけではどのルールに
+  // 基づくイベントか一意に特定できない)。
+  const ruleId = typeof payload.product_integration_rule_id === 'string' ? payload.product_integration_rule_id : null;
+  const rule = ruleId ? await prisma.productIntegrationRule.findUnique({ where: { id: ruleId } }) : null;
   if (!rule) return { blockedReason: null, effectivePayload };
+  if (!rule.enabled) return { blockedReason: 'integration_rule_disabled', effectivePayload };
 
   if (rule.requireCommonUserId && !order.commonUserId) return { blockedReason: 'common_user_unresolved', effectivePayload };
   if (rule.requireSalesAgentId && !order.salesAgentCode) return { blockedReason: 'sales_agent_unresolved', effectivePayload };
@@ -279,15 +283,23 @@ async function sendToOveWallet(event: IntegrationOutboxEvent): Promise<void> {
     source_user_id?: string | null;
     order_item_id?: string;
     quantity?: number;
+    reward_amount?: number;
+    reward_rule_id?: string | null;
     correlation_id?: string;
   };
 
   if (event.eventType === 'entitlement.granted') {
+    // 本番安定化指示書Stage6(9.4): 商品数量をそのままポイント数にしない。enqueue時点で
+    // product_integration_rulesの設定(reward_calculation_mode等)に基づき計算済みの
+    // reward_amountを使う(enqueueEntitlementEvents参照)。
+    if (typeof payload.reward_amount !== 'number') {
+      throw new Error('reward_amount is missing on entitlement.granted payload for ove-wallet');
+    }
     const grantResult = await grantReward({
       externalUserId: payload.source_user_id ?? '',
       commonUserId: payload.common_user_id ?? null,
-      amount: payload.quantity ?? 1,
-      rewardRuleId: null,
+      amount: payload.reward_amount,
+      rewardRuleId: payload.reward_rule_id ?? null,
       idempotencyKey: event.eventId,
       correlationId: payload.correlation_id ?? event.correlationId ?? event.eventId,
     });

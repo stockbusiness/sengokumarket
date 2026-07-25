@@ -8,6 +8,26 @@ export interface AdminProductVariant {
   stock: number;
   reservedStock: number;
 }
+
+// 本番安定化指示書Stage6(9.1〜9.5): 商品ごとの権利付与ルーティング設定。1商品から
+// 複数の送信先(entitlementTargetSystemKey)へ設定できる(1:N化)。
+export interface AdminProductIntegrationRule {
+  id: string;
+  productId: string;
+  productCode: string | null;
+  entitlementTargetSystemKey: string | null;
+  entitlementType: string | null;
+  rewardRuleId: string | null;
+  rewardAmountPerUnit: number | null;
+  rewardCalculationMode: string | null;
+  revokeOnRefund: boolean;
+  requireCommonUserId: boolean;
+  requireSalesAgentId: boolean;
+  requireClosingAgentId: boolean;
+  requireReferralSessionKey: boolean;
+  enabled: boolean;
+}
+
 export interface AdminProduct {
   id: string;
   name: string;
@@ -20,6 +40,8 @@ export interface AdminProduct {
   status: string;
   images: string[];
   variants: AdminProductVariant[];
+  // 一覧取得(fetchAdminProducts)では含まれない(単体取得fetchAdminProductでのみ返る)。
+  integrationRules?: AdminProductIntegrationRule[];
 }
 
 export function fetchAdminProducts() {
@@ -92,4 +114,32 @@ export function uploadAdminProductImage(file: File) {
   const formData = new FormData();
   formData.append('image', file);
   return adminSendForm<{ url: string }>('/products/upload-image', formData, 'アップロードに失敗しました');
+}
+
+// 本番安定化指示書Stage6(9.5): 商品編集画面から連携ルールを管理するためのAPI。
+export interface IntegrationRuleRequest {
+  productCode?: string | null;
+  entitlementTargetSystemKey?: string | null;
+  entitlementType?: string | null;
+  rewardRuleId?: string | null;
+  rewardAmountPerUnit?: number | null;
+  rewardCalculationMode?: string | null;
+  revokeOnRefund?: boolean;
+  requireCommonUserId?: boolean;
+  requireSalesAgentId?: boolean;
+  requireClosingAgentId?: boolean;
+  requireReferralSessionKey?: boolean;
+  enabled?: boolean;
+}
+
+export function fetchAdminProductIntegrationRules(productId: string) {
+  return adminFetch<{ rules: AdminProductIntegrationRule[] }>(`/products/${productId}/integration-rules`);
+}
+
+export function createAdminProductIntegrationRule(productId: string, payload: IntegrationRuleRequest) {
+  return adminSend<{ rule: AdminProductIntegrationRule }>('POST', `/products/${productId}/integration-rules`, payload);
+}
+
+export function updateAdminProductIntegrationRule(productId: string, ruleId: string, payload: IntegrationRuleRequest) {
+  return adminSend<{ rule: AdminProductIntegrationRule }>('PATCH', `/products/${productId}/integration-rules/${ruleId}`, payload);
 }
