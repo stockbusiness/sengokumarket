@@ -493,19 +493,27 @@ model IntegrationEventAttempt {
 // captureを注文作成(・会員登録)と同一トランザクションでこのテーブルへ記録する永続ジョブ化する。
 // referral confirm(event=registration/purchase)は残課題指示書Stage5で別途追加する。
 model OrderLinkingJob {
-  id                  String    @id @default(uuid()) @db.Uuid
-  jobType             String    @map("job_type") // common_user_resolve | referral_capture
-  userId              String?   @map("user_id") @db.Uuid
-  orderId             String?   @map("order_id") @db.Uuid
-  status              String    @default("pending") // pending | processing | succeeded | failed | dead
-  attemptCount        Int       @default(0) @map("attempt_count")
-  processingToken     String?   @map("processing_token")
+  id           String  @id @default(uuid()) @db.Uuid
+  jobType      String  @map("job_type") // common_user_resolve | referral_capture | referral_confirm_purchase
+  userId       String? @map("user_id") @db.Uuid
+  orderId      String? @map("order_id") @db.Uuid
+  // 本番安定化指示書Stage5(8.1): 同一user/orderに対する重複enqueueを防ぐ。
+  // 例: common-user-resolve:<user_id> / referral-capture:<order_id> /
+  // referral-confirm-purchase:<order_id>。enqueue側はcreateではなくupsert(重複時no-op)で使う。
+  deduplicationKey String? @unique @map("deduplication_key")
+  status           String  @default("pending") // pending | processing | blocked | succeeded | failed | dead | skipped
+  attemptCount     Int     @default(0) @map("attempt_count")
+  processingToken  String? @map("processing_token")
   processingStartedAt DateTime? @map("processing_started_at")
   nextAttemptAt       DateTime? @map("next_attempt_at")
   lastError           String?   @map("last_error")
-  processedAt         DateTime? @map("processed_at")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  // 本番安定化指示書Stage5(8.3): 依存先ジョブの完了待ちでblockedになった理由
+  // (common_user_unresolved | referral_session_unresolved)。blockedはattempt_countを
+  // 増やさない(依存待ちだけで再試行上限を消費してdeadにならないようにするため)。
+  blockedReason String?  @map("blocked_reason")
+  processedAt   DateTime? @map("processed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
 
   @@index([status, nextAttemptAt])
   @@map("order_linking_jobs")

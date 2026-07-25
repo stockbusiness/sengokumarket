@@ -15,10 +15,21 @@ export interface SennokuniSigningInput {
   method: string;
   path: string;
   rawBody: string;
+  // 本番安定化指示書Stage5(8.2): Idempotency-Keyは送信ヘッダーだけでなく署名対象にも含める
+  // (途中の改ざんでIdempotency-Keyだけ差し替えられても検知できるようにするため)。
+  idempotencyKey?: string;
 }
 
 export function buildSennokuniSigningString(input: SennokuniSigningInput): string {
-  return [input.keyId, input.timestamp, input.nonce, input.method.toUpperCase(), input.path, input.rawBody].join('\n');
+  return [
+    input.keyId,
+    input.timestamp,
+    input.nonce,
+    input.method.toUpperCase(),
+    input.path,
+    input.rawBody,
+    input.idempotencyKey ?? '',
+  ].join('\n');
 }
 
 export function signSennokuniRequest(input: SennokuniSigningInput & { secret: string }): string {
@@ -28,7 +39,6 @@ export function signSennokuniRequest(input: SennokuniSigningInput & { secret: st
 export interface SennokuniHeadersInput extends SennokuniSigningInput {
   secret: string;
   eventVersion?: string;
-  idempotencyKey?: string;
   correlationId?: string;
 }
 

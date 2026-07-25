@@ -18,7 +18,7 @@ export interface CaptureReferralResult {
 // このシステムの`referral_links.code`を代理店HUBのcanonical_referral_tokenへ変換する。
 // Feature Flag無効、または接続情報未設定の場合は即座にnull(呼び出し側は既存どおり
 // referral_links.codeのみでの解決を続ける。既存の紹介・報酬フローには一切影響しない)。
-export async function captureReferralToken(rawRefValue: string): Promise<CaptureReferralResult | null> {
+export async function captureReferralToken(orderId: string, rawRefValue: string): Promise<CaptureReferralResult | null> {
   if (!isSennokuniIntegrationEnabled()) return null;
 
   const credentials = await getSennokuniHubCredentials();
@@ -28,6 +28,9 @@ export async function captureReferralToken(rawRefValue: string): Promise<Capture
   const rawBody = JSON.stringify({ system_key: SYSTEM_KEY, token: rawRefValue });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomBytes(16).toString('hex');
+  // 本番安定化指示書Stage5(8.2): 同じ注文に対する再試行が外部側で重複captureとならないよう、
+  // 固定のIdempotency-Keyを送る。
+  const idempotencyKey = `referral-capture:${orderId}`;
   const headers = buildSennokuniHeaders({
     keyId: credentials.keyId,
     secret: credentials.secret,
@@ -37,6 +40,7 @@ export async function captureReferralToken(rawRefValue: string): Promise<Capture
     path: CAPTURE_PATH,
     rawBody,
     eventVersion: '1.0',
+    idempotencyKey,
   });
 
   let res: Response;
@@ -84,6 +88,7 @@ export async function captureReferralToken(rawRefValue: string): Promise<Capture
 }
 
 export interface ConfirmReferralInput {
+  orderId: string;
   referralSessionKey: string;
   commonUserId: string;
   event: 'registration' | 'purchase';
@@ -115,6 +120,11 @@ export async function confirmReferral(input: ConfirmReferralInput): Promise<Conf
   });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomBytes(16).toString('hex');
+  // 本番安定化指示書Stage5(8.2): 同じ注文に対する再試行が外部側で重複confirmとならないよう、
+  // 固定のIdempotency-Keyを送る。このシステムはevent=purchaseのconfirmのみ発行する
+  // (registration confirmのjob typeは未実装。将来追加する場合はreferral-confirm-registration:
+  // <user_id>形式にする)。
+  const idempotencyKey = `referral-confirm-purchase:${input.orderId}`;
   const headers = buildSennokuniHeaders({
     keyId: credentials.keyId,
     secret: credentials.secret,
@@ -124,6 +134,7 @@ export async function confirmReferral(input: ConfirmReferralInput): Promise<Conf
     path: CONFIRM_PATH,
     rawBody,
     eventVersion: '1.0',
+    idempotencyKey,
   });
 
   let res: Response;

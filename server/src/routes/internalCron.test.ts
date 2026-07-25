@@ -22,7 +22,7 @@ vi.mock('../services/integrationOutboxDispatcher', () => ({
   dispatchPendingOutboxEvents: () => dispatchPendingOutboxEvents(),
 }));
 
-const processOrderLinkingJobs = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 }));
+const processOrderLinkingJobs = vi.fn(async () => ({ claimed: 0, succeeded: 0, retrying: 0, blocked: 0, dead: 0, skipped: 0 }));
 
 vi.mock('../services/orderLinkingJobDispatcher', () => ({
   processOrderLinkingJobs: () => processOrderLinkingJobs(),
@@ -291,7 +291,7 @@ describe('内部cron: 共通ID・紹介連携ジョブ送信(残課題指示書S
       .get('/api/internal/cron/process-order-linking-jobs')
       .set('Authorization', 'Bearer test-cron-secret-order-linking');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0 });
+    expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, blocked: 0, dead: 0, skipped: 0 });
     expect(processOrderLinkingJobs).toHaveBeenCalledTimes(1);
   });
 });

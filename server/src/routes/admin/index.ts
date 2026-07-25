@@ -21,6 +21,7 @@ import couponsRouter from './coupons';
 import stripeEventsRouter from './stripeEvents';
 import integrationOutboxRouter from './integrationOutbox';
 import notificationOutboxRouter from './notificationOutbox';
+import orderLinkingJobsRouter from './orderLinkingJobs';
 
 const router = Router();
 
@@ -55,5 +56,6 @@ router.use(couponsRouter);
 router.use(stripeEventsRouter);
 router.use(integrationOutboxRouter);
 router.use(notificationOutboxRouter);
+router.use(orderLinkingJobsRouter);
 
 export default router;

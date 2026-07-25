@@ -36,6 +36,9 @@ export async function resolveCommonUserId(input: ResolveCommonUserInput): Promis
   });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomBytes(16).toString('hex');
+  // 本番安定化指示書Stage5(8.2): 同じuser_idに対する再試行が外部側で重複解決とならないよう、
+  // 固定のIdempotency-Keyを送る。
+  const idempotencyKey = `common-user-resolve:${input.externalUserId}`;
   const headers = buildSennokuniHeaders({
     keyId: credentials.keyId,
     secret: credentials.secret,
@@ -45,6 +48,7 @@ export async function resolveCommonUserId(input: ResolveCommonUserInput): Promis
     path: RESOLVE_PATH,
     rawBody,
     eventVersion: '1.0',
+    idempotencyKey,
   });
 
   let res: Response;

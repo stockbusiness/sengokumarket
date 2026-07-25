@@ -12,15 +12,24 @@ type Tx = Prisma.TransactionClient;
 // Checkout時点ではcapture止まりとし、confirmは会員登録完了・決済確定のタイミングで
 // 別途enqueueする設計にしている)。
 
+// 本番安定化指示書Stage5(8.1): 同一user/orderに対する重複enqueueを防ぐため、createではなく
+// upsert(deduplication_keyが既存なら何もしない=no-op)を使う。呼び出し元が同じジョブを
+// 複数回enqueueしようとしても(例: リトライ・二重送信されたWebhook)、重複行は作られない。
 export function enqueueCommonUserResolveJob(tx: Tx, input: { userId: string; orderId?: string }): Promise<OrderLinkingJob> {
-  return tx.orderLinkingJob.create({
-    data: { jobType: 'common_user_resolve', userId: input.userId, orderId: input.orderId ?? null },
+  const deduplicationKey = `common-user-resolve:${input.userId}`;
+  return tx.orderLinkingJob.upsert({
+    where: { deduplicationKey },
+    create: { jobType: 'common_user_resolve', userId: input.userId, orderId: input.orderId ?? null, deduplicationKey },
+    update: {},
   });
 }
 
 export function enqueueReferralCaptureJob(tx: Tx, orderId: string): Promise<OrderLinkingJob> {
-  return tx.orderLinkingJob.create({
-    data: { jobType: 'referral_capture', orderId },
+  const deduplicationKey = `referral-capture:${orderId}`;
+  return tx.orderLinkingJob.upsert({
+    where: { deduplicationKey },
+    create: { jobType: 'referral_capture', orderId, deduplicationKey },
+    update: {},
   });
 }
 
@@ -28,7 +37,10 @@ export function enqueueReferralCaptureJob(tx: Tx, orderId: string): Promise<Orde
 // enqueueする。呼び出し元(applyPaidOrderSideEffects)はpaymentStatus='paid'への更新後にのみ
 // 呼ばれるため、未決済注文でconfirmされることはなく、二重処理防止も既存の決済確定処理に委ねる。
 export function enqueueReferralConfirmPurchaseJob(tx: Tx, orderId: string): Promise<OrderLinkingJob> {
-  return tx.orderLinkingJob.create({
-    data: { jobType: 'referral_confirm_purchase', orderId },
+  const deduplicationKey = `referral-confirm-purchase:${orderId}`;
+  return tx.orderLinkingJob.upsert({
+    where: { deduplicationKey },
+    create: { jobType: 'referral_confirm_purchase', orderId, deduplicationKey },
+    update: {},
   });
 }

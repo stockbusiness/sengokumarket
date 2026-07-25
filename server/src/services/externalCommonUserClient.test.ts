@@ -69,6 +69,9 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
     expect(options.headers['X-SenNoKuni-Signature']).toBeTruthy();
     expect(options.headers['X-SenNoKuni-Nonce']).toBeTruthy();
     expect(options.headers['X-SenNoKuni-Timestamp']).toBeTruthy();
+    // 本番安定化指示書Stage5(8.2): 同じuser_idの再試行が外部側で重複解決にならないよう、
+    // 固定のIdempotency-Keyを送る。
+    expect(options.headers['Idempotency-Key']).toBe('common-user-resolve:user-1');
     expect(JSON.parse(options.body)).toMatchObject({
       system_key: 'sengoku-market',
       external_user_id: 'user-1',

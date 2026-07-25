@@ -30,7 +30,7 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
 
-      const result = await captureReferralToken('SGI0001');
+      const result = await captureReferralToken('order-test-1', 'SGI0001');
 
       expect(result).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
@@ -55,7 +55,7 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      const result = await captureReferralToken('SGI0001');
+      const result = await captureReferralToken('order-test-1', 'SGI0001');
 
       expect(result).toEqual({
         canonicalReferralToken: 'rt_test_001',
@@ -66,6 +66,9 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       const [url, options] = fetchMock.mock.calls[0];
       expect(url).toBe('https://agency-hub.example.com/api/referrals/capture');
       expect(JSON.parse(options.body)).toMatchObject({ system_key: 'sengoku-market', token: 'SGI0001' });
+      // 本番安定化指示書Stage5(8.2): 同じ注文の再試行が外部側で重複captureにならないよう、
+      // 固定のIdempotency-Keyを送る。
+      expect(options.headers['Idempotency-Key']).toBe('referral-capture:order-test-1');
     });
 
     it('status !== capturedの応答はnullを返す', async () => {
@@ -75,7 +78,7 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ status: 'expired' }) }));
 
-      const result = await captureReferralToken('SGI0001');
+      const result = await captureReferralToken('order-test-1', 'SGI0001');
       expect(result).toBeNull();
     });
   });
@@ -85,7 +88,7 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
 
-      const result = await confirmReferral({ referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
+      const result = await confirmReferral({ orderId: 'order-test-1', referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
 
       expect(result).toBeNull();
       expect(fetchMock).not.toHaveBeenCalled();
@@ -111,7 +114,7 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       });
       vi.stubGlobal('fetch', fetchMock);
 
-      const result = await confirmReferral({ referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
+      const result = await confirmReferral({ orderId: 'order-test-1', referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
 
       expect(result).toEqual({
         commonUserId: 'cu_test_001',
@@ -120,8 +123,11 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
         salesAgentId: 'AGENT-CODE-003',
         closingAgentId: 'AGENT-CODE-004',
       });
-      const [url] = fetchMock.mock.calls[0];
+      const [url, options] = fetchMock.mock.calls[0];
       expect(url).toBe('https://agency-hub.example.com/api/referrals/confirm');
+      // 本番安定化指示書Stage5(8.2): 同じ注文の再試行が外部側で重複confirmにならないよう、
+      // 固定のIdempotency-Keyを送る。
+      expect(options.headers['Idempotency-Key']).toBe('referral-confirm-purchase:order-test-1');
     });
   });
 });
