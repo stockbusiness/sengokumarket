@@ -49,7 +49,12 @@ jobs:
       # migrationファイルが不足している状態(このリポジトリで実際に発生した本番障害の原因)を
       # マージ前に検知する。migrationsを再生した結果とschema.prismaが一致しない場合、
       # --exit-codeにより非ゼロ終了する。
-      - run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "$DATABASE_URL" --exit-code
+      # 重要: --shadow-database-urlに実データが入っている$DATABASE_URLをそのまま渡すと、
+      # prisma migrate diffが比較用に_prisma_migrationsテーブル自体を消してしまう
+      # (実際にこの問題で以降のテスト・/api/readyが軒並み失敗する事故が起きたため、
+      # 必ず専用の空DBを用意すること)。
+      - run: PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE sengoku_ci_shadow"
+      - run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url "postgresql://postgres:postgres@localhost:5432/sengoku_ci_shadow" --exit-code
         working-directory: server
       - run: npx tsx prisma/seed.ts
         working-directory: server
