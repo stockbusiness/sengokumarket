@@ -61,6 +61,29 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     expect(updated!.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
   });
 
+  // 本番安定化指示書Stage2・5.4「1回の処理時間上限」: Functionの残り時間に余裕がない場合は
+  // 新規claimを停止する(integration_outbox_eventsと同じ方針)。
+  it('時間予算(NOTIFICATION_OUTBOX_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
+    process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS = '0';
+    const user = await createUser();
+    const event = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: user.email,
+      payload: { name: user.name },
+    });
+
+    try {
+      const result = await dispatchPendingNotifications();
+      expect(result.claimed).toBe(0);
+      expect(sendViaResendOrThrow).not.toHaveBeenCalled();
+
+      const updated = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+      expect(updated.status).toBe('pending');
+    } finally {
+      delete process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS;
+    }
+  });
+
   it('最大試行回数を超えるとdeadになる', async () => {
     const user = await createUser();
     const event = await repo.enqueueNotification(prisma, {

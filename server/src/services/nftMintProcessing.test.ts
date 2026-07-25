@@ -113,6 +113,24 @@ describe('processNftMints(仕様書外の拡張)', () => {
     expect(after.issuedAt).not.toBeNull();
   });
 
+  // 本番安定化指示書Stage2・5.4「1回の処理時間上限」: Functionの残り時間に余裕がない場合は
+  // 新規claimを停止する(integration_outbox_eventsと同じ方針)。
+  it('時間予算(NFT_MINT_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
+    process.env.NFT_MINT_TIME_BUDGET_MS = '0';
+    const issue = await createOrderAndIssue('ready_to_issue');
+
+    try {
+      const result = await processNftMints();
+      expect(result.claimed).toBe(0);
+      expect(result.issued).toBe(0);
+
+      const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
+      expect(after.status).toBe('ready_to_issue');
+    } finally {
+      delete process.env.NFT_MINT_TIME_BUDGET_MS;
+    }
+  });
+
   it('並行してclaimを試みても1件のみが処理される(アトミックなclaim)', async () => {
     const issue = await createOrderAndIssue('ready_to_issue');
 

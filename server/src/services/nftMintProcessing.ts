@@ -8,6 +8,16 @@ const MAX_ATTEMPTS = 5;
 // 5→10→20→40→60分(以降は60分キャップ)の指数バックオフ。
 const BACKOFF_MINUTES = [5, 10, 20, 40, 60];
 
+// 本番安定化指示書Stage2(5.4「1回の処理時間上限」): Functionの残り時間に余裕がない場合は
+// 新規処理を打ち切る。integration_outbox_eventsのgetTimeBudgetMsと同じ方針
+// (環境変数で調整可能・"0"も有効な設定値として扱うためisFiniteで判定・既定値は保守的に8000ms)。
+function getTimeBudgetMs(): number {
+  const raw = process.env.NFT_MINT_TIME_BUDGET_MS;
+  if (raw === undefined) return 8000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 8000;
+}
+
 export interface ProcessNftMintsResult {
   claimed: number;
   issued: number;
@@ -23,10 +33,13 @@ export interface ProcessNftMintsResult {
 export async function processNftMints(): Promise<ProcessNftMintsResult> {
   const provider = getMintProvider();
   const result: ProcessNftMintsResult = { claimed: 0, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+  const startedAt = Date.now();
+  const timeBudgetMs = getTimeBudgetMs();
 
   // 1) 前回までにprocessingへ送信済みで未確定の行から先に確定を試みる。
   const processingRows = await prisma.nftIssue.findMany({ where: { status: 'processing' }, take: BATCH_LIMIT });
   for (const issue of processingRows) {
+    if (Date.now() - startedAt >= timeBudgetMs) return result;
     await pollAndMaybeConfirm(issue, provider, result);
   }
 
@@ -37,6 +50,12 @@ export async function processNftMints(): Promise<ProcessNftMintsResult> {
   });
 
   for (const issue of readyRows) {
+    if (Date.now() - startedAt >= timeBudgetMs) {
+      // Functionの残り時間に余裕がないため、これ以上は新規claimしない
+      // (claim済みでない行はready_to_issueのまま残り、次回の呼び出しで再評価される)。
+      break;
+    }
+
     // checkout.tsの行ロック(FOR UPDATE)に相当する、条件付きUPDATEによるアトミックなclaim。
     // 他プロセス(同時実行のcron・管理者操作)に先を越されていた場合はclaimedCount=0になる。
     const claimedCount = await prisma.$executeRaw`

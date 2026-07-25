@@ -17,6 +17,16 @@ const MAX_ATTEMPTS = 5;
 const BACKOFF_MINUTES = [5, 10, 20, 40, 60];
 const STALE_PROCESSING_MS = 10 * 60 * 1000;
 
+// 本番安定化指示書Stage2(5.4「1回の処理時間上限」): integration_outbox_eventsの
+// getTimeBudgetMsと同じ方針(環境変数で調整可能・"0"も有効な設定値として扱うためisFiniteで
+// 判定・既定値は保守的に8000ms)。
+function getTimeBudgetMs(): number {
+  const raw = process.env.ORDER_LINKING_TIME_BUDGET_MS;
+  if (raw === undefined) return 8000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 8000;
+}
+
 export interface DispatchOrderLinkingJobsResult {
   claimed: number;
   succeeded: number;
@@ -34,6 +44,9 @@ export async function processOrderLinkingJobs(): Promise<DispatchOrderLinkingJob
 
   if (!isSennokuniIntegrationEnabled()) return result;
 
+  const startedAt = Date.now();
+  const timeBudgetMs = getTimeBudgetMs();
+
   await prisma.orderLinkingJob.updateMany({
     where: { status: 'processing', processingStartedAt: { lt: new Date(Date.now() - STALE_PROCESSING_MS) } },
     data: { status: 'pending', processingToken: null, processingStartedAt: null },
@@ -46,6 +59,12 @@ export async function processOrderLinkingJobs(): Promise<DispatchOrderLinkingJob
   });
 
   for (const job of pendingJobs) {
+    if (Date.now() - startedAt >= timeBudgetMs) {
+      // Functionの残り時間に余裕がないため、これ以上は新規claimしない
+      // (claim済みでない行はpendingのまま残り、次回の呼び出しで再評価される)。
+      break;
+    }
+
     const processingToken = generateProcessingToken();
     const claim = await prisma.orderLinkingJob.updateMany({
       where: { id: job.id, status: 'pending' },

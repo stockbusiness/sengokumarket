@@ -118,6 +118,30 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     expect(updatedUser.commonUserId).toBe(`cu_${emailSuffix}_reactivated`);
   });
 
+  // 本番安定化指示書Stage2・5.4「1回の処理時間上限」: Functionの残り時間に余裕がない場合は
+  // 新規claimを停止する(integration_outbox_eventsと同じ方針)。
+  it('時間予算(ORDER_LINKING_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    process.env.ORDER_LINKING_TIME_BUDGET_MS = '0';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const user = await createUser();
+    const job = await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id }));
+
+    const result = await processOrderLinkingJobs();
+
+    expect(result.claimed).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const after = await prisma.orderLinkingJob.findUniqueOrThrow({ where: { id: job.id } });
+    expect(after.status).toBe('pending');
+
+    delete process.env.ORDER_LINKING_TIME_BUDGET_MS;
+  });
+
   describe('common_user_resolve job', () => {
     it('未解決ユーザーはresolve APIを呼びcommonUserIdを更新する(orderIdがあれば注文へも反映)', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';

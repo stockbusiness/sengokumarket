@@ -1,0 +1,62 @@
+name: Dispatch background jobs
+
+# 本番安定化・外部連携有効化ゲート指示書 Stage2(5.3「推奨方式」#2): Vercel Cronは
+# Hobbyプランでは1日1回までしか設定できず、コード側のbackoff(5〜60分)と噛み合わない。
+# 外部スケジューラーからCron API(/api/internal/cron/process-*)を5分間隔で呼び出すことで、
+# Vercelのプランに依存せず短い間隔での再試行を実現する(vercel.jsonの日次crons設定は
+# 取りこぼし時の安全網として維持し、変更しない)。
+#
+# 事前準備(このリポジトリのSettings > Secrets and variables > Actionsで設定が必要):
+#   - PRODUCTION_APP_URL: 本番のベースURL(例: https://sengokumarket.example.com)
+#   - CRON_SECRET: 本番のCRON_SECRET環境変数と同じ値
+# 未設定の間はこのワークフロー自体が早期に失敗するだけで、アプリの動作には影響しない。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: dispatch-cron
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required secrets are configured
+        run: |
+          if [ -z "${{ secrets.PRODUCTION_APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "PRODUCTION_APP_URL・CRON_SECRETがリポジトリのSecretsに未設定のため、何もせず終了します。" >&2
+            echo "設定するとこのワークフローが有効な外部スケジューラーとして機能します。" >&2
+            exit 0
+          fi
+          echo "secrets_ok=true" >> "$GITHUB_ENV"
+
+      - name: Call background dispatch endpoints
+        if: env.secrets_ok == 'true'
+        env:
+          BASE_URL: ${{ secrets.PRODUCTION_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -u
+          failures=0
+          for path in \
+            "process-nft-mints" \
+            "process-integration-outbox" \
+            "process-notification-outbox" \
+            "process-order-linking-jobs"; do
+            url="${BASE_URL%/}/api/internal/cron/${path}"
+            status=$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "$url" || echo "000")
+            echo "GET ${path} -> HTTP ${status}"
+            cat /tmp/response.json 2>/dev/null || true
+            echo
+            if [ "$status" != "200" ]; then
+              failures=$((failures + 1))
+            fi
+          done
+          if [ "$failures" -gt 0 ]; then
+            echo "::error::${failures}件のエンドポイントが失敗しました"
+            exit 1
+          fi

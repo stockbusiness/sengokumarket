@@ -8,6 +8,16 @@ import type { AgencyAccessGrantedPayload, AgencyAccountSetupPayload } from '../d
 
 const BATCH_LIMIT = 10;
 
+// 本番安定化指示書Stage2(5.4「1回の処理時間上限」): integration_outbox_eventsの
+// getTimeBudgetMsと同じ方針(環境変数で調整可能・"0"も有効な設定値として扱うためisFiniteで
+// 判定・既定値は保守的に8000ms)。
+function getTimeBudgetMs(): number {
+  const raw = process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS;
+  if (raw === undefined) return 8000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : 8000;
+}
+
 export interface DispatchNotificationOutboxResult {
   claimed: number;
   succeeded: number;
@@ -21,13 +31,26 @@ export interface DispatchNotificationOutboxResult {
 // 増えるのを防ぐ)。
 export async function dispatchPendingNotifications(): Promise<DispatchNotificationOutboxResult> {
   const result: DispatchNotificationOutboxResult = { claimed: 0, succeeded: 0, retrying: 0, dead: 0 };
+  const startedAt = Date.now();
+  const timeBudgetMs = getTimeBudgetMs();
 
   await repo.reclaimStaleProcessing(prisma);
+
+  if (Date.now() - startedAt >= timeBudgetMs) {
+    // Functionの残り時間に余裕がないため、新規claimを行わずpendingのまま残す
+    // (次回の呼び出しで再評価される)。
+    return result;
+  }
 
   const claimedEvents = await repo.claimBatch(prisma, BATCH_LIMIT);
   result.claimed = claimedEvents.length;
 
   for (const event of claimedEvents) {
+    if (Date.now() - startedAt >= timeBudgetMs) {
+      // Functionの残り時間に余裕がないため、以降は処理を打ち切る(既にclaimBatchでprocessingへ
+      // 遷移済みの残りの行は、次回呼び出し時にreclaimStaleProcessingで拾われる)。
+      break;
+    }
     await processEvent(event, result);
   }
 
