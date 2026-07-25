@@ -5,9 +5,6 @@ import { AgencyLoginConflictError } from '../domain/agency.types';
 
 type Tx = Prisma.TransactionClient;
 
-// 既に代理店ポータル・管理者として使われているアカウントは横取りしない。
-const TAKEN_ROLES = new Set(['agency', 'admin', 'admin_viewer']);
-
 export interface ProvisionResult {
   provisioned: boolean;
 }
@@ -34,10 +31,14 @@ export async function provisionAgencyAccount(
   const existingUserByEmail = await repo.findUserByEmailInsensitive(tx, loginEmail);
 
   if (existingUserByEmail) {
-    if (TAKEN_ROLES.has(existingUserByEmail.role)) {
+    // 本番安定化指示書Stage4(7.2): 保護ロールの列挙方式(agency/admin/admin_viewerのみ)は
+    // staffロールが漏れていた。自動昇格できるのは一般会員(role='user')だけとし、
+    // それ以外(staff・admin・admin_viewer・他のagency等、将来追加されるロールも含む)は
+    // 一律拒否するallowlist方式に変更する。
+    if (existingUserByEmail.role !== 'user') {
       // ここで例外を投げてトランザクション全体をロールバックすることで、
       // 「代理店だけ作成されてログイン作成に失敗する」部分成功を防ぐ。
-      throw new AgencyLoginConflictError('login_email is already used by another admin/agency account.');
+      throw new AgencyLoginConflictError('login_email is already used by a non-user account.');
     }
 
     // 仕様書外の拡張: 既存の一般会員アカウント(評議員NFT購入者等)を代理店ポータルログインに

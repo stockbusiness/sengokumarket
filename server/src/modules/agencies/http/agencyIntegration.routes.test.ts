@@ -285,6 +285,62 @@ describe('外部代理店システム連携API', () => {
     expect(updatedMember?.passwordHash).toBe('existing-password-hash');
   });
 
+  // 本番安定化指示書Stage4(7.2・7.3): 保護ロールの列挙方式(旧: agency/admin/admin_viewerのみ)は
+  // staffロールが漏れていた。自動昇格できるのは一般会員(role='user')だけであることを、
+  // 保護対象の全ロールについて直接検証する。
+  it.each([
+    ['staff', 'staff'],
+    ['admin', 'admin'],
+    ['admin_viewer', 'admin_viewer'],
+    ['agency(別の代理店に既に所属)', 'agency'],
+  ])('%sのメールアドレスをlogin_emailに指定すると409で拒否され、新規代理店ごとトランザクション全体がロールバックされる', async (_label, role) => {
+    const protectedEmail = `integration-agency-test-protected-${role}-${Date.now()}@example.com`;
+    await prisma.user.create({
+      data: {
+        name: '保護ロールユーザー',
+        email: protectedEmail,
+        passwordHash: 'existing-password-hash',
+        role,
+      },
+    });
+
+    const newAgencyExternalId = `integration-test-conflict-${role}-${Date.now()}`;
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: newAgencyExternalId, name: '拒否されるはずの代理店', login_email: protectedEmail });
+
+    expect(res.status).toBe(409);
+    expect(res.body.ok).toBe(false);
+
+    // ロールが変化していないこと
+    const unchangedUser = await prisma.user.findUnique({ where: { email: protectedEmail } });
+    expect(unchangedUser?.role).toBe(role);
+
+    // トランザクション全体がロールバックされ、代理店自体も作成されていないこと
+    // (「代理店だけ作成されてログイン作成に失敗する」部分成功が起きていないことの確認)
+    const createdAgency = await prisma.agency.findUnique({ where: { externalId: newAgencyExternalId } });
+    expect(createdAgency).toBeNull();
+  });
+
+  it('一般会員(role=user)のメールアドレスをlogin_emailに指定すると昇格できる(保護ロールとの対比)', async () => {
+    const memberEmail = `integration-agency-test-plainuser-${Date.now()}@example.com`;
+    await prisma.user.create({
+      data: { name: '一般会員', email: memberEmail, passwordHash: 'existing-password-hash', role: 'user' },
+    });
+
+    const newAgencyExternalId = `integration-test-plainuser-promoted-${Date.now()}`;
+    const res = await request(app)
+      .post('/api/integrations/agencies')
+      .set('x-api-key', API_KEY)
+      .send({ external_id: newAgencyExternalId, name: '一般会員昇格代理店', login_email: memberEmail });
+
+    expect(res.status).toBe(201);
+    expect(res.body.login_provisioned).toBe(true);
+    const updatedUser = await prisma.user.findUnique({ where: { email: memberEmail } });
+    expect(updatedUser?.role).toBe('agency');
+  });
+
   it('parent_external_idを明示指定した場合は、永久帰属している代理店より明示指定が優先される', async () => {
     const referrerExternalId = `integration-test-referrer2-${Date.now()}`;
     const referrerRes = await request(app)
