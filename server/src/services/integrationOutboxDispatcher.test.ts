@@ -42,8 +42,14 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
         select: { id: true },
       })
     ).map((e) => e.id);
+    // 本番安定化指示書Stage10: order_wallet_transactionsはoutbox event・order・order_itemへ
+    // 実FKを張っているため、それらを削除する前に片付ける。
+    await prisma.orderWalletTransaction.deleteMany({ where: { outboxEventId: { in: eventIds } } });
     await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: eventIds } } });
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: { startsWith: correlationPrefix } } });
+    await prisma.orderItem.deleteMany({ where: { product: { name: { startsWith: 'outbox-test-product-' } } } });
+    await prisma.order.deleteMany({ where: { orderNumber: { startsWith: 'SG-OUTBOXTEST-' } } });
+    await prisma.product.deleteMany({ where: { name: { startsWith: 'outbox-test-product-' } } });
     await prisma.setting.deleteMany({
       where: {
         key: {
@@ -64,10 +70,41 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     await prisma.$disconnect();
   });
 
+  // 本番安定化指示書Stage10(13.2): order_wallet_transactionsはorder_id/order_item_idへ実FKを
+  // 張るため、ove-wallet宛の送信成功を検証するテストでは実在するOrder/OrderItemが必要になる。
+  async function createRealOrderAndItem(suffix: string) {
+    const product = await prisma.product.create({
+      data: {
+        name: `outbox-test-product-${suffix}`,
+        slug: `outbox-test-product-${suffix}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 1000,
+        status: 'published',
+      },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `SG-OUTBOXTEST-${suffix}`,
+        totalAmount: 1000,
+        originalAmount: 1000,
+        customerName: 'Outboxテスト太郎',
+        customerEmail: `outbox-test-${suffix}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    const orderItem = await prisma.orderItem.create({
+      data: { orderId: order.id, productId: product.id, productName: product.name, itemType: 'nft', quantity: 1, unitPrice: 1000, subtotal: 1000 },
+    });
+    return { orderId: order.id, orderItemId: orderItem.id };
+  }
+
   async function createEvent(overrides: {
     correlationId: string;
     eventType: 'entitlement.granted' | 'entitlement.revoked';
     destinationSystemKey: string;
+    orderId?: string;
     orderItemId?: string;
     status?: string;
     attemptCount?: number;
@@ -81,6 +118,7 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
         payload: {
           common_user_id: 'cu_test_001',
           source_user_id: 'user-1',
+          order_id: overrides.orderId,
           order_item_id: overrides.orderItemId ?? 'order-item-1',
           quantity: 1,
           // 本番安定化指示書Stage6(9.4): 実際の運用ではenqueueEntitlementEvents経由で必ず
@@ -127,11 +165,12 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     expect(row.status).toBe('pending');
   });
 
-  it('ove-wallet宛entitlement.grantedはgrantRewardを呼び、成功時にtransaction_idをpayloadへ記録する', async () => {
+  it('ove-wallet宛entitlement.grantedはgrantRewardを呼び、成功時にorder_wallet_transactionsへ記録する', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
     grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_001' });
+    const { orderId, orderItemId } = await createRealOrderAndItem(`grant-${Date.now()}`);
     const correlationId = `${correlationPrefix}grant-${Date.now()}`;
-    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-grant-1' });
+    await createEvent({ correlationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderId, orderItemId });
 
     const { dispatchPendingOutboxEvents } = await loadDispatcher();
     const result = await dispatchPendingOutboxEvents();
@@ -141,13 +180,21 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
 
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId } });
     expect(row.status).toBe('succeeded');
-    expect((row.deliveryPayload as Record<string, unknown>).ove_transaction_id).toBe('tx_test_001');
+    // 本番安定化指示書Stage10(13.2・13.3): 原付与transaction IDはpayloadではなく専用テーブルへ記録する。
+    const walletTx = await prisma.orderWalletTransaction.findFirstOrThrow({ where: { outboxEventId: row.id } });
+    expect(walletTx.transactionType).toBe('grant');
+    expect(walletTx.walletTransactionId).toBe('tx_test_001');
+    expect(walletTx.orderId).toBe(orderId);
+    expect(walletTx.orderItemId).toBe(orderItemId);
+    expect(walletTx.amount).toBe(1);
+    expect(walletTx.idempotencyKey).toBe(row.eventId);
   });
 
   // 本番安定化指示書Stage6(9.4「商品数量をそのままポイント数にしない」)。
   it('ove-wallet宛entitlement.grantedはpayload.quantityではなくpayload.reward_amount/reward_rule_idをgrantRewardへ渡す', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
     grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_reward_amount' });
+    const { orderId, orderItemId } = await createRealOrderAndItem(`reward-amount-${Date.now()}`);
     const correlationId = `${correlationPrefix}reward-amount-${Date.now()}`;
     await prisma.$transaction(async (tx) => {
       await enqueueOutboxEvent(tx, {
@@ -157,7 +204,8 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
         payload: {
           common_user_id: 'cu_test_001',
           source_user_id: 'user-1',
-          order_item_id: 'oi-reward-amount-1',
+          order_id: orderId,
+          order_item_id: orderItemId,
           quantity: 99, // 数量は大きいが、reward_amountとは無関係であることの確認
           reward_amount: 250,
           reward_rule_id: 'rule_test_001',
@@ -204,14 +252,15 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_002' });
     reverseRewardMock.mockResolvedValue(true);
 
+    const { orderId, orderItemId } = await createRealOrderAndItem(`revoke-${Date.now()}`);
     const grantCorrelationId = `${correlationPrefix}grant-for-revoke-${Date.now()}`;
-    await createEvent({ correlationId: grantCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-revoke-1' });
+    await createEvent({ correlationId: grantCorrelationId, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderId, orderItemId });
 
     const { dispatchPendingOutboxEvents } = await loadDispatcher();
     await dispatchPendingOutboxEvents(); // まずgrantedを成功させる
 
     const revokeCorrelationId = `${correlationPrefix}revoke-${Date.now()}`;
-    await createEvent({ correlationId: revokeCorrelationId, eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-revoke-1' });
+    await createEvent({ correlationId: revokeCorrelationId, eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet', orderId, orderItemId });
 
     const result = await dispatchPendingOutboxEvents();
 
@@ -220,12 +269,17 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
 
     const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: revokeCorrelationId } });
     expect(row.status).toBe('succeeded');
+    // 本番安定化指示書Stage10(13.5): reversal行が原付与のwalletTransactionIdを参照している。
+    const reversalTx = await prisma.orderWalletTransaction.findFirstOrThrow({ where: { outboxEventId: row.id } });
+    expect(reversalTx.transactionType).toBe('reversal');
+    expect(reversalTx.originalWalletTransactionId).toBe('tx_test_002');
   });
 
   it('対応するgranted行が無いentitlement.revokedは失敗しリトライ状態(pending・attempt_count増加)になる', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const { orderId, orderItemId } = await createRealOrderAndItem(`revoke-orphan-${Date.now()}`);
     const correlationId = `${correlationPrefix}revoke-orphan-${Date.now()}`;
-    await createEvent({ correlationId, eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet', orderItemId: 'oi-orphan-1' });
+    await createEvent({ correlationId, eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet', orderId, orderItemId });
 
     const { dispatchPendingOutboxEvents } = await loadDispatcher();
     const result = await dispatchPendingOutboxEvents();
@@ -240,14 +294,93 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     expect(row.lastError).toBeTruthy();
   });
 
+  // 本番安定化指示書Stage10(13.5「同一注文で複数grantがあっても誤参照しない」)。
+  it('同一order_item_idに複数のOVE向けルール(product_integration_rule_idが異なる)によるgrantがあっても、reversalは対応するルールの原付与だけを参照する', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    reverseRewardMock.mockResolvedValue(true);
+    const { orderId, orderItemId } = await createRealOrderAndItem(`multi-rule-${Date.now()}`);
+    const ruleAId = '11111111-1111-1111-1111-111111111111';
+    const ruleBId = '22222222-2222-2222-2222-222222222222';
+
+    grantRewardMock.mockResolvedValueOnce({ transactionId: 'tx_rule_a' });
+    const grantACorrelationId = `${correlationPrefix}multi-rule-grant-a-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'ove-wallet',
+        correlationId: grantACorrelationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_id: orderId,
+          order_item_id: orderItemId,
+          product_integration_rule_id: ruleAId,
+          reward_amount: 100,
+        },
+      });
+    });
+
+    grantRewardMock.mockResolvedValueOnce({ transactionId: 'tx_rule_b' });
+    const grantBCorrelationId = `${correlationPrefix}multi-rule-grant-b-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.granted',
+        destinationSystemKey: 'ove-wallet',
+        correlationId: grantBCorrelationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_id: orderId,
+          order_item_id: orderItemId,
+          product_integration_rule_id: ruleBId,
+          reward_amount: 200,
+        },
+      });
+    });
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    await dispatchPendingOutboxEvents(); // 両ルールのgrantedを成功させる
+
+    const revokeBCorrelationId = `${correlationPrefix}multi-rule-revoke-b-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, {
+        eventType: 'entitlement.revoked',
+        destinationSystemKey: 'ove-wallet',
+        correlationId: revokeBCorrelationId,
+        payload: {
+          common_user_id: 'cu_test_001',
+          source_user_id: 'user-1',
+          order_id: orderId,
+          order_item_id: orderItemId,
+          product_integration_rule_id: ruleBId,
+        },
+      });
+    });
+
+    await dispatchPendingOutboxEvents();
+
+    // ルールBのreversalは、ルールAではなくルールBの原付与(tx_rule_b)だけを参照する。
+    expect(reverseRewardMock).toHaveBeenCalledWith('tx_rule_b', expect.any(String));
+    expect(reverseRewardMock).not.toHaveBeenCalledWith('tx_rule_a', expect.any(String));
+
+    const revokeRow = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: revokeBCorrelationId } });
+    expect(revokeRow.status).toBe('succeeded');
+    const ruleAGrant = await prisma.orderWalletTransaction.findFirstOrThrow({ where: { walletTransactionId: 'tx_rule_a' } });
+    const ruleAReversal = await prisma.orderWalletTransaction.findFirst({ where: { originalWalletTransactionId: 'tx_rule_a' } });
+    expect(ruleAGrant.productIntegrationRuleId).toBe(ruleAId);
+    expect(ruleAReversal).toBeNull(); // ルールAの原付与は取り消されていない
+  });
+
   it('最大試行回数に達した行はdead状態になる', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const { orderId, orderItemId } = await createRealOrderAndItem(`dead-${Date.now()}`);
     const correlationId = `${correlationPrefix}dead-${Date.now()}`;
     await createEvent({
       correlationId,
       eventType: 'entitlement.revoked',
       destinationSystemKey: 'ove-wallet',
-      orderItemId: 'oi-dead-1',
+      orderId,
+      orderItemId,
       attemptCount: 4,
     });
 
@@ -300,12 +433,14 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
   it('staleなprocessing行(放置)は再クレームされ、送信を再試行する', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
     grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_stale' });
+    const { orderId, orderItemId } = await createRealOrderAndItem(`stale-${Date.now()}`);
     const correlationId = `${correlationPrefix}stale-${Date.now()}`;
     await createEvent({
       correlationId,
       eventType: 'entitlement.granted',
       destinationSystemKey: 'ove-wallet',
-      orderItemId: 'oi-stale-1',
+      orderId,
+      orderItemId,
       status: 'processing',
       updatedAtOverride: new Date(Date.now() - 20 * 60 * 1000),
     });
@@ -447,7 +582,8 @@ describe('integrationOutboxDispatcher(仕様書外の拡張・2026-07-22指示�
     grantRewardMock.mockResolvedValue({ transactionId: 'tx_test_perdest' });
     const prefix = `${correlationPrefix}perdest-${Date.now()}`;
     for (let i = 0; i < 8; i++) {
-      await createEvent({ correlationId: `${prefix}-${i}`, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderItemId: `oi-perdest-${i}` });
+      const { orderId, orderItemId } = await createRealOrderAndItem(`perdest-${Date.now()}-${i}`);
+      await createEvent({ correlationId: `${prefix}-${i}`, eventType: 'entitlement.granted', destinationSystemKey: 'ove-wallet', orderId, orderItemId });
     }
 
     const { dispatchPendingOutboxEvents } = await loadDispatcher();
@@ -640,6 +776,9 @@ describe('integrationOutboxDispatcher: 共通ID未解決イベントの送信保
         select: { id: true },
       })
     ).map((e) => e.id);
+    // 本番安定化指示書Stage10: order_wallet_transactionsはoutbox eventへ実FKを張っているため、
+    // integration_outbox_eventsを削除する前に片付ける。
+    await prisma.orderWalletTransaction.deleteMany({ where: { outboxEventId: { in: stage6EventIds } } });
     await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: stage6EventIds } } });
     await prisma.integrationOutboxEvent.deleteMany({ where: { deliveryPayload: { path: ['product_code'], equals: 'STAGE6-TEST' } } });
     await prisma.orderItem.deleteMany({ where: { product: { name: { startsWith: productNamePrefix } } } });

@@ -358,6 +358,7 @@ model Order {
   nftIssues   NftIssue[]
   commission  Commission?
   couponUsage CouponUsage?
+  walletTransactions OrderWalletTransaction[]
 
   @@index([paymentStatus])
   @@index([paidAt])
@@ -381,6 +382,7 @@ model OrderItem {
   product   Product         @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
   nftIssues NftIssue[]
+  walletTransactions OrderWalletTransaction[]
 
   @@map("order_items")
 }
@@ -481,6 +483,7 @@ model IntegrationOutboxEvent {
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
   attempts IntegrationEventAttempt[]
+  walletTransactions OrderWalletTransaction[]
 
   @@index([status])
   @@index([destinationSystemKey])
@@ -511,6 +514,44 @@ model IntegrationEventAttempt {
 
   @@index([outboxEventId])
   @@map("integration_event_attempts")
+}
+
+// 本番安定化指示書Stage10(13.1〜13.4): OVE Walletへのreward付与・取消(REVERSAL)のtransaction IDを
+// これまでintegration_outbox_events.payload(ove_transaction_id)へ暫定的に保存していたが、
+// 専用テーブルへ切り出す。取消(reversal)時にorder_item_idだけでOutboxを検索すると、1商品に
+// 複数のOVE向けルール(entitlement_typeが異なる等)がある場合に原付与を誤って特定しうるため、
+// productIntegrationRuleIdも保持して一意に特定する。1行 = 1回のgrant成功 または 1回のreversal成功
+// (dry_run・失敗した試行はここに書かない。試行そのものの記録はintegration_event_attemptsが担う)。
+model OrderWalletTransaction {
+  id                        String   @id @default(uuid()) @db.Uuid
+  orderId                   String   @map("order_id") @db.Uuid
+  orderItemId               String   @map("order_item_id") @db.Uuid
+  outboxEventId             String   @map("outbox_event_id") @db.Uuid
+  // 同一order_item_idに複数のOVE向けルールが設定されている場合の原付与特定に使う。
+  productIntegrationRuleId  String?  @map("product_integration_rule_id") @db.Uuid
+  commonUserId              String?  @map("common_user_id")
+  transactionType           String   @map("transaction_type") // grant | reversal
+  amount                    Int
+  rewardRuleId              String?  @map("reward_rule_id")
+  // transactionType=grant: OVE Wallet側が発行したtransaction_id。
+  // transactionType=reversal: OVE Wallet側のreversal API呼び出し自体は別IDを返さないため通常null。
+  walletTransactionId       String?  @map("wallet_transaction_id")
+  // transactionType=reversalの行にのみ設定。取消対象となった原付与行のwalletTransactionId。
+  originalWalletTransactionId String? @map("original_wallet_transaction_id")
+  // 冪等キー。原則としてこの行の元になったintegration_outbox_events.event_idをそのまま使う
+  // (1 outbox event成功につき1行のみ作成されることをDB制約でも保証する)。
+  idempotencyKey            String   @unique @map("idempotency_key")
+  status                    String   @default("succeeded") // succeeded(現状これのみ書き込まれる)
+  createdAt                 DateTime @default(now()) @map("created_at")
+  updatedAt                 DateTime @updatedAt @map("updated_at")
+
+  order       Order                  @relation(fields: [orderId], references: [id])
+  orderItem   OrderItem              @relation(fields: [orderItemId], references: [id])
+  outboxEvent IntegrationOutboxEvent @relation(fields: [outboxEventId], references: [id])
+
+  @@index([orderItemId, transactionType])
+  @@index([originalWalletTransactionId])
+  @@map("order_wallet_transactions")
 }
 
 // 仕様書外の拡張(残課題指示書Stage4): checkout.tsが行っていたfire-and-forget(`void

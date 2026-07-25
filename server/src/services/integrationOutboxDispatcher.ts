@@ -192,9 +192,25 @@ class OutboxSendError extends Error {
   }
 }
 
+// 本番安定化指示書Stage10(13.2〜13.4): OVE Walletのgrant/reversal成功時、order_wallet_transactions
+// へ1行追記するための情報。sendToOveWallet(DB書き込みを持たない)から呼び出し元
+// (sendAndRecordResult)へ橋渡しし、outbox eventの成功更新と同一トランザクションで書き込む。
+interface WalletTransactionOutcome {
+  orderId: string;
+  orderItemId: string;
+  productIntegrationRuleId: string | null;
+  commonUserId: string | null;
+  transactionType: 'grant' | 'reversal';
+  amount: number;
+  rewardRuleId: string | null;
+  walletTransactionId: string | null;
+  originalWalletTransactionId: string | null;
+}
+
 interface SendOutcome {
   destinationUrl: string | null;
   responseBodyExcerpt: string | null;
+  walletTransaction?: WalletTransactionOutcome;
 }
 
 async function sendAndRecordResult(
@@ -238,21 +254,43 @@ async function sendAndRecordResult(
     });
     // 古いclaim(stale再クレーム後に別プロセスが先に処理した等)が、後から届いた新しい結果を
     // 上書きしないよう、processing・同一tokenであることを条件にする(9.3「古い処理が新しい
-    // 結果を上書きしない」)。effectiveEvent.deliveryPayload(sendOutboxEvent内でove_transaction_id
-    // 等が追記されている可能性がある)を保存し、hashも合わせて再計算する。
+    // 結果を上書きしない」)。
     const finalPayload = effectiveEvent.deliveryPayload as Record<string, unknown>;
-    await prisma.integrationOutboxEvent.updateMany({
-      where: { id: event.id, status: 'processing', processingToken },
-      data: {
-        status: 'succeeded',
-        processedAt: new Date(),
-        lastError: null,
-        blockedReason: null,
-        deliveryPayload: finalPayload as Prisma.InputJsonValue,
-        deliveryPayloadHash: hashOutboxPayload(finalPayload),
-        processingToken: null,
-        processingStartedAt: null,
-      },
+    // 本番安定化指示書Stage10(13.3): OVE Walletのgrant/reversal成功時はorder_wallet_transactions
+    // への追記をoutbox eventの成功更新と同一トランザクションで行う(片方だけ反映される状態を防ぐ)。
+    await prisma.$transaction(async (tx) => {
+      const updated = await tx.integrationOutboxEvent.updateMany({
+        where: { id: event.id, status: 'processing', processingToken },
+        data: {
+          status: 'succeeded',
+          processedAt: new Date(),
+          lastError: null,
+          blockedReason: null,
+          deliveryPayload: finalPayload as Prisma.InputJsonValue,
+          deliveryPayloadHash: hashOutboxPayload(finalPayload),
+          processingToken: null,
+          processingStartedAt: null,
+        },
+      });
+      if (updated.count > 0 && outcome.walletTransaction) {
+        const wt = outcome.walletTransaction;
+        await tx.orderWalletTransaction.create({
+          data: {
+            orderId: wt.orderId,
+            orderItemId: wt.orderItemId,
+            outboxEventId: event.id,
+            productIntegrationRuleId: wt.productIntegrationRuleId,
+            commonUserId: wt.commonUserId,
+            transactionType: wt.transactionType,
+            amount: wt.amount,
+            rewardRuleId: wt.rewardRuleId,
+            walletTransactionId: wt.walletTransactionId,
+            originalWalletTransactionId: wt.originalWalletTransactionId,
+            idempotencyKey: event.eventId,
+            status: 'succeeded',
+          },
+        });
+      }
     });
     result.succeeded++;
   } catch (e) {
@@ -357,9 +395,11 @@ async function sendOutboxEvent(event: IntegrationOutboxEvent, stage: SennokuniIn
 // 見直しが必要なため、今回は対象外とする)。
 async function sendToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   const payload = event.deliveryPayload as {
+    order_id?: string;
     common_user_id?: string | null;
     source_user_id?: string | null;
     order_item_id?: string;
+    product_integration_rule_id?: string | null;
     quantity?: number;
     reward_amount?: number;
     reward_rule_id?: string | null;
@@ -375,12 +415,18 @@ async function sendToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIn
     }
 
     // 本番安定化指示書Stage8(11.4「dry_run」): 実際にはgrantReward(実送信・実際にポイントが
-    // 付与される)を呼ばず、必須項目のvalidationのみ行う。ove_transaction_idは記録しない
+    // 付与される)を呼ばず、必須項目のvalidationのみ行う。order_wallet_transactionsへも書かない
     // (dry_runでは実際の付与が起きていないため、後続のentitlement.revokedが誤って
     // 「取消対象が見つかった」と誤認しないようにするため)。
     if (stage === 'dry_run') {
       if (!payload.source_user_id) throw new Error('source_user_id is missing on entitlement.granted payload for ove-wallet');
       return { destinationUrl: null, responseBodyExcerpt: '[DRY_RUN] validated only, not sent (ove-wallet grant)' };
+    }
+
+    // order_wallet_transactionsへ書き込む前に検証する(外部への実送信・実際のポイント付与の
+    // あとで検証に失敗すると、外部では成功しているのにローカルで追跡できない状態になるため)。
+    if (!payload.order_id || !payload.order_item_id) {
+      throw new Error('order_id/order_item_id is missing on entitlement.granted payload for ove-wallet');
     }
 
     const grantResult = await grantReward({
@@ -393,37 +439,77 @@ async function sendToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIn
     });
     if (!grantResult) throw new Error('OVE wallet reward grant failed or not configured');
 
-    // 返金時のREVERSAL対象を追跡できるよう、成功した付与のtransaction_idをpayloadへ記録する。
-    // 仕様書外の拡張として簡易に実装しているが、本来は専用のorder_wallet_transactionsテーブルで
-    // 管理すべき情報であり(実装報告書の既知の未対応事項)、現時点での暫定対応にとどまる。
-    // DBへは直接書かず、呼び出し元(sendAndRecordResult)が送信成功時にまとめて1回で永続化する
-    // (残課題指示書Stage6でDispatcherがpayloadを再構築するようになったため、途中で個別に書き込むと
-    // 後続の永続化で上書き・消失してしまうのを避けるため、メモリ上のオブジェクトを直接更新する)。
-    (event.deliveryPayload as Record<string, unknown>).ove_transaction_id = grantResult.transactionId;
-    return { destinationUrl: null, responseBodyExcerpt: null };
+    // 本番安定化指示書Stage10(13.2・13.3): 原付与transaction IDはOutbox payloadではなく
+    // 専用テーブル(order_wallet_transactions)へ保存する。呼び出し元(sendAndRecordResult)が
+    // outbox eventの成功更新と同一トランザクションでまとめて書き込む。
+    return {
+      destinationUrl: null,
+      responseBodyExcerpt: null,
+      walletTransaction: {
+        orderId: payload.order_id,
+        orderItemId: payload.order_item_id,
+        productIntegrationRuleId: payload.product_integration_rule_id ?? null,
+        commonUserId: payload.common_user_id ?? null,
+        transactionType: 'grant',
+        amount: payload.reward_amount,
+        rewardRuleId: payload.reward_rule_id ?? null,
+        walletTransactionId: grantResult.transactionId,
+        originalWalletTransactionId: null,
+      },
+    };
   }
 
   if (event.eventType === 'entitlement.revoked') {
-    const priorGrant = await prisma.integrationOutboxEvent.findFirst({
+    if (!payload.order_id || !payload.order_item_id) {
+      throw new Error('order_id/order_item_id is missing on entitlement.revoked payload for ove-wallet');
+    }
+
+    // 本番安定化指示書Stage10(13.4): order_item_idだけでなく、enqueue時点でスナップショットした
+    // product_integration_rule_idも一致条件にすることで、1商品に複数のOVE向けルールがあっても
+    // 原付与を取り違えない。
+    const priorGrant = await prisma.orderWalletTransaction.findFirst({
       where: {
-        destinationSystemKey: 'ove-wallet',
-        eventType: 'entitlement.granted',
+        orderItemId: payload.order_item_id,
+        productIntegrationRuleId: payload.product_integration_rule_id ?? null,
+        transactionType: 'grant',
         status: 'succeeded',
-        deliveryPayload: { path: ['order_item_id'], equals: payload.order_item_id },
       },
+      orderBy: { createdAt: 'desc' },
     });
-    const priorPayload = priorGrant?.deliveryPayload as { ove_transaction_id?: string } | undefined;
-    if (!priorPayload?.ove_transaction_id) {
+    if (!priorGrant?.walletTransactionId) {
       throw new Error('cannot reverse OVE wallet reward: no matching prior grant transaction found');
+    }
+
+    // 二重reversal防止(13.5): 同一の原付与に対してすでにreversal行が存在する場合は処理しない。
+    const existingReversal = await prisma.orderWalletTransaction.findFirst({
+      where: { originalWalletTransactionId: priorGrant.walletTransactionId, transactionType: 'reversal' },
+    });
+    if (existingReversal) {
+      throw new Error('OVE wallet reward already reversed for this grant transaction');
     }
 
     if (stage === 'dry_run') {
       return { destinationUrl: null, responseBodyExcerpt: '[DRY_RUN] validated only, not sent (ove-wallet reversal)' };
     }
 
-    const reversed = await reverseReward(priorPayload.ove_transaction_id, 'entitlement revoked (refund)');
+    const reversed = await reverseReward(priorGrant.walletTransactionId, 'entitlement revoked (refund)');
     if (!reversed) throw new Error('OVE wallet reward reversal failed');
-    return { destinationUrl: null, responseBodyExcerpt: null };
+
+    return {
+      destinationUrl: null,
+      responseBodyExcerpt: null,
+      walletTransaction: {
+        orderId: payload.order_id,
+        orderItemId: payload.order_item_id,
+        productIntegrationRuleId: payload.product_integration_rule_id ?? null,
+        commonUserId: priorGrant.commonUserId,
+        transactionType: 'reversal',
+        amount: priorGrant.amount,
+        rewardRuleId: priorGrant.rewardRuleId,
+        walletTransactionId: null,
+        originalWalletTransactionId: priorGrant.walletTransactionId,
+      },
+    };
   }
 
   throw new Error(`unsupported event type for ove-wallet: ${event.eventType}`);
