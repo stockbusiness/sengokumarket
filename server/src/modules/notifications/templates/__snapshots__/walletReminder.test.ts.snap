@@ -5,13 +5,13 @@ exports[`buildWalletReminderEmail > 件名・本文のスナップショット 1
   "html": "
     <p>テスト太郎 様</p>
     <p>ご注文番号 SG-20260101-0001 のデジタル会員証の受け取りには、受取用ウォレットの登録が必要です。<br />
-    <a href="/mypage/wallet">こちらから登録手続き</a>を行ってください。</p>
+    <a href="http://localhost:5173/mypage/wallet">こちらから登録手続き</a>を行ってください。</p>
   ",
   "subject": "【ご案内】受取用ウォレットのご登録について",
   "text": "テスト太郎 様
 
 ご注文番号 SG-20260101-0001 のデジタル会員証の受け取りには、受取用ウォレットの登録が必要です。
-/mypage/wallet",
+http://localhost:5173/mypage/wallet",
   "to": "test@example.com",
 }
 `;
