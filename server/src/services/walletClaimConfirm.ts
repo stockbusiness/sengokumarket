@@ -1,9 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { hashClaimToken } from './walletClaim';
-import { getDigitalCollectibleRule } from './digitalCollectible';
 import { enqueueDigitalCollectibleEvent } from './integrationOutbox';
-import { triggerImmediateOutboxDispatch } from './integrationOutboxDispatcher';
 
 type Tx = Prisma.TransactionClient;
 
@@ -36,11 +34,17 @@ export type ConfirmWalletClaimOutcome =
   | { kind: 'common_user_unresolved' }
   | { kind: 'common_user_mismatch' }
   | { kind: 'conflict' } // 同時実行中(既にCLAIMEDでロック済み)
-  | { kind: 'ok'; status: string };
+  | { kind: 'no_claimable_items' } // 送付対象カードが0件(要確認・WalletClaimはERROR)
+  | { kind: 'ok'; status: string; deliveryCount: number };
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)10章のトランザクション手順に対応する。
 // 冪等性: 既にDELIVERY_PENDING/DELIVEREDの場合、同一common_user_idでの再確認はokを返し
 // (Delivery・Outboxの重複作成はしない)、異なるcommon_user_idでの再確認はmismatchとして扱う。
+//
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase3: このトランザクションはCollectibleDelivery・
+// Integration Outbox・WalletClaim状態の確定までで完了する。実送信(Dispatcher)の同期呼び出しは
+// 行わない(外部Wallet APIの遅延・タイムアウトがClaim確認APIの応答へ影響しないようにするため)。
+// 送信自体は5分Cron(process-integration-outbox)に委ねる。
 export async function confirmWalletClaim(
   token: string,
   input: { oveAccountId: string; commonUserId: string },
@@ -72,7 +76,8 @@ export async function confirmWalletClaim(
         });
         return { kind: 'common_user_mismatch' };
       }
-      return { kind: 'ok', status: claim.status };
+      const deliveryCount = await tx.collectibleDelivery.count({ where: { walletClaimId: claim.id } });
+      return { kind: 'ok', status: claim.status, deliveryCount };
     }
 
     // ここに到達するのはstatus IN ('PENDING','ERROR')のみ。原子的にCLAIMEDへ遷移させ、
@@ -125,18 +130,23 @@ export async function confirmWalletClaim(
       return { kind: 'common_user_mismatch' };
     }
 
-    // 7章: 対象NftIssue一覧取得(digital_collectible対象商品のもののみ、キャンセル済みは除く)。
-    const nftIssues = await tx.nftIssue.findMany({ where: { orderId: order.id, status: { not: 'cancelled' } } });
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase4「Confirm時」: 送付対象の判断は決済確定時に
+    // 作成済みのWalletClaimItem(購入時点のルール・商品スナップショット)のみを基準にする。現在の
+    // ProductIntegrationRuleを再取得・再判定しない(購入後のルール変更・削除の影響を受けないため)。
+    const claimItems = await tx.walletClaimItem.findMany({ where: { walletClaimId: claim.id, status: 'PENDING' } });
     const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
     const orderItemById = new Map(orderItems.map((item) => [item.id, item]));
+    const nftIssues = await tx.nftIssue.findMany({ where: { id: { in: claimItems.map((item) => item.nftIssueId) } } });
+    const nftIssueById = new Map(nftIssues.map((nftIssue) => [nftIssue.id, nftIssue]));
 
-    for (const nftIssue of nftIssues) {
-      const orderItem = orderItemById.get(nftIssue.orderItemId);
-      if (!orderItem) continue;
-      const rule = await getDigitalCollectibleRule(tx, nftIssue.productId);
-      if (!rule) continue;
-      const product = await tx.product.findUnique({ where: { id: nftIssue.productId } });
-      if (!product) continue;
+    let deliveryCount = 0;
+    for (const claimItem of claimItems) {
+      const orderItem = orderItemById.get(claimItem.orderItemId);
+      const nftIssue = nftIssueById.get(claimItem.nftIssueId);
+      if (!orderItem || !nftIssue) continue;
+      // 返金等でNftIssue自体がcancelledになった行は送付しない(WalletClaimItem.status自体の
+      // 同期はPhase6で追加する。現時点ではNftIssue.statusを併せて確認することで二重に防ぐ)。
+      if (nftIssue.status === 'cancelled') continue;
 
       // 8章: NftIssue単位でCollectibleDelivery upsert(同時実行・リトライでの重複作成を防ぐ)。
       const delivery = await tx.collectibleDelivery.upsert({
@@ -151,6 +161,7 @@ export async function confirmWalletClaim(
           status: 'PENDING',
         },
       });
+      deliveryCount += 1;
 
       // 9章: NftIssue単位でOutbox enqueue。既にoutbox_event_idが設定済み(リトライでの再入)なら
       // 二重enqueueしない。
@@ -159,13 +170,22 @@ export async function confirmWalletClaim(
           order,
           orderItem,
           nftIssue,
-          rule,
-          product,
+          claimItem,
           commonUserId: input.commonUserId,
           eventType: 'entitlement.granted',
         });
         await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { outboxEventId } });
       }
+    }
+
+    // Wallet Claim本番前安定化指示書(2026-07-25)6.5「Delivery 0件」: 対象カードが1件もない場合は
+    // DELIVERY_PENDINGへ進めず、ERROR(要確認)のまま留める。
+    if (deliveryCount === 0) {
+      await tx.walletClaim.update({
+        where: { id: claim.id },
+        data: { status: 'ERROR', lastError: 'no_claimable_items' },
+      });
+      return { kind: 'no_claimable_items' };
     }
 
     // 10章: WalletClaim = DELIVERY_PENDING。
@@ -180,14 +200,6 @@ export async function confirmWalletClaim(
       },
     });
 
-    return { kind: 'ok', status: 'DELIVERY_PENDING' };
-  }).then(async (outcome) => {
-    if (outcome.kind === 'ok') {
-      // enqueueしたNftIssue単位Outboxをベストエフォートで即時ディスパッチする
-      // (ENABLE_DIGITAL_COLLECTIBLE_DELIVERY=falseの間はdispatchPendingOutboxEvents自体が
-      // SENNOKUNI_INTEGRATION_ENABLEDに従いno-opのため、ここでは呼び出しの是非を分岐しない)。
-      await triggerImmediateOutboxDispatch();
-    }
-    return outcome;
+    return { kind: 'ok', status: 'DELIVERY_PENDING', deliveryCount };
   });
 }

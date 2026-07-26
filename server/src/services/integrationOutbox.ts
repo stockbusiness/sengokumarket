@@ -1,6 +1,6 @@
 import crypto from 'crypto';
-import type { NftIssue, Order, OrderItem, Prisma, Product, ProductIntegrationRule } from '@prisma/client';
-import { buildCollectibleSnapshot, DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
+import type { NftIssue, Order, OrderItem, Prisma, WalletClaimItem } from '@prisma/client';
+import { DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 type Tx = Prisma.TransactionClient;
 
@@ -138,46 +138,47 @@ export async function enqueueEntitlementEvents(
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)11章: 既存のentitlement系Outbox
 // (enqueueEntitlementEvents)がOrderItem単位でquantityをまとめて送るのに対し、digital_collectible
 // はNftIssue単位(1枚=1件、quantity=1、entitlement_id=NftIssue.id)でイベントを作る。
-// ove_reward等の既存経路には一切手を加えず、この関数はWalletClaim確認時(walletClaimConfirm.ts)
-// からのみ呼ばれる新しい経路として追加する。
+// ove_reward等の既存経路には一切手を加えず、この関数はWalletClaim確認・返金取消
+// (walletClaimConfirm.ts・walletClaimRefund.ts)からのみ呼ばれる新しい経路として追加する。
+//
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase4「Confirm時」: payloadは購入(決済確定)時点で
+// WalletClaimItemへスナップショットした値のみを使う。ProductIntegrationRule・Productを
+// この時点で再取得しない(購入後のルール変更・削除がpayloadへ影響しないようにするため)。
 export async function enqueueDigitalCollectibleEvent(
   tx: Tx,
   input: {
     order: Order;
     orderItem: OrderItem;
     nftIssue: NftIssue;
-    rule: ProductIntegrationRule;
-    product: Product;
+    claimItem: WalletClaimItem;
     commonUserId: string;
     eventType: 'entitlement.granted' | 'entitlement.revoked';
   },
 ): Promise<string> {
-  const snapshot = buildCollectibleSnapshot(input.rule, input.product);
-
   return enqueueOutboxEvent(tx, {
     eventType: input.eventType,
-    destinationSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+    destinationSystemKey: input.claimItem.destinationSystemKey,
     correlationId: input.order.correlationId ?? input.order.id,
     payload: {
       ...baseEventPayload(input.order),
       // 本番安定化指示書Stage6由来のreconcileEntitlementFieldsが再取得の起点にするため、
       // 既存のentitlement系payloadと同じキー名(order_item_id・product_integration_rule_id)を保つ。
       order_item_id: input.orderItem.id,
-      product_id: input.orderItem.productId,
-      product_integration_rule_id: input.rule.id,
-      product_code: input.rule.productCode,
-      entitlement_type: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+      product_id: input.claimItem.productId,
+      product_integration_rule_id: input.claimItem.productIntegrationRuleId,
+      product_code: input.claimItem.productCode,
+      entitlement_type: input.claimItem.entitlementType,
       quantity: 1,
       nft_issue_id: input.nftIssue.id,
       entitlement_id: input.nftIssue.id,
-      asset_code: snapshot.assetCode,
-      serial_number: input.nftIssue.serialNumber,
-      name: snapshot.name,
-      description: snapshot.description,
-      image_url: snapshot.imageUrl,
-      thumbnail_url: snapshot.thumbnailUrl,
-      image_hash: snapshot.imageHash,
-      rarity: snapshot.rarity,
+      asset_code: input.claimItem.assetCode,
+      serial_number: input.claimItem.serialNumber,
+      name: input.claimItem.name,
+      description: input.claimItem.description,
+      image_url: input.claimItem.imageUrl,
+      thumbnail_url: input.claimItem.thumbnailUrl,
+      image_hash: input.claimItem.imageHash,
+      rarity: input.claimItem.rarity,
       common_user_id: input.commonUserId,
     },
   });

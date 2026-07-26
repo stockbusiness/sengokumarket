@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../../lib/prisma';
+import { setSetting } from '../../../services/settings';
+import { hashClaimToken } from '../../../services/walletClaim';
 import * as repo from '../infrastructure/notificationOutbox.repository';
 import { dispatchPendingNotifications, retryNotification } from './dispatchNotificationOutbox.usecase';
 
@@ -158,6 +160,132 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     // 2回の呼び出し合計でも claimed は1のはず(同時実行下の二重取得がないことの確認)。
     expect(resultA.claimed + resultB.claimed).toBe(1);
     expect(sendViaResendOrThrow).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1・Phase11: 管理者再発行のwallet_claim_reissued
+// イベント。実際のToken発行自体をDispatcher実行時に行うため(生Token・生URLをpayloadへ保存しない)、
+// ここで発行・送信・失敗時の挙動を検証する。
+describe('dispatchPendingNotifications: wallet_claim_reissued(Wallet Claim本番前安定化指示書Phase1)', () => {
+  const ORDER_PREFIX = 'SG-NOTIFWCTEST-';
+
+  beforeEach(() => {
+    sendViaResendOrThrow.mockReset();
+    sendViaResendOrThrow.mockImplementation(async () => undefined);
+  });
+
+  afterEach(async () => {
+    await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: 'notif-wc-test-' } } });
+    await prisma.walletClaim.deleteMany({ where: { order: { orderNumber: { startsWith: ORDER_PREFIX } } } });
+    await prisma.order.deleteMany({ where: { orderNumber: { startsWith: ORDER_PREFIX } } });
+    await prisma.setting.deleteMany({ where: { key: 'wallet_claim_web_base_url' } });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function createOrderWithClaim(suffix: string, status = 'PENDING') {
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `${ORDER_PREFIX}${suffix}`,
+        totalAmount: 10000,
+        originalAmount: 10000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: '通知テスト太郎',
+        customerEmail: `notif-wc-test-${suffix}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    const claim = await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken(`old-token-${suffix}`), status, expiresAt: new Date(Date.now() + 1000 * 60 * 60) },
+    });
+    return { order, claim };
+  }
+
+  it('URL設定済みの場合、Dispatcher実行時にTokenを発行してメール送信し、succeededになる', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order, claim } = await createOrderWithClaim('ok');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.succeeded).toBe(1);
+    expect(sendViaResendOrThrow).toHaveBeenCalledTimes(1);
+    const sentMessage = sendViaResendOrThrow.mock.calls[0][0] as { html: string; text: string };
+    expect(sentMessage.html).toContain('https://wallet.example.com/claim/');
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updatedClaim.tokenHash).not.toBe(hashClaimToken('old-token-ok'));
+    expect(updatedClaim.reissueCount).toBe(1);
+  });
+
+  it('wallet_claim_web_base_url未設定の場合、Tokenを書き換えずにretryへ回る(送信も試みない)', async () => {
+    const { order, claim } = await createOrderWithClaim('nourl');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.retrying).toBe(1);
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updatedClaim.tokenHash).toBe(hashClaimToken('old-token-nourl')); // 変更されない
+    expect(updatedClaim.reissueCount).toBe(0);
+  });
+
+  it('メール送信(Resend)が失敗した場合はretryへ回り、次回成功時に最新Tokenが送信される', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order, claim } = await createOrderWithClaim('resendfail');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    sendViaResendOrThrow.mockImplementationOnce(async () => {
+      throw new Error('resend 5xx');
+    });
+    const firstResult = await dispatchPendingNotifications();
+    expect(firstResult.retrying).toBe(1);
+    const afterFirstFailure = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    // 送信失敗時点でToken自体は既に発行済み(この時点のTokenは配送されていない)。
+    expect(afterFirstFailure.reissueCount).toBe(1);
+
+    // backoff(5分後)を待たずに次回試行させる(テスト用にnext_attempt_atを過去へ戻す)。
+    await prisma.notificationOutboxEvent.updateMany({
+      where: { recipient: order.customerEmail },
+      data: { nextAttemptAt: new Date(Date.now() - 1000) },
+    });
+
+    const secondResult = await dispatchPendingNotifications();
+    expect(secondResult.succeeded).toBe(1);
+    const afterSecondSuccess = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    // 再試行のたびに新しいTokenが発行されるため、実際に送信されたのは最新のTokenと一致する。
+    expect(afterSecondSuccess.reissueCount).toBe(2);
+    expect(afterSecondSuccess.tokenHash).not.toBe(afterFirstFailure.tokenHash);
+  });
+
+  it('CLAIMED以降・REVOKED等の再発行不可な状態はエラーとしてretryへ回る', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order } = await createOrderWithClaim('notreissuable', 'DELIVERY_PENDING');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.retrying).toBe(1);
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
   });
 });
 

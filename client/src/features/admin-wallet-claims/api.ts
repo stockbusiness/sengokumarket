@@ -9,6 +9,9 @@ export interface AdminWalletClaim {
   status: string;
   expiresAt: string;
   claimedAt: string | null;
+  deliveredAt: string | null;
+  revokedAt: string | null;
+  manualReviewRequiredAt: string | null;
   commonUserId: string | null;
   oveAccountId: string | null;
   lastError: string | null;

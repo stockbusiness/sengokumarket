@@ -344,14 +344,40 @@ describe('integrationOutbox: enqueueDigitalCollectibleEvent', () => {
     const nftIssue = await prisma.nftIssue.create({
       data: { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
     });
+    const walletClaim = await prisma.walletClaim.create({
+      data: {
+        orderId: order.id,
+        tokenHash: `hash-digital-collectible-payload-${Date.now()}`,
+        status: 'CLAIMED',
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      },
+    });
+    const claimItem = await prisma.walletClaimItem.create({
+      data: {
+        walletClaimId: walletClaim.id,
+        nftIssueId: nftIssue.id,
+        orderItemId: orderItem.id,
+        productId: product.id,
+        productIntegrationRuleId: rule.id,
+        destinationSystemKey: rule.entitlementTargetSystemKey!,
+        entitlementType: rule.entitlementType!,
+        productCode: rule.productCode,
+        assetCode: rule.assetCode,
+        serialNumber: nftIssue.serialNumber,
+        name: product.name,
+        description: product.description,
+        imageUrl: product.images[0],
+        thumbnailUrl: product.images[0],
+        rarity: rule.collectibleRarity,
+      },
+    });
 
     await prisma.$transaction(async (tx) => {
       await enqueueDigitalCollectibleEvent(tx, {
         order,
         orderItem,
         nftIssue,
-        rule,
-        product,
+        claimItem,
         commonUserId: 'cu_test_00000001',
         eventType: 'entitlement.granted',
       });
@@ -376,6 +402,8 @@ describe('integrationOutbox: enqueueDigitalCollectibleEvent', () => {
     expect(row.destinationSystemKey).toBe('ove-wallet');
 
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
+    await prisma.walletClaimItem.deleteMany({ where: { walletClaimId: walletClaim.id } });
+    await prisma.walletClaim.delete({ where: { id: walletClaim.id } });
     await prisma.nftIssue.delete({ where: { id: nftIssue.id } });
     await prisma.orderItem.delete({ where: { id: orderItem.id } });
     await prisma.order.delete({ where: { id: order.id } });

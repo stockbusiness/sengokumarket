@@ -3,11 +3,18 @@ import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { parsePagination } from '../../shared/pagination/parsePagination';
-import { reissueWalletClaimToken } from '../../services/walletClaim';
-import { getWalletClaimWebBaseUrl } from '../../services/walletClaimConfig';
-import { sendWalletClaimReissuedEmail } from '../../services/mailTemplates';
+import { isWalletClaimReissuable } from '../../services/walletClaim';
+import { enqueueNotification } from '../../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../../modules/notifications/application/dispatchNotificationOutbox.usecase';
+import { buildWalletClaimPreflightReport } from '../../services/walletClaimPreflight';
 
 const router = Router();
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10章「Wallet Claim Preflight拡張」)。
+router.get('/wallet-claim-preflight', async (_req, res) => {
+  const report = await buildWalletClaimPreflightReport();
+  res.json({ report });
+});
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)19章「管理画面」。
 // 検索: order number・claim status・common_user_id・ove_account_id。
@@ -45,6 +52,9 @@ router.get('/wallet-claims', async (req, res) => {
       status: claim.status,
       expiresAt: claim.expiresAt,
       claimedAt: claim.claimedAt,
+      deliveredAt: claim.deliveredAt,
+      revokedAt: claim.revokedAt,
+      manualReviewRequiredAt: claim.manualReviewRequiredAt,
       commonUserId: claim.commonUserId,
       oveAccountId: claim.oveAccountId,
       lastError: claim.lastError,
@@ -79,6 +89,9 @@ router.get('/wallet-claims/:id', async (req, res) => {
       status: claim.status,
       expiresAt: claim.expiresAt,
       claimedAt: claim.claimedAt,
+      deliveredAt: claim.deliveredAt,
+      revokedAt: claim.revokedAt,
+      manualReviewRequiredAt: claim.manualReviewRequiredAt,
       commonUserId: claim.commonUserId,
       oveAccountId: claim.oveAccountId,
       lastError: claim.lastError,
@@ -108,25 +121,32 @@ router.get('/wallet-claims/:id', async (req, res) => {
   });
 });
 
-// 19章「操作: Claim再発行」。生トークンは画面へ返さず、注文の登録メールアドレスへ直接送付する
-// (22章「生Token表示」禁止に抵触しないため)。
+// 19章「操作: Claim再発行」。
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1・Phase11: 生トークンは画面へ返さず、
+// Notification Outbox経由でメール送信する(agency_account_setupと同じ設計。実際のToken発行
+// 自体もDispatcher実行時に行うため、ここではToken発行・書き換えを一切行わない)。
 router.post('/wallet-claims/:id/reissue', async (req, res) => {
   const claim = await prisma.walletClaim.findUnique({ where: { id: req.params.id }, include: { order: true } });
   if (!claim) return sendError(res, 404, 'WALLET_CLAIM_NOT_FOUND', 'Claimが見つかりません');
 
-  const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, claim.orderId));
-  if (!token) {
+  const reissuable = await isWalletClaimReissuable(claim.orderId, prisma);
+  if (!reissuable) {
     return sendError(res, 400, 'WALLET_CLAIM_NOT_REISSUABLE', '現在の状態では再発行できません');
   }
 
-  const base = await getWalletClaimWebBaseUrl();
-  if (!base) {
-    return sendError(res, 503, 'WALLET_CLAIM_URL_NOT_CONFIGURED', '受取URLの設定が完了していません');
-  }
+  await prisma.$transaction(async (tx) => {
+    await enqueueNotification(tx, {
+      eventType: 'wallet_claim_reissued',
+      recipient: claim.order.customerEmail,
+      payload: { orderId: claim.orderId },
+    });
+    await tx.walletClaimAuditLog.create({
+      data: { walletClaimId: claim.id, orderId: claim.orderId, eventType: 'reissue_requested_by_admin' },
+    });
+  });
+  await triggerImmediateNotificationDispatch();
 
-  await sendWalletClaimReissuedEmail(claim.order.customerEmail, claim.order.customerName, `${base}/claim/${token}`);
-
-  res.json({ ok: true, sentTo: claim.order.customerEmail });
+  res.json({ ok: true, queued: true, sentTo: claim.order.customerEmail });
 });
 
 export default router;

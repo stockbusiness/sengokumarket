@@ -116,4 +116,42 @@ describe('管理API: 外部連携Preflight・段階(本番安定化指示書Stag
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('READONLY_ADMIN');
   });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10.4「production有効化前にfail-close」)。
+  it('digital_collectibleルールが有効なのにカード送付固有の設定が不足していればproductionへ変更できない', async () => {
+    const originalWalletClaimFlag = process.env.ENABLE_WALLET_CLAIM;
+    process.env.ENABLE_WALLET_CLAIM = 'true'; // PR-5のFeature Flag整合チェックに引っかからないようにする。
+
+    const product = await prisma.product.create({
+      data: {
+        name: `preflight-fail-close-test-${Date.now()}`,
+        slug: `preflight-fail-close-test-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    await prisma.productIntegrationRule.create({
+      data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', enabled: true },
+    });
+    // 基本のintegration-preflight(sennokuni hub・ove_reward向けove-wallet設定)は満たしておく。
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
+    await setSetting('ove_wallet_api_key_id', 'ove-key-123');
+    await setSetting('ove_wallet_hmac_secret', 'ove-secret-abc');
+    // digital_collectible専用のCommon Event API認証情報(ove_wallet_events_*)は未設定のまま。
+
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.put('/api/admin/integration-stage').set('Origin', TEST_ORIGIN).send({ stage: 'production' });
+    expect(res.status).toBe(422);
+    expect(res.body.error.code).toBe('WALLET_CLAIM_PREFLIGHT_NOT_READY');
+
+    process.env.ENABLE_WALLET_CLAIM = originalWalletClaimFlag;
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.deleteMany({ where: { id: product.id } });
+    await prisma.setting.deleteMany({ where: { key: { in: ['ove_wallet_base_url', 'ove_wallet_api_key_id', 'ove_wallet_hmac_secret'] } } });
+  });
 });

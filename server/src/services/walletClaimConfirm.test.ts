@@ -66,15 +66,48 @@ async function createEligibleOrder(
   return { product, rule, order, orderItem, nftIssues };
 }
 
-async function createClaim(orderId: string, token: string, overrides: Partial<{ status: string; expiresAt: Date }> = {}) {
-  return prisma.walletClaim.create({
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase4: 本番ではcreateWalletClaimIfEligibleが
+// 決済確定時にWalletClaimItem(購入時点のルール・商品スナップショット)を同一トランザクションで
+// 作成する。confirmWalletClaimはこのWalletClaimItemのみを基準に送付対象を判断するため、この
+// テスト用ヘルパーも呼び出し時点の(現在の)ルール状態からWalletClaimItemを作成する。
+async function createClaim(
+  fixture: Awaited<ReturnType<typeof createEligibleOrder>>,
+  token: string,
+  overrides: Partial<{ status: string; expiresAt: Date }> = {},
+) {
+  const claim = await prisma.walletClaim.create({
     data: {
-      orderId,
+      orderId: fixture.order.id,
       tokenHash: hashClaimToken(token),
       status: overrides.status ?? 'PENDING',
       expiresAt: overrides.expiresAt ?? new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
     },
   });
+
+  const currentRule = await prisma.productIntegrationRule.findFirst({
+    where: { productId: fixture.product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+  });
+  if (currentRule) {
+    await prisma.walletClaimItem.createMany({
+      data: fixture.nftIssues.map((nftIssue) => ({
+        walletClaimId: claim.id,
+        nftIssueId: nftIssue.id,
+        orderItemId: fixture.orderItem.id,
+        productId: fixture.product.id,
+        productIntegrationRuleId: currentRule.id,
+        destinationSystemKey: currentRule.entitlementTargetSystemKey!,
+        entitlementType: currentRule.entitlementType!,
+        assetCode: currentRule.assetCode,
+        serialNumber: nftIssue.serialNumber,
+        name: fixture.product.name,
+        description: fixture.product.description,
+        imageUrl: fixture.product.images[0] ?? null,
+        thumbnailUrl: fixture.product.images[0] ?? null,
+        rarity: currentRule.collectibleRarity,
+      })),
+    });
+  }
+  return claim;
 }
 
 async function cleanupOrder(orderId: string, productId: string) {
@@ -84,6 +117,7 @@ async function cleanupOrder(orderId: string, productId: string) {
   await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: outboxEventIds } } });
   await prisma.integrationOutboxEvent.deleteMany({ where: { id: { in: outboxEventIds } } });
   await prisma.walletClaimAuditLog.deleteMany({ where: { orderId } });
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaim.deleteMany({ where: { orderId } });
   await prisma.nftIssue.deleteMany({ where: { orderId } });
   await prisma.orderItem.deleteMany({ where: { orderId } });
@@ -126,9 +160,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('common_user_idが一致する場合、quantity分のCollectibleDelivery・Outbox(quantity=1・entitlement_id固有)を作成しDELIVERY_PENDINGへ進む', async () => {
-    const { order, product, nftIssues } = await createEligibleOrder('quantity-2', { quantity: 2 });
+    const fixture = await createEligibleOrder('quantity-2', { quantity: 2 });
+    const { order, product, nftIssues } = fixture;
     const token = 'raw-token-quantity-2';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('ok');
@@ -156,9 +191,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('common_user_idが一致しない場合、409相当(common_user_mismatch)を返しClaim・Deliveryを変更しない', async () => {
-    const { order, product } = await createEligibleOrder('mismatch');
+    const fixture = await createEligibleOrder('mismatch');
+    const { order, product } = fixture;
     const token = 'raw-token-mismatch';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_someone_else' });
     expect(outcome.kind).toBe('common_user_mismatch');
@@ -174,9 +210,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('common_user_idが未解決の場合、保留(common_user_unresolved)としClaim状態を維持する', async () => {
-    const { order, product } = await createEligibleOrder('unresolved', { commonUserId: null });
+    const fixture = await createEligibleOrder('unresolved', { commonUserId: null });
+    const { order, product } = fixture;
     const token = 'raw-token-unresolved';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('common_user_unresolved');
@@ -190,9 +227,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('期限切れのClaimはexpiredを返しEXPIREDへ遷移する', async () => {
-    const { order, product } = await createEligibleOrder('expired');
+    const fixture = await createEligibleOrder('expired');
+    const { order, product } = fixture;
     const token = 'raw-token-expired';
-    await createClaim(order.id, token, { expiresAt: new Date(Date.now() - 1000) });
+    await createClaim(fixture, token, { expiresAt: new Date(Date.now() - 1000) });
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('expired');
@@ -204,9 +242,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('REVOKEDのClaimはrevokedを返す', async () => {
-    const { order, product } = await createEligibleOrder('revoked');
+    const fixture = await createEligibleOrder('revoked');
+    const { order, product } = fixture;
     const token = 'raw-token-revoked';
-    await createClaim(order.id, token, { status: 'REVOKED' });
+    await createClaim(fixture, token, { status: 'REVOKED' });
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('revoked');
@@ -215,9 +254,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('未決済の注文はorder_not_paidを返しClaimをERRORへ(再試行可能に)する', async () => {
-    const { order, product } = await createEligibleOrder('not-paid', { paymentStatus: 'pending', orderStatus: 'pending' });
+    const fixture = await createEligibleOrder('not-paid', { paymentStatus: 'pending', orderStatus: 'pending' });
+    const { order, product } = fixture;
     const token = 'raw-token-not-paid';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('order_not_paid');
@@ -229,9 +269,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('返金済みの注文はorder_refundedを返しClaimをREVOKEDにする', async () => {
-    const { order, product } = await createEligibleOrder('refunded', { paymentStatus: 'refunded', orderStatus: 'refunded' });
+    const fixture = await createEligibleOrder('refunded', { paymentStatus: 'refunded', orderStatus: 'refunded' });
+    const { order, product } = fixture;
     const token = 'raw-token-refunded';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(outcome.kind).toBe('order_refunded');
@@ -243,9 +284,10 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('既にDELIVERY_PENDINGの状態で同一common_user_idの再確認は重複作成せずokを返す(冪等性)', async () => {
-    const { order, product } = await createEligibleOrder('idempotent');
+    const fixture = await createEligibleOrder('idempotent');
+    const { order, product } = fixture;
     const token = 'raw-token-idempotent';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const first = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(first.kind).toBe('ok');
@@ -260,15 +302,51 @@ describe('walletClaimConfirm: confirmWalletClaim', () => {
   });
 
   it('既にDELIVERY_PENDINGの状態で異なるcommon_user_idでの再確認はmismatchとして拒否する', async () => {
-    const { order, product } = await createEligibleOrder('idempotent-mismatch');
+    const fixture = await createEligibleOrder('idempotent-mismatch');
+    const { order, product } = fixture;
     const token = 'raw-token-idempotent-mismatch';
-    await createClaim(order.id, token);
+    await createClaim(fixture, token);
 
     const first = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
     expect(first.kind).toBe('ok');
 
     const second = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_someone_else' });
     expect(second.kind).toBe('common_user_mismatch');
+
+    await cleanupOrder(order.id, product.id);
+  });
+
+  it('ok結果はdelivery_countとしてquantity分の作成件数を返す', async () => {
+    const fixture = await createEligibleOrder('delivery-count', { quantity: 3 });
+    const { order, product } = fixture;
+    const token = 'raw-token-delivery-count';
+    await createClaim(fixture, token);
+
+    const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
+    expect(outcome.kind).toBe('ok');
+    if (outcome.kind === 'ok') expect(outcome.deliveryCount).toBe(3);
+
+    await cleanupOrder(order.id, product.id);
+  });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)6.5「Delivery 0件」: ProductIntegrationRuleが
+  // 未設定(digital_collectible対象外)のNftIssueしか存在しない場合、DELIVERY_PENDINGへ進めず
+  // ERROR(要確認)のまま留める。
+  it('送付対象NftIssueが1件も無い場合、no_claimable_itemsを返しClaimをERRORのまま留める', async () => {
+    const fixture = await createEligibleOrder('no-claimable');
+    const { order, product, rule } = fixture;
+    await prisma.productIntegrationRule.update({ where: { id: rule.id }, data: { enabled: false } });
+    const token = 'raw-token-no-claimable';
+    await createClaim(fixture, token);
+
+    const outcome = await confirmWalletClaim(token, { oveAccountId: 'ove-acc-1', commonUserId: 'cu_test_00000001' });
+    expect(outcome.kind).toBe('no_claimable_items');
+
+    const claim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+    expect(claim.status).toBe('ERROR');
+    expect(claim.lastError).toBe('no_claimable_items');
+    const deliveries = await prisma.collectibleDelivery.findMany({ where: { walletClaimId: claim.id } });
+    expect(deliveries).toHaveLength(0);
 
     await cleanupOrder(order.id, product.id);
   });

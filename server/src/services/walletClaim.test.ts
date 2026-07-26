@@ -96,14 +96,19 @@ describe('walletClaim: createWalletClaimIfEligible', () => {
       expect(token).toBeNull();
     });
 
-    it('digital_collectible対象商品があれば生トークンを返し、DBにはハッシュのみ保存する', async () => {
+    it('digital_collectible対象商品があれば生トークンを返し、DBにはハッシュのみ保存する(WalletClaimItemもNftIssue単位で作成される)', async () => {
       const product = await createTestProduct('eligible');
-      await prisma.productIntegrationRule.create({
+      const rule = await prisma.productIntegrationRule.create({
         data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
       });
       const order = await createTestOrder('eligible');
       const orderItem = await prisma.orderItem.create({
         data: { orderId: order.id, productId: product.id, productName: product.name, itemType: 'nft', quantity: 1, unitPrice: 10000, subtotal: 10000 },
+      });
+      // 本番の呼び出し順(orderFulfillment.ts applyPaidOrderSideEffects)ではcreateNftIssuesForOrderが
+      // 先に実行され、対象NftIssue行が既に作成済みの状態でこの関数が呼ばれる。
+      const nftIssue = await prisma.nftIssue.create({
+        data: { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
       });
 
       const token = await prisma.$transaction((tx) => createWalletClaimIfEligible(tx, order, [orderItem]));
@@ -115,6 +120,14 @@ describe('walletClaim: createWalletClaimIfEligible', () => {
       expect(claim.tokenHash).toBe(hashClaimToken(token!));
       expect(claim.tokenHash).not.toBe(token);
       expect(claim.expiresAt.getTime()).toBeGreaterThan(Date.now());
+
+      const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
+      expect(claimItem.walletClaimId).toBe(claim.id);
+      expect(claimItem.productIntegrationRuleId).toBe(rule.id);
+      expect(claimItem.name).toBe(product.name);
+
+      await prisma.walletClaimItem.deleteMany({ where: { walletClaimId: claim.id } });
+      await prisma.nftIssue.deleteMany({ where: { id: nftIssue.id } });
     });
 
     it('無効化(enabled=false)されたルールしかない場合は作成しない', async () => {
@@ -187,5 +200,79 @@ describe('walletClaim: reissueWalletClaimToken', () => {
   it('存在しない注文は再発行できない', async () => {
     const newToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, '00000000-0000-0000-0000-000000000000'));
     expect(newToken).toBeNull();
+  });
+
+  it('PENDINGのClaimも再発行でき、reissueCount・lastReissuedAtが更新される', async () => {
+    const order = await createTestOrder('reissue-pending');
+    const claim = await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken('pending-old-token'), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60) },
+    });
+
+    const newToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    expect(newToken).not.toBeNull();
+
+    const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updated.reissueCount).toBe(1);
+    expect(updated.tokenVersion).toBe(1);
+    expect(updated.lastReissuedAt).not.toBeNull();
+  });
+
+  it('ERRORのClaimは再発行でき、statusがPENDINGへ戻る', async () => {
+    const order = await createTestOrder('reissue-error');
+    const claim = await prisma.walletClaim.create({
+      data: {
+        orderId: order.id,
+        tokenHash: hashClaimToken('error-old-token'),
+        status: 'ERROR',
+        lastError: 'order not paid',
+        expiresAt: new Date(Date.now() + 1000 * 60),
+      },
+    });
+
+    const newToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    expect(newToken).not.toBeNull();
+
+    const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updated.status).toBe('PENDING');
+    expect(updated.lastError).toBeNull();
+  });
+
+  it('CLAIMEDのClaimは再発行できない', async () => {
+    const order = await createTestOrder('reissue-claimed');
+    await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken('claimed-token'), status: 'CLAIMED', expiresAt: new Date(Date.now() + 1000 * 60) },
+    });
+
+    const newToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    expect(newToken).toBeNull();
+  });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase1「必須テスト: 同時再発行2件」:
+  // Promise.allでの見かけ上の同時実行だけでは、実際のSQL発行タイミングが重ならず両方成功して
+  // しまうことがある(真の競合を再現できない)ため、「古い読み取り時点のtoken_hashを条件とした
+  // 更新が、既に別プロセスによって書き換えられた後は失敗する」というCAS自体の保証を直接検証する。
+  it('古いtoken_hashを条件とした再発行の条件付き更新は、既に別プロセスが再発行した後は失敗する(楽観ロック)', async () => {
+    const order = await createTestOrder('reissue-concurrent');
+    const claim = await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken('concurrent-old-token'), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60) },
+    });
+
+    // 「同時に読み取った古いスナップショット」を模擬する。
+    const staleSnapshot = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+
+    // 先に1件目の再発行が正常に成功する(token_hashが書き換わる)。
+    const firstToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    expect(firstToken).not.toBeNull();
+
+    // 古いスナップショット(既に無効化されたtoken_hash)を条件にした2件目の更新試行は失敗する。
+    const staleUpdate = await prisma.walletClaim.updateMany({
+      where: { id: staleSnapshot.id, tokenHash: staleSnapshot.tokenHash, status: staleSnapshot.status },
+      data: { tokenHash: hashClaimToken('stale-writer-token'), status: 'PENDING' },
+    });
+    expect(staleUpdate.count).toBe(0);
+
+    const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updated.tokenHash).toBe(hashClaimToken(firstToken!));
+    expect(updated.reissueCount).toBe(1);
   });
 });

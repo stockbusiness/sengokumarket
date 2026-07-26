@@ -176,7 +176,7 @@ describe('管理API: 商品連携ルール(product_integration_rules)(本番安�
     const created = await agent
       .post(`/api/admin/products/${productA.id}/integration-rules`)
       .set('Origin', TEST_ORIGIN)
-      .send({ entitlementTargetSystemKey: 'sengoku-passport' });
+      .send({ entitlementTargetSystemKey: 'sengoku-passport', entitlementType: 'castle_lord_contract' });
     const ruleId = created.body.rule.id;
 
     const res = await agent
@@ -220,6 +220,99 @@ describe('管理API: 商品連携ルール(product_integration_rules)(本番安�
   });
 });
 
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase5(7.2〜7.4「Feature Flag整合」): ENABLE_WALLET_CLAIM
+// =falseの間はdigital_collectible向けルールを有効化できない(既存Mintにも流れず滞留するため)。
+describe('管理API: 商品連携ルール(Wallet Claim Feature Flag整合・本番安定化指示書Phase5)', () => {
+  const createdProductIds: string[] = [];
+  const originalFlag = process.env.ENABLE_WALLET_CLAIM;
+
+  afterAll(async () => {
+    process.env.ENABLE_WALLET_CLAIM = originalFlag;
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: { in: createdProductIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('ENABLE_WALLET_CLAIM=falseの間は有効なdigital_collectibleルールを新規作成できない', async () => {
+    delete process.env.ENABLE_WALLET_CLAIM;
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('flag-off-create');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', requireCommonUserId: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('WALLET_CLAIM_DISABLED');
+  });
+
+  it('ENABLE_WALLET_CLAIM=falseでもenabled=falseでのdigital_collectibleルール作成は許可される', async () => {
+    delete process.env.ENABLE_WALLET_CLAIM;
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('flag-off-create-disabled');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: false });
+    expect(res.status).toBe(201);
+  });
+
+  it('ENABLE_WALLET_CLAIM=trueなら有効なdigital_collectibleルールを作成できる', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('flag-on-create');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', requireCommonUserId: true });
+    expect(res.status).toBe(201);
+  });
+
+  it('ENABLE_WALLET_CLAIM=falseの間は既存の無効ルールをenabled=trueへ更新できない', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('flag-off-update');
+    createdProductIds.push(product.id);
+    const created = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        requireCommonUserId: true,
+        enabled: false,
+      });
+    const ruleId = created.body.rule.id;
+
+    delete process.env.ENABLE_WALLET_CLAIM;
+    const res = await agent
+      .patch(`/api/admin/products/${product.id}/integration-rules/${ruleId}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ enabled: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('WALLET_CLAIM_DISABLED');
+  });
+
+  it('digital_collectible以外のルールはENABLE_WALLET_CLAIM=falseでも有効化できる(対象外の組合せ)', async () => {
+    delete process.env.ENABLE_WALLET_CLAIM;
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('flag-off-other-type');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'reward_point' });
+    expect(res.status).toBe(201);
+  });
+});
+
 // 本番安定化指示書Stage11(14.1「Product Integration Rules」監視画面): 全商品横断の一覧。
 describe('管理API: 商品連携ルール全件一覧(本番安定化指示書Stage11)', () => {
   const createdProductIds: string[] = [];
@@ -248,5 +341,143 @@ describe('管理API: 商品連携ルール全件一覧(本番安定化指示書S
   it('未認証は401になる', async () => {
     const res = await request(app).get('/api/admin/product-integration-rules');
     expect(res.status).toBe(401);
+  });
+});
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase10(12章「ProductIntegrationRule入力制約」)。
+describe('管理API: 商品連携ルール(ProductIntegrationRule入力制約・本番安定化指示書Phase10)', () => {
+  const createdProductIds: string[] = [];
+  const originalFlag = process.env.ENABLE_WALLET_CLAIM;
+
+  afterAll(async () => {
+    process.env.ENABLE_WALLET_CLAIM = originalFlag;
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: { in: createdProductIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('enabled=trueで送信先(entitlementTargetSystemKey)未指定は400', async () => {
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('no-target-key');
+    createdProductIds.push(product.id);
+
+    const res = await agent.post(`/api/admin/products/${product.id}/integration-rules`).set('Origin', TEST_ORIGIN).send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('enabled=trueでentitlement_type未指定は400', async () => {
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('no-entitlement-type');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'sengoku-passport' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('digital_collectibleでasset_code未指定は400', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('no-asset-code');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', requireCommonUserId: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('digital_collectibleでrequireCommonUserId=falseは400', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('require-common-false');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('nft以外の商品へdigital_collectibleは設定できない(enabledに関わらず)', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await prisma.product.create({
+      data: {
+        name: `連携ルールAPIテスト商品-non-nft-${Date.now()}`,
+        slug: `integration-rule-route-test-non-nft-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'physical',
+        basePrice: 10000,
+        status: 'published',
+      },
+    });
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        requireCommonUserId: true,
+        enabled: false,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('必須項目がすべて揃ったdigital_collectibleルールは作成できる', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('valid-digital-collectible');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'rare',
+        requireCommonUserId: true,
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.rule.assetCode).toBe('SGK-CARD-001');
+    expect(res.body.rule.collectibleRarity).toBe('rare');
+  });
+
+  it('既存ルールの更新でasset_codeを外すと400になる(更新時も同じvalidation)', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('update-remove-asset-code');
+    createdProductIds.push(product.id);
+    const created = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        requireCommonUserId: true,
+      });
+    const ruleId = created.body.rule.id;
+
+    const res = await agent
+      .patch(`/api/admin/products/${product.id}/integration-rules/${ruleId}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ assetCode: null });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });
 });

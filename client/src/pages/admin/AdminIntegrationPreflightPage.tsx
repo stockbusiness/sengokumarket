@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
   fetchAdminIntegrationPreflight,
+  fetchAdminWalletClaimPreflight,
   updateAdminIntegrationStage,
   type IntegrationPreflightReport,
+  type WalletClaimPreflightReport,
 } from '../../features/admin-integration-preflight/api';
 
 const STAGE_OPTIONS = ['dry_run', 'staging', 'production'] as const;
@@ -16,6 +18,7 @@ function boolLabel(value: boolean | null): string {
 // 有効化する前に、必須設定・HMAC自己診断・送信先への疎通・backlog状況を1画面で確認できるようにする。
 export default function AdminIntegrationPreflightPage() {
   const [report, setReport] = useState<IntegrationPreflightReport | null>(null);
+  const [walletClaimReport, setWalletClaimReport] = useState<WalletClaimPreflightReport | null>(null);
   const [selectedStage, setSelectedStage] = useState<(typeof STAGE_OPTIONS)[number]>('dry_run');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -25,6 +28,7 @@ export default function AdminIntegrationPreflightPage() {
       setReport(d.report);
       if (d.report.stage !== 'disabled') setSelectedStage(d.report.stage);
     });
+    fetchAdminWalletClaimPreflight().then((d) => setWalletClaimReport(d.report));
   }
   useEffect(load, []);
 
@@ -84,6 +88,14 @@ export default function AdminIntegrationPreflightPage() {
             <tr>
               <th>有効な連携ルール数</th>
               <td>{report.productRuleCount}</td>
+            </tr>
+            <tr>
+              <th>Wallet Claim Feature Flag不整合</th>
+              <td>
+                {report.walletClaimFlagInconsistentRuleCount > 0
+                  ? `⚠ ${report.walletClaimFlagInconsistentRuleCount}件(デジタル会員証ルールが有効なのにENABLE_WALLET_CLAIMが無効です)`
+                  : 'なし'}
+              </td>
             </tr>
           </tbody>
         </table>
@@ -177,6 +189,95 @@ export default function AdminIntegrationPreflightPage() {
         </button>
         <p className="admin-muted">staging/productionへの変更は、有効化準備が完了していないと拒否されます。</p>
       </div>
+
+      {walletClaimReport && (
+        <div className="admin-table-card">
+          <h2>Wallet Claim / デジタル会員証送付 Preflight</h2>
+          <table>
+            <tbody>
+              <tr>
+                <th>Wallet Claim(ENABLE_WALLET_CLAIM)</th>
+                <td>{walletClaimReport.walletClaimEnabled ? '有効' : '無効'}</td>
+              </tr>
+              <tr>
+                <th>Delivery送信(ENABLE_DIGITAL_COLLECTIBLE_DELIVERY)</th>
+                <td>{walletClaimReport.digitalCollectibleDeliveryEnabled ? '有効' : '無効'}</td>
+              </tr>
+              <tr>
+                <th>Wallet Claim有効化可否(walletClaimReady)</th>
+                <td>{walletClaimReport.walletClaimReady ? '準備完了' : '未完了'}</td>
+              </tr>
+              <tr>
+                <th>Delivery有効化可否(collectibleDeliveryReady)</th>
+                <td>{walletClaimReport.collectibleDeliveryReady ? '準備完了' : '未完了'}</td>
+              </tr>
+              <tr>
+                <th>総合(overallReady)</th>
+                <td>{walletClaimReport.overallReady ? '準備完了' : '未完了'}</td>
+              </tr>
+              <tr>
+                <th>有効なdigital_collectibleルール数</th>
+                <td>{walletClaimReport.enabledDigitalCollectibleRuleCount}</td>
+              </tr>
+              <tr>
+                <th>asset_code未設定ルール数</th>
+                <td>{walletClaimReport.rulesMissingAssetCode}</td>
+              </tr>
+              <tr>
+                <th>requireCommonUserId=falseのルール数</th>
+                <td>{walletClaimReport.rulesWithoutRequireCommonUserId}</td>
+              </tr>
+              <tr>
+                <th>itemType≠nft商品への設定数</th>
+                <td>{walletClaimReport.rulesOnNonNftProduct}</td>
+              </tr>
+              <tr>
+                <th>必須migration</th>
+                <td>{walletClaimReport.migrationsOk ? '適用済み' : `不足: ${walletClaimReport.missingMigrations.join(', ')}`}</td>
+              </tr>
+              <tr>
+                <th>CRON_SECRET</th>
+                <td>{walletClaimReport.cronSecretConfigured ? '設定済み' : '未設定'}</td>
+              </tr>
+              <tr>
+                <th>未送信/dead/blocked件数</th>
+                <td>
+                  {walletClaimReport.pendingCount} / {walletClaimReport.deadCount} / {walletClaimReport.blockedCount}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h3>設定状況</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>設定キー</th>
+                <th>設定済み</th>
+              </tr>
+            </thead>
+            <tbody>
+              {walletClaimReport.settingChecks.map((c) => (
+                <tr key={c.key}>
+                  <td>{c.key}</td>
+                  <td>{c.configured ? '設定済み' : '未設定'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          {walletClaimReport.issues.length > 0 && (
+            <>
+              <h3>指摘事項</h3>
+              <ul>
+                {walletClaimReport.issues.map((issue) => (
+                  <li key={issue.code}>⚠ {issue.message}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

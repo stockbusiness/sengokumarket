@@ -6,9 +6,10 @@ import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 import { setSetting } from '../../services/settings';
 import { hashClaimToken } from '../../services/walletClaim';
 
-const sendNotificationMock = vi.fn(async (..._args: unknown[]) => {});
+const sendNotificationOrThrowMock = vi.fn(async (..._args: unknown[]) => {});
 vi.mock('../../modules/notifications/application/sendNotification.usecase', () => ({
-  sendNotification: (...args: unknown[]) => sendNotificationMock(...args),
+  sendNotification: async (..._args: unknown[]) => {},
+  sendNotificationOrThrow: (...args: unknown[]) => sendNotificationOrThrowMock(...args),
 }));
 
 const app = createApp();
@@ -106,24 +107,60 @@ describe('管理API: /admin/wallet-claims(戦国マーケットNFTカード受�
     await cleanup(order.id, product.id);
   });
 
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase7(9章「時刻カラム分離」): claimedAt/
+  // deliveredAt/revokedAt/manualReviewRequiredAtが独立して一覧・詳細の両方に表示される。
+  it('一覧・詳細にdeliveredAt・revokedAt・manualReviewRequiredAtが独立して含まれる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const { order, product, claim } = await createFixture(`timestamps-${Date.now()}`, 'MANUAL_REVIEW_REQUIRED');
+    const claimedAt = new Date(Date.now() - 3000);
+    const manualReviewRequiredAt = new Date(Date.now() - 1000);
+    await prisma.walletClaim.update({
+      where: { id: claim.id },
+      data: { claimedAt, manualReviewRequiredAt, deliveredAt: null, revokedAt: null },
+    });
+
+    const listRes = await agent.get(`/api/admin/wallet-claims?orderNumber=${order.orderNumber}`);
+    expect(listRes.status).toBe(200);
+    expect(new Date(listRes.body.walletClaims[0].claimedAt).getTime()).toBe(claimedAt.getTime());
+    expect(listRes.body.walletClaims[0].deliveredAt).toBeNull();
+    expect(new Date(listRes.body.walletClaims[0].manualReviewRequiredAt).getTime()).toBe(manualReviewRequiredAt.getTime());
+
+    const detailRes = await agent.get(`/api/admin/wallet-claims/${claim.id}`);
+    expect(detailRes.status).toBe(200);
+    expect(new Date(detailRes.body.walletClaim.claimedAt).getTime()).toBe(claimedAt.getTime());
+    expect(detailRes.body.walletClaim.revokedAt).toBeNull();
+    expect(new Date(detailRes.body.walletClaim.manualReviewRequiredAt).getTime()).toBe(manualReviewRequiredAt.getTime());
+
+    await cleanup(order.id, product.id);
+  });
+
   it('存在しないIDの詳細取得は404', async () => {
     const { agent } = await createAdminAgent(app);
     const res = await agent.get('/api/admin/wallet-claims/00000000-0000-0000-0000-000000000000');
     expect(res.status).toBe(404);
   });
 
-  it('再発行: PENDINGのClaimは再発行でき、生Tokenを返さずメール送信のみ行う', async () => {
+  it('再発行: PENDINGのClaimはNotification Outbox経由でメール送信され、生Tokenを画面へ返さない', async () => {
     await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
     const { agent } = await createAdminAgent(app);
     const { order, product, claim } = await createFixture(`reissue-ok-${Date.now()}`);
-    sendNotificationMock.mockClear();
+    sendNotificationOrThrowMock.mockClear();
 
     const res = await agent.post(`/api/admin/wallet-claims/${claim.id}/reissue`).set('Origin', TEST_ORIGIN);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+    expect(res.body.queued).toBe(true);
     expect(res.body.sentTo).toBe(order.customerEmail);
     expect(JSON.stringify(res.body)).not.toMatch(/[0-9a-f]{64}/); // 64桁16進の生トークンが含まれない
-    expect(sendNotificationMock).toHaveBeenCalledTimes(1);
+    // Notification Outbox経由でDispatcherが実際にToken発行・送信を行う(即時トリガーで完了する)。
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledTimes(1);
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updatedClaim.tokenHash).not.toBe(claim.tokenHash);
+    expect(updatedClaim.reissueCount).toBe(1);
+
+    const auditLogs = await prisma.walletClaimAuditLog.findMany({ where: { walletClaimId: claim.id } });
+    expect(auditLogs.some((a) => a.eventType === 'reissue_requested_by_admin')).toBe(true);
 
     await cleanup(order.id, product.id);
   });

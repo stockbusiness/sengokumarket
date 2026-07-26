@@ -3,8 +3,11 @@ import { prisma } from '../../../lib/prisma';
 import { createPasswordResetTokenWithId, invalidatePasswordResetToken } from '../../../services/passwordReset';
 import { sendNotificationOrThrow } from './sendNotification.usecase';
 import { buildAgencyAccessGrantedEmail, buildAgencyAccountSetupEmail } from '../templates/passwordSetup';
+import { buildWalletClaimReissuedEmail } from '../templates/walletClaimReissued';
+import { reissueWalletClaimToken } from '../../../services/walletClaim';
+import { getWalletClaimWebBaseUrl } from '../../../services/walletClaimConfig';
 import * as repo from '../infrastructure/notificationOutbox.repository';
-import type { AgencyAccessGrantedPayload, AgencyAccountSetupPayload } from '../domain/notificationOutbox.types';
+import type { AgencyAccessGrantedPayload, AgencyAccountSetupPayload, WalletClaimReissuedPayload } from '../domain/notificationOutbox.types';
 
 const BATCH_LIMIT = 10;
 
@@ -71,6 +74,23 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
   if (event.eventType === 'agency_access_granted') {
     const payload = event.payload as unknown as AgencyAccessGrantedPayload;
     await sendNotificationOrThrow(buildAgencyAccessGrantedEmail(event.recipient, payload.name));
+    return;
+  }
+  if (event.eventType === 'wallet_claim_reissued') {
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase1・Phase11: 新Tokenの発行自体を
+    // Dispatcher実行時に行う(agency_account_setupのpassword reset tokenと同じ設計。
+    // 生Token・生URLをpayloadへ保存しない)。
+    const payload = event.payload as unknown as WalletClaimReissuedPayload;
+    const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order) throw new Error('order not found for wallet_claim_reissued notification');
+
+    const base = await getWalletClaimWebBaseUrl();
+    if (!base) throw new Error('wallet_claim_web_base_url is not configured');
+
+    const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, payload.orderId));
+    if (!token) throw new Error('wallet claim is not reissuable in its current status');
+
+    await sendNotificationOrThrow(buildWalletClaimReissuedEmail(event.recipient, order.customerName, `${base}/claim/${token}`));
     return;
   }
   throw new Error(`unknown notification eventType: ${event.eventType}`);

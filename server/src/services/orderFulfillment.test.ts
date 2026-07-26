@@ -44,6 +44,7 @@ async function createOrderWithItem(productId: string, suffix: string, quantity: 
 }
 
 async function cleanup(orderId: string, productId: string) {
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaim.deleteMany({ where: { orderId } });
   await prisma.nftIssue.deleteMany({ where: { orderId } });
   await prisma.orderItem.deleteMany({ where: { orderId } });
@@ -122,6 +123,7 @@ describe('orderFulfillment: applyPaidOrderSideEffects (digital_collectible: seri
     expect(issue1.serialNumber).toBe(1);
     expect(issue2.serialNumber).toBe(2);
 
+    await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId: { in: [order1.id, order2.id] } } } });
     await prisma.walletClaim.deleteMany({ where: { orderId: { in: [order1.id, order2.id] } } });
     await prisma.nftIssue.deleteMany({ where: { orderId: { in: [order1.id, order2.id] } } });
     await prisma.orderItem.deleteMany({ where: { orderId: { in: [order1.id, order2.id] } } });

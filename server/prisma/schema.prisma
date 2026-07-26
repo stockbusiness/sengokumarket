@@ -438,6 +438,7 @@ model NftIssue {
 
   walletReminderEmails WalletReminderEmail[]
   collectibleDelivery  CollectibleDelivery?
+  walletClaimItem      WalletClaimItem?
 
   @@unique([productId, serialNumber])
   @@index([status])
@@ -448,25 +449,75 @@ model NftIssue {
 // 購入後、決済確定と同一トランザクションで作成する注文単位のClaim。千ノ国ウォレット側でこのトークンを
 // 使ってログイン・本人確認したうえで、実際のカード送付(CollectibleDelivery)へ進む。
 model WalletClaim {
-  id           String    @id @default(uuid()) @db.Uuid
-  orderId      String    @unique @map("order_id") @db.Uuid
+  id                     String    @id @default(uuid()) @db.Uuid
+  orderId                String    @unique @map("order_id") @db.Uuid
   // 生トークンはURLにのみ含め、DBにはSHA-256ハッシュだけを保存する(仕様書16章「Token平文保存禁止」)。
-  tokenHash    String    @unique @map("token_hash")
-  status       String    @default("PENDING") // PENDING|CLAIMED|DELIVERY_PENDING|DELIVERED|EXPIRED|REVOKED|ERROR
-  expiresAt    DateTime  @map("expires_at")
-  claimedAt    DateTime? @map("claimed_at")
+  tokenHash              String    @unique @map("token_hash")
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase6: PENDING|CLAIMED|DELIVERY_PENDING|DELIVERED|
+  // REVOCATION_PENDING(取消送信中)|REVOKED|MANUAL_REVIEW_REQUIRED(Mint後返金・要手動確認)|
+  // EXPIRED|ERROR
+  status                 String    @default("PENDING")
+  expiresAt              DateTime  @map("expires_at")
+  claimedAt              DateTime? @map("claimed_at")
+  // Phase7: 各状態遷移完了時刻をclaimed_atとは独立して記録する(claimed_atは上書きしない)。
+  deliveredAt            DateTime? @map("delivered_at")
+  revokedAt              DateTime? @map("revoked_at")
+  manualReviewRequiredAt DateTime? @map("manual_review_required_at")
   // Claim確認API(POST .../confirm)のリクエストで千ノ国ウォレットから渡された値をスナップショットする。
-  commonUserId String?   @map("common_user_id")
-  oveAccountId String?   @map("ove_account_id")
-  lastError    String?   @map("last_error")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  commonUserId           String?   @map("common_user_id")
+  oveAccountId           String?   @map("ove_account_id")
+  lastError              String?   @map("last_error")
+  // Phase1: 再発行の同時実行制御(CAS)・監査用。実際の排他制御はtoken_hashの一致条件による
+  // 楽観ロックで行うため、token_versionはCAS判定に使うのではなく監査・表示用の値として持たせる。
+  tokenVersion           Int       @default(0) @map("token_version")
+  lastReissuedAt         DateTime? @map("last_reissued_at")
+  reissueCount           Int       @default(0) @map("reissue_count")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
 
   order      Order                 @relation(fields: [orderId], references: [id])
+  items      WalletClaimItem[]
   deliveries CollectibleDelivery[]
   auditLogs  WalletClaimAuditLog[]
 
   @@map("wallet_claims")
+}
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase4: 決済確定時点の対象NftIssue・連携ルール・
+// カード情報のスナップショット。Confirm時はProductIntegrationRuleを再取得せず、この行を基準に
+// CollectibleDelivery・Outboxを作成する(購入後のルール変更・無効化で配送対象が変わらないようにする)。
+model WalletClaimItem {
+  id                       String   @id @default(uuid()) @db.Uuid
+  walletClaimId            String   @map("wallet_claim_id") @db.Uuid
+  nftIssueId               String   @unique @map("nft_issue_id") @db.Uuid
+  orderItemId              String   @map("order_item_id") @db.Uuid
+  productId                String   @map("product_id") @db.Uuid
+  productIntegrationRuleId String   @map("product_integration_rule_id") @db.Uuid
+  destinationSystemKey     String   @map("destination_system_key")
+  entitlementType          String   @map("entitlement_type")
+  // 千ノ国全体統合契約のentitlement系イベントpayloadに含まれるproduct_code(汎用の商品コード)を
+  // 決済時点でスナップショットする。ルール削除・変更後もOutbox payloadの構造を維持するため。
+  productCode              String?  @map("product_code")
+  assetCode                String?  @map("asset_code")
+  serialNumber             Int?     @map("serial_number")
+  name                     String
+  description              String?
+  imageUrl                 String?  @map("image_url")
+  thumbnailUrl             String?  @map("thumbnail_url")
+  imageHash                String?  @map("image_hash")
+  rarity                   String?
+  // PENDING(未送付)|DELIVERED|REVOKED。CollectibleDelivery作成前の対象確定用フラグであり、
+  // 実際の送付状況の正はCollectibleDeliveryが持つ(この列は「返金でこの明細をもう対象にしない」
+  // 用途のみに使う)。
+  status                   String   @default("PENDING")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  walletClaim WalletClaim @relation(fields: [walletClaimId], references: [id])
+  nftIssue    NftIssue    @relation(fields: [nftIssueId], references: [id])
+
+  @@index([walletClaimId])
+  @@map("wallet_claim_items")
 }
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)5章: NftIssue単位(1枚=1件)の
@@ -524,6 +575,8 @@ model WalletClaimApiNonce {
   nonce     String   @unique
   createdAt DateTime @default(now()) @map("created_at")
 
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase2: 古いnonceを定期削除するcronで使う。
+  @@index([createdAt])
   @@map("wallet_claim_api_nonces")
 }
 
@@ -696,7 +749,7 @@ model OrderLinkingJob {
 // 最初から持たせ、Dispatcherの所有権管理を明確にする)。
 model NotificationOutboxEvent {
   id                   String    @id @default(uuid()) @db.Uuid
-  eventType            String    @map("event_type") // agency_account_setup | agency_access_granted
+  eventType            String    @map("event_type") // agency_account_setup | agency_access_granted | wallet_claim_reissued
   recipient            String
   payload              Json
   status               String    @default("pending") // pending | processing | succeeded | failed | dead

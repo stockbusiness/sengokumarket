@@ -81,6 +81,28 @@ async function createEligibleFixture(suffix: string) {
       expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
       commonUserId: 'cu_test_00000001',
       oveAccountId: 'ove-acc-1',
+      // 実際の確認処理(walletClaimConfirm.ts)ではDELIVERY_PENDING遷移と同時にclaimedAtが
+      // 設定される。このフィクスチャはConfirm処理自体を経由しないため、ここで模倣しておく。
+      claimedAt: new Date(),
+    },
+  });
+
+  const claimItem = await prisma.walletClaimItem.create({
+    data: {
+      walletClaimId: walletClaim.id,
+      nftIssueId: nftIssue.id,
+      orderItemId: orderItem.id,
+      productId: product.id,
+      productIntegrationRuleId: rule.id,
+      destinationSystemKey: rule.entitlementTargetSystemKey!,
+      entitlementType: rule.entitlementType!,
+      assetCode: rule.assetCode,
+      serialNumber: nftIssue.serialNumber,
+      name: product.name,
+      description: product.description,
+      imageUrl: product.images[0],
+      thumbnailUrl: product.images[0],
+      rarity: rule.collectibleRarity,
     },
   });
 
@@ -89,8 +111,7 @@ async function createEligibleFixture(suffix: string) {
       order,
       orderItem,
       nftIssue,
-      rule,
-      product,
+      claimItem,
       commonUserId: 'cu_test_00000001',
       eventType: 'entitlement.granted',
     }),
@@ -107,11 +128,12 @@ async function createEligibleFixture(suffix: string) {
     },
   });
 
-  return { product, order, orderItem, nftIssue, walletClaim, delivery, outboxEventId };
+  return { product, order, orderItem, nftIssue, walletClaim, claimItem, delivery, outboxEventId };
 }
 
 async function cleanup(orderId: string, productId: string, walletClaimId: string, outboxEventId: string) {
   await prisma.collectibleDelivery.deleteMany({ where: { walletClaimId } });
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaimId } });
   await prisma.walletClaim.deleteMany({ where: { id: walletClaimId } });
   await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId } });
   await prisma.integrationOutboxEvent.deleteMany({ where: { id: outboxEventId } });
@@ -176,9 +198,12 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     expect(updatedDelivery.status).toBe('DELIVERED');
     expect(updatedDelivery.deliveredAt).not.toBeNull();
 
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase7(9章「claimedAtを上書きしない」): DELIVERED
+    // 遷移時にはdeliveredAtのみ設定し、Confirm時点で設定済みのclaimedAtは変更しない。
     const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: walletClaim.id } });
     expect(updatedClaim.status).toBe('DELIVERED');
-    expect(updatedClaim.claimedAt).not.toBeNull();
+    expect(updatedClaim.claimedAt?.getTime()).toBe(walletClaim.claimedAt?.getTime());
+    expect(updatedClaim.deliveredAt).not.toBeNull();
 
     await cleanup(order.id, product.id, walletClaim.id, outboxEventId);
   });
@@ -209,16 +234,14 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     await prisma.integrationOutboxEvent.update({ where: { id: grantedEventId }, data: { status: 'succeeded', processedAt: new Date() } });
     await prisma.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'DELIVERED', deliveredAt: new Date() } });
 
-    const productRow = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
-    const rule = await prisma.productIntegrationRule.findFirstOrThrow({ where: { productId: product.id } });
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
     const orderRow = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
     const revokedEventId = await prisma.$transaction((tx) =>
       enqueueDigitalCollectibleEvent(tx, {
         order: orderRow,
         orderItem,
         nftIssue,
-        rule,
-        product: productRow,
+        claimItem,
         commonUserId: 'cu_test_00000001',
         eventType: 'entitlement.revoked',
       }),
@@ -304,21 +327,22 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     await prisma.integrationOutboxEvent.update({ where: { id: grantedEventId }, data: { status: 'succeeded', processedAt: new Date() } });
     await prisma.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'DELIVERED', deliveredAt: new Date() } });
 
-    const productRow = await prisma.product.findUniqueOrThrow({ where: { id: product.id } });
-    const rule = await prisma.productIntegrationRule.findFirstOrThrow({ where: { productId: product.id } });
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
     const orderRow = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
     const revokedEventId = await prisma.$transaction((tx) =>
       enqueueDigitalCollectibleEvent(tx, {
         order: orderRow,
         orderItem,
         nftIssue,
-        rule,
-        product: productRow,
+        claimItem,
         commonUserId: 'cu_test_00000001',
         eventType: 'entitlement.revoked',
       }),
     );
     await prisma.collectibleDelivery.update({ where: { id: delivery.id }, data: { outboxEventId: revokedEventId, status: 'PENDING' } });
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase6: 返金処理(walletClaimRefund.ts)は取消
+    // enqueueと同時にWalletClaim=REVOCATION_PENDINGへ進める想定のため、その状態を再現する。
+    await prisma.walletClaim.update({ where: { id: walletClaim.id }, data: { status: 'REVOCATION_PENDING' } });
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{}') }));
 
@@ -329,6 +353,11 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery.id } });
     expect(updatedDelivery.status).toBe('REVOKED');
     expect(updatedDelivery.revokedAt).not.toBeNull();
+
+    // Phase6(8.3「親状態同期」): 全CollectibleDeliveryがREVOKEDになったのでWalletClaim=REVOKEDへ進む。
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: walletClaim.id } });
+    expect(updatedClaim.status).toBe('REVOKED');
+    expect(updatedClaim.revokedAt).not.toBeNull();
 
     await prisma.integrationOutboxEvent.deleteMany({ where: { id: grantedEventId } });
     await cleanup(order.id, product.id, walletClaim.id, revokedEventId);

@@ -7,6 +7,7 @@ import { setSetting } from '../../services/settings';
 import { buildSennokuniHeaders } from '../../lib/sennokuniHmac';
 import { hashClaimToken } from '../../services/walletClaim';
 import { setSennokuniIntegrationStageSetting } from '../../services/sennokuniIntegrationConfig';
+import { dispatchPendingOutboxEvents } from '../../services/integrationOutboxDispatcher';
 
 const app = createApp();
 const KEY_ID = 'wallet-claim-test-key';
@@ -42,7 +43,7 @@ async function createEligibleOrderWithClaim(suffix: string, token: string) {
       status: 'published',
     },
   });
-  await prisma.productIntegrationRule.create({
+  const rule = await prisma.productIntegrationRule.create({
     data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
   });
   const order = await prisma.order.create({
@@ -63,11 +64,25 @@ async function createEligibleOrderWithClaim(suffix: string, token: string) {
   const orderItem = await prisma.orderItem.create({
     data: { orderId: order.id, productId: product.id, productName: product.name, itemType: 'nft', quantity: 1, unitPrice: 10000, subtotal: 10000 },
   });
-  await prisma.nftIssue.create({
+  const nftIssue = await prisma.nftIssue.create({
     data: { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
   });
-  await prisma.walletClaim.create({
+  const claim = await prisma.walletClaim.create({
     data: { orderId: order.id, tokenHash: hashClaimToken(token), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) },
+  });
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase4: confirmWalletClaimは決済確定時に作成される
+  // WalletClaimItemを基準に判断するため、このテスト用ヘルパーでも同時に作成する。
+  await prisma.walletClaimItem.create({
+    data: {
+      walletClaimId: claim.id,
+      nftIssueId: nftIssue.id,
+      orderItemId: orderItem.id,
+      productId: product.id,
+      productIntegrationRuleId: rule.id,
+      destinationSystemKey: rule.entitlementTargetSystemKey!,
+      entitlementType: rule.entitlementType!,
+      name: product.name,
+    },
   });
   return { product, order };
 }
@@ -79,6 +94,7 @@ async function cleanupOrder(orderId: string, productId: string) {
   await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: outboxEventIds } } });
   await prisma.integrationOutboxEvent.deleteMany({ where: { id: { in: outboxEventIds } } });
   await prisma.walletClaimAuditLog.deleteMany({ where: { orderId } });
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaim.deleteMany({ where: { orderId } });
   await prisma.nftIssue.deleteMany({ where: { orderId } });
   await prisma.orderItem.deleteMany({ where: { orderId } });
@@ -130,6 +146,42 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
     const res = await request(app).get(path).set(headers);
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('INVALID_SIGNATURE');
+  });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase2「必須処理順序」: 署名検証より前にnonceを
+  // INSERTしない。無効署名のリクエストでnonce行が消費されないため、同じnonceを正しい署名で
+  // 再利用できることを確認する。
+  it('無効な署名のリクエストはnonceを消費しない(同じnonceを正しい署名で再利用できる)', async () => {
+    const path = '/api/integrations/wallet-claims/some-token';
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const invalidHeaders = signedHeaders({ method: 'GET', path, rawBody: '', nonce });
+    invalidHeaders['X-SenNoKuni-Signature'] = 'a'.repeat(64);
+    const invalidRes = await request(app).get(path).set(invalidHeaders);
+    expect(invalidRes.status).toBe(401);
+    expect(invalidRes.body.error.code).toBe('INVALID_SIGNATURE');
+
+    const validHeaders = signedHeaders({ method: 'GET', path, rawBody: '', nonce });
+    const validRes = await request(app).get(path).set(validHeaders);
+    expect(validRes.status).toBe(404); // 認証は通る(トークン自体が存在しないだけ)
+  });
+
+  it('ヘッダーが上限長を超える場合400', async () => {
+    const path = '/api/integrations/wallet-claims/some-token';
+    const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
+    headers['X-SenNoKuni-Key-Id'] = 'k'.repeat(200);
+    const res = await request(app).get(path).set(headers);
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('HEADER_TOO_LONG');
+  });
+
+  it('DB障害(P2002以外のエラー)はnonce再利用と誤判定せず500として伝播する', async () => {
+    const path = '/api/integrations/wallet-claims/some-token';
+    const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
+
+    const spy = vi.spyOn(prisma.walletClaimApiNonce, 'create').mockRejectedValueOnce(new Error('connection refused'));
+    const res = await request(app).get(path).set(headers);
+    expect(res.status).toBe(500);
+    spy.mockRestore();
   });
 
   it('timestampが許容範囲外の場合401', async () => {
@@ -257,7 +309,7 @@ describe('dry_run結合テスト: Claim確認 → NftIssue単位Outbox → dry_r
         status: 'published',
       },
     });
-    await prisma.productIntegrationRule.create({
+    const rule = await prisma.productIntegrationRule.create({
       data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
     });
     const order = await prisma.order.create({
@@ -278,14 +330,29 @@ describe('dry_run結合テスト: Claim確認 → NftIssue単位Outbox → dry_r
     const orderItem = await prisma.orderItem.create({
       data: { orderId: order.id, productId: product.id, productName: product.name, itemType: 'nft', quantity: 2, unitPrice: 10000, subtotal: 20000 },
     });
-    await prisma.nftIssue.createMany({
-      data: [
-        { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
-        { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 2 },
-      ],
-    });
-    await prisma.walletClaim.create({
+    const nftIssues = await Promise.all(
+      [1, 2].map((serialNumber) =>
+        prisma.nftIssue.create({
+          data: { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber },
+        }),
+      ),
+    );
+    const walletClaim = await prisma.walletClaim.create({
       data: { orderId: order.id, tokenHash: hashClaimToken(token), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30) },
+    });
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase4: confirmWalletClaimは決済確定時に作成される
+    // WalletClaimItemを基準に判断するため、このテスト用フィクスチャでも同時に作成する。
+    await prisma.walletClaimItem.createMany({
+      data: nftIssues.map((nftIssue) => ({
+        walletClaimId: walletClaim.id,
+        nftIssueId: nftIssue.id,
+        orderItemId: orderItem.id,
+        productId: product.id,
+        productIntegrationRuleId: rule.id,
+        destinationSystemKey: rule.entitlementTargetSystemKey!,
+        entitlementType: rule.entitlementType!,
+        name: product.name,
+      })),
     });
 
     const confirmPath = `/api/integrations/wallet-claims/${token}/confirm`;
@@ -294,9 +361,22 @@ describe('dry_run結合テスト: Claim確認 → NftIssue単位Outbox → dry_r
     const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
     expect(confirmRes.status).toBe(200);
     expect(confirmRes.body.status).toBe('DELIVERY_PENDING');
+    expect(confirmRes.body.delivery_count).toBe(2);
 
-    // confirmWalletClaim内部でtriggerImmediateOutboxDispatchが呼ばれるため、追加のcron呼び出しなしで
-    // dry_runディスパッチまで完了しているはずである。
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase3: Claim確認トランザクションは同期Dispatcher
+    // 呼び出しを行わないため、confirm直後はDelivery・Outboxがpendingのまま残っているはずである。
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const pendingDeliveries = await prisma.collectibleDelivery.findMany({ where: { walletClaim: { orderId: order.id } } });
+    expect(pendingDeliveries).toHaveLength(2);
+    expect(pendingDeliveries.every((d) => d.status === 'PENDING')).toBe(true);
+
+    const claimBeforeDispatch = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+    expect(claimBeforeDispatch.status).toBe('DELIVERY_PENDING');
+
+    // 5分Cron(process-integration-outbox)相当の呼び出しを手動で発火させ、dry_runディスパッチ
+    // まで実ネットワーク呼び出し無しで完了することを確認する。
+    await dispatchPendingOutboxEvents();
     expect(fetchMock).not.toHaveBeenCalled();
 
     const deliveries = await prisma.collectibleDelivery.findMany({ where: { walletClaim: { orderId: order.id } } });

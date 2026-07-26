@@ -26,6 +26,10 @@ export interface AdminProductIntegrationRule {
   requireClosingAgentId: boolean;
   requireReferralSessionKey: boolean;
   enabled: boolean;
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase10「ProductIntegrationRule入力制約」:
+  // entitlementType=digital_collectibleの必須項目。
+  assetCode: string | null;
+  collectibleRarity: string | null;
 }
 
 export interface AdminProduct {
@@ -130,6 +134,8 @@ export interface IntegrationRuleRequest {
   requireClosingAgentId?: boolean;
   requireReferralSessionKey?: boolean;
   enabled?: boolean;
+  assetCode?: string | null;
+  collectibleRarity?: string | null;
 }
 
 export function fetchAdminProductIntegrationRules(productId: string) {

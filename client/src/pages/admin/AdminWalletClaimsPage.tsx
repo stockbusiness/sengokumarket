@@ -4,7 +4,17 @@ import { fetchAdminWalletClaims, type AdminWalletClaim, type WalletClaimSearchFi
 import EmptyState from '../../components/EmptyState';
 import Pagination from '../../components/Pagination';
 
-const STATUSES = ['PENDING', 'CLAIMED', 'DELIVERY_PENDING', 'DELIVERED', 'EXPIRED', 'REVOKED', 'ERROR'];
+const STATUSES = [
+  'PENDING',
+  'CLAIMED',
+  'DELIVERY_PENDING',
+  'DELIVERED',
+  'REVOCATION_PENDING',
+  'REVOKED',
+  'MANUAL_REVIEW_REQUIRED',
+  'EXPIRED',
+  'ERROR',
+];
 
 function formatDateTime(value: string | null): string {
   return value ? new Date(value).toLocaleString('ja-JP') : '-';

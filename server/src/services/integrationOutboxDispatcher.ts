@@ -437,6 +437,20 @@ async function syncCollectibleDeliveryOnSend(
       where: { id: delivery.id },
       data: { status: 'REVOKED', revokedAt: new Date(), lastError: null },
     });
+
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase6(8.3「親状態同期」): 同じWalletClaimに
+    // 属する全CollectibleDeliveryがREVOKEDになったらWalletClaim=REVOKEDへ進める(revoked_at設定)。
+    // Mint済みでmanual_review_required注記のみ残った行がある場合は全件REVOKEDに到達しないため、
+    // WalletClaimはREVOCATION_PENDINGのまま残り、管理者の確認が必要であることを示し続ける。
+    const remaining = await tx.collectibleDelivery.count({
+      where: { walletClaimId: delivery.walletClaimId, status: { not: 'REVOKED' } },
+    });
+    if (remaining === 0) {
+      await tx.walletClaim.updateMany({
+        where: { id: delivery.walletClaimId, status: 'REVOCATION_PENDING' },
+        data: { status: 'REVOKED', revokedAt: new Date() },
+      });
+    }
     return;
   }
 
@@ -447,13 +461,16 @@ async function syncCollectibleDeliveryOnSend(
 
   // 15章「全Delivery成功」: 同じWalletClaimに属する全CollectibleDeliveryがDELIVEREDになったら
   // WalletClaim=DELIVEREDへ進める。
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase7(9章「claimedAtを上書きしない」): claimedAt
+  // はClaim確認完了時刻(walletClaimConfirm.ts)の固定値であり、ここではdeliveredAt(全Delivery
+  // 完了日時)のみを設定する。
   const remaining = await tx.collectibleDelivery.count({
     where: { walletClaimId: delivery.walletClaimId, status: { not: 'DELIVERED' } },
   });
   if (remaining === 0) {
     await tx.walletClaim.updateMany({
       where: { id: delivery.walletClaimId, status: 'DELIVERY_PENDING' },
-      data: { status: 'DELIVERED', claimedAt: new Date() },
+      data: { status: 'DELIVERED', deliveredAt: new Date() },
     });
   }
 }

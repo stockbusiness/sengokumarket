@@ -51,8 +51,12 @@ router.post('/:token/confirm', async (req, res) => {
     case 'common_user_unresolved':
       // 9章「未解決」: エラーではなく保留(送付待ち)として扱う。
       return res.status(202).json({ ok: true, action: 'common_user_unresolved' });
+    case 'no_claimable_items':
+      // Wallet Claim本番前安定化指示書6.5: 送付対象カードが0件。要確認としてWalletClaimは
+      // ERRORのまま留めている(運営側の手動確認が必要)。
+      return sendIntegrationError(res, 409, 'NO_CLAIMABLE_ITEMS', '送付対象のデジタル会員証が見つかりません。運営にお問い合わせください');
     case 'ok':
-      return res.status(200).json({ ok: true, status: outcome.status });
+      return res.status(200).json({ ok: true, status: outcome.status, delivery_count: outcome.deliveryCount });
   }
 });
 

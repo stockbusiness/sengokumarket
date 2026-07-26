@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { setSetting } from '../services/settings';
+import { hashClaimToken } from '../services/walletClaim';
 
 const pushAgencyCandidateToExternalSystem = vi.fn(async (..._args: unknown[]) => ({
   external_id: 'x',
@@ -422,6 +424,99 @@ describe('マイページAPI', () => {
         .send({ walletAddress: walletAccount.address, signature });
       expect(replay.status).toBe(400);
       expect(replay.body.error.code).toBe('NONCE_ALREADY_USED');
+    });
+  });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase1「必須修正」: URL設定・メール送信の失敗で
+  // 旧URL(旧Token)だけが無効になることを防ぐため、Token発行より前に前提条件を確認する順序になっているか。
+  describe('マイページ: Wallet Claim受取URL再発行', () => {
+    afterEach(async () => {
+      await prisma.setting.deleteMany({ where: { key: 'wallet_claim_web_base_url' } });
+    });
+
+    async function createOwnOrderWithClaim(suffix: string, status = 'PENDING') {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-MYPAGE-WCTEST-${suffix}`,
+          userId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'マイページ太郎',
+          customerEmail: `mypage-wc-test-${suffix}@example.com`,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const claim = await prisma.walletClaim.create({
+        data: { orderId: order.id, tokenHash: hashClaimToken(`old-token-${suffix}`), status, expiresAt: new Date(Date.now() + 1000 * 60 * 60) },
+      });
+      return { order, claim };
+    }
+
+    it('wallet_claim_web_base_url未設定の場合、503を返しTokenを書き換えない', async () => {
+      const suffix = `nourl-${Date.now()}`;
+      const { order, claim } = await createOwnOrderWithClaim(suffix);
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(503);
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(updated.tokenHash).toBe(hashClaimToken(`old-token-${suffix}`));
+      expect(updated.reissueCount).toBe(0);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('URL設定済みでPENDINGの場合、再発行できTokenが書き換わる', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order, claim } = await createOwnOrderWithClaim(`ok-${Date.now()}`);
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(200);
+      expect(res.body.url).toContain('https://wallet.example.com/claim/');
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(updated.reissueCount).toBe(1);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('DELIVERY_PENDING状態のClaimは再発行できない(400)', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order } = await createOwnOrderWithClaim(`inprogress-${Date.now()}`, 'DELIVERY_PENDING');
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(400);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('他人の注文には404を返す', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const otherOrder = await prisma.order.create({
+        data: {
+          orderNumber: `SG-MYPAGE-WCTEST-other-${Date.now()}`,
+          userId: otherUserId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: '他人',
+          customerEmail: 'other@example.com',
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+
+      const res = await agent.post(`/api/mypage/orders/${otherOrder.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(404);
+
+      await prisma.order.deleteMany({ where: { id: otherOrder.id } });
     });
   });
 

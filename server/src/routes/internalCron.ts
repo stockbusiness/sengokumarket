@@ -8,6 +8,7 @@ import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispat
 import { dispatchPendingNotifications } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 import { processOrderLinkingJobs } from '../services/orderLinkingJobDispatcher';
 import { cleanupStaleRateLimitBuckets } from '../services/rateLimiter';
+import { cleanupWalletClaimApiNonces } from '../middleware/walletClaimHmac';
 
 const router = Router();
 
@@ -91,6 +92,18 @@ router.get('/process-order-linking-jobs', async (_req, res) => {
 router.get('/cleanup-rate-limit-buckets', async (_req, res) => {
   try {
     const result = await cleanupStaleRateLimitBuckets();
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase2(4.5「nonce cleanup」): Claim確認APIの
+// HMAC nonceは時間経過後リプレイ判定に使われなくなるため、古い行を定期削除する。
+router.get('/cleanup-wallet-claim-nonces', async (_req, res) => {
+  try {
+    const result = await cleanupWalletClaimApiNonces();
     res.json(result);
   } catch (e) {
     if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);

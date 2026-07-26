@@ -58,13 +58,24 @@ async function createFixture(suffix: string, deliveryStatus = 'PENDING') {
       commonUserId: 'cu_test_00000001',
     },
   });
+  const claimItem = await prisma.walletClaimItem.create({
+    data: {
+      walletClaimId: claim.id,
+      nftIssueId: nftIssue.id,
+      orderItemId: orderItem.id,
+      productId: product.id,
+      productIntegrationRuleId: rule.id,
+      destinationSystemKey: rule.entitlementTargetSystemKey!,
+      entitlementType: rule.entitlementType!,
+      name: product.name,
+    },
+  });
   const outboxEventId = await prisma.$transaction((tx) =>
     enqueueDigitalCollectibleEvent(tx, {
       order,
       orderItem,
       nftIssue,
-      rule,
-      product,
+      claimItem,
       commonUserId: 'cu_test_00000001',
       eventType: 'entitlement.granted',
     }),
@@ -88,6 +99,7 @@ async function createFixture(suffix: string, deliveryStatus = 'PENDING') {
 
 async function cleanup(orderId: string, productId: string, outboxEventId: string) {
   await prisma.collectibleDelivery.deleteMany({ where: { walletClaim: { orderId } } });
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaim.deleteMany({ where: { orderId } });
   await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId } });
   await prisma.integrationOutboxEvent.deleteMany({ where: { id: outboxEventId } });

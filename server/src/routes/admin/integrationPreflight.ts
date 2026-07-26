@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { sendError } from '../../lib/apiError';
 import { buildIntegrationPreflightReport } from '../../services/integrationPreflight';
+import { buildWalletClaimPreflightReport } from '../../services/walletClaimPreflight';
 import {
   getSennokuniIntegrationStage,
   setSennokuniIntegrationStageSetting,
@@ -41,6 +42,19 @@ router.put('/integration-stage', async (req, res) => {
         422,
         'PREFLIGHT_NOT_READY',
         '必須設定の不足・形式不正・HMAC自己診断の失敗があるため、この段階へは変更できません。GET /api/admin/integration-preflightで詳細を確認してください',
+      );
+    }
+
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10.4「production有効化前にfail-close」):
+    // digital_collectible向けの有効なルールが存在する場合、カード送付固有の必須設定
+    // (events HMAC・CRON_SECRET等)も揃っていなければこの段階へは変更できない。
+    const walletClaimReport = await buildWalletClaimPreflightReport();
+    if (walletClaimReport.enabledDigitalCollectibleRuleCount > 0 && !walletClaimReport.collectibleDeliveryReady) {
+      return sendError(
+        res,
+        422,
+        'WALLET_CLAIM_PREFLIGHT_NOT_READY',
+        'digital_collectible向けの有効なルールがありますが、カード送付固有の必須設定が不足しているためこの段階へは変更できません。GET /api/admin/wallet-claim-preflightで詳細を確認してください',
       );
     }
   }

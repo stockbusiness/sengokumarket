@@ -58,7 +58,7 @@ async function createFixture(
       status: 'published',
     },
   });
-  await prisma.productIntegrationRule.create({
+  const rule = await prisma.productIntegrationRule.create({
     data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
   });
   const paymentIntentId = `pi_test_wc_${suffix}_${Math.random().toString(36).slice(2)}`;
@@ -93,6 +93,21 @@ async function createFixture(
       commonUserId: opts.claimStatus !== 'PENDING' ? 'cu_test_00000001' : null,
     },
   });
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase4: walletClaimRefundは返金時のentitlement.revoked
+  // enqueueをWalletClaimItem(購入時点のスナップショット)経由で行うため、このテスト用フィクスチャでも
+  // 同時に作成する。
+  await prisma.walletClaimItem.create({
+    data: {
+      walletClaimId: claim.id,
+      nftIssueId: nftIssue.id,
+      orderItemId: orderItem.id,
+      productId: product.id,
+      productIntegrationRuleId: rule.id,
+      destinationSystemKey: rule.entitlementTargetSystemKey!,
+      entitlementType: rule.entitlementType!,
+      name: product.name,
+    },
+  });
   let delivery = null;
   if (opts.withDelivery) {
     delivery = await prisma.collectibleDelivery.create({
@@ -117,6 +132,7 @@ async function cleanup(orderId: string, productId: string) {
   const allOutboxEventIds = [...new Set([...outboxEventIds, ...otherOutboxEvents.map((e) => e.id)])];
   await prisma.collectibleDelivery.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaimAuditLog.deleteMany({ where: { orderId } });
+  await prisma.walletClaimItem.deleteMany({ where: { walletClaim: { orderId } } });
   await prisma.walletClaim.deleteMany({ where: { orderId } });
   await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: allOutboxEventIds } } });
   await prisma.integrationOutboxEvent.deleteMany({ where: { id: { in: allOutboxEventIds } } });
@@ -189,10 +205,15 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
     expect(matching).toBeTruthy();
     expect((matching!.deliveryPayload as Record<string, unknown>).entitlement_type).toBe('digital_collectible');
 
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase6(8.2・8.3): 取消送信を開始した時点で
+    // WalletClaimはDELIVEREDのまま残さずREVOCATION_PENDINGへ進める。
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+    expect(updatedClaim.status).toBe('REVOCATION_PENDING');
+
     await cleanup(order.id, product.id);
   });
 
-  it('Mint後(issued)の返金は自動処理せず、NftIssueにmanual_review_requiredの注記のみ追加する', async () => {
+  it('Mint後(issued)の返金は自動処理せず、NftIssueにmanual_review_requiredの注記のみ追加しWalletClaimをMANUAL_REVIEW_REQUIREDへ進める', async () => {
     const { order, product, nftIssue, paymentIntentId } = await createFixture('mint-completed', {
       claimStatus: 'DELIVERED',
       nftIssueStatus: 'issued',
@@ -209,6 +230,41 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
     const events = await prisma.integrationOutboxEvent.findMany({ where: { eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet' } });
     const matching = events.find((e) => (e.deliveryPayload as Record<string, unknown>).nft_issue_id === nftIssue.id);
     expect(matching).toBeFalsy();
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+    expect(updatedClaim.status).toBe('MANUAL_REVIEW_REQUIRED');
+    expect(updatedClaim.manualReviewRequiredAt).not.toBeNull();
+
+    await cleanup(order.id, product.id);
+  });
+
+  it('二重返金でも同一イベントを重複enqueueしない(REVOCATION_PENDING/MANUAL_REVIEW_REQUIREDへ到達後は何もしない)', async () => {
+    const { order, product, nftIssue, paymentIntentId } = await createFixture('double-refund', {
+      claimStatus: 'DELIVERED',
+      nftIssueStatus: 'ready_to_issue',
+      withDelivery: true,
+      deliveryStatus: 'DELIVERED',
+    });
+    const firstRes = await postFullRefund(paymentIntentId, 10000);
+    expect(firstRes.status).toBe(200);
+
+    const eventsAfterFirst = await prisma.integrationOutboxEvent.findMany({
+      where: { eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet' },
+    });
+    const matchingAfterFirst = eventsAfterFirst.filter((e) => (e.deliveryPayload as Record<string, unknown>).nft_issue_id === nftIssue.id);
+    expect(matchingAfterFirst).toHaveLength(1);
+
+    // 同一paymentIntentId・全額返金分のcharge.refundedイベントがStripe側の再送等でもう一度届いても
+    // (order.paymentStatusは既に'refunded'のため、そもそもapplyWalletClaimRefundEffects到達前の
+    // hendleChargeRefunded側のガードで弾かれるが)、念のためClaim状態面でも冪等であることを確認する。
+    const secondRes = await postFullRefund(paymentIntentId, 10000);
+    expect(secondRes.status).toBe(200);
+
+    const eventsAfterSecond = await prisma.integrationOutboxEvent.findMany({
+      where: { eventType: 'entitlement.revoked', destinationSystemKey: 'ove-wallet' },
+    });
+    const matchingAfterSecond = eventsAfterSecond.filter((e) => (e.deliveryPayload as Record<string, unknown>).nft_issue_id === nftIssue.id);
+    expect(matchingAfterSecond).toHaveLength(1);
 
     await cleanup(order.id, product.id);
   });

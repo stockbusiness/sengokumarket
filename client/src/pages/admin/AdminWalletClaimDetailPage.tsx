@@ -78,6 +78,18 @@ export default function AdminWalletClaimDetailPage() {
               <td>{formatDateTime(claim.claimedAt)}</td>
             </tr>
             <tr>
+              <th>全件送付完了日時</th>
+              <td>{formatDateTime(claim.deliveredAt)}</td>
+            </tr>
+            <tr>
+              <th>全件取消完了日時</th>
+              <td>{formatDateTime(claim.revokedAt)}</td>
+            </tr>
+            <tr>
+              <th>要手動確認移行日時</th>
+              <td>{formatDateTime(claim.manualReviewRequiredAt)}</td>
+            </tr>
+            <tr>
               <th>最終エラー</th>
               <td>{claim.lastError ?? '-'}</td>
             </tr>

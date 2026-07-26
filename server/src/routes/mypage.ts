@@ -5,7 +5,7 @@ import { requireAuth } from '../middleware/auth';
 import { HttpError } from '../lib/httpError';
 import { pushAgencyCandidateToExternalSystem } from '../services/externalAgencySystem';
 import { createWalletVerificationChallenge, verifyAndRegisterWallet } from '../services/walletVerification';
-import { reissueWalletClaimToken } from '../services/walletClaim';
+import { isWalletClaimReissuable, reissueWalletClaimToken } from '../services/walletClaim';
 import { getWalletClaimWebBaseUrl } from '../services/walletClaimConfig';
 
 const router = Router();
@@ -91,20 +91,29 @@ router.get('/orders/:id', async (req, res) => {
 // 保存されないため、このAPIを呼ぶたびに新しいトークンを発行する(未使用の旧トークンは
 // 自動的に無効化される)。ENABLE_WALLET_CLAIMが無効・対象注文でない・既にCLAIMED以降まで
 // 進んでいる場合はURLを返せない。
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1「必須修正」: URL設定・メール送信の失敗で
+// 旧URL(旧Token)だけが無効になることを防ぐため、Token発行より前に必要な前提条件を
+// すべて確認してからreissueWalletClaimToken(実際にDBを書き換える)を呼ぶ順序にする。
 router.post('/orders/:id/wallet-claim/reissue', async (req, res) => {
   const order = await prisma.order.findUnique({ where: { id: req.params.id } });
   if (!order || order.userId !== req.authUser!.id) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
   }
 
-  const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
-  if (!token) {
+  const reissuable = await isWalletClaimReissuable(order.id, prisma);
+  if (!reissuable) {
     return sendError(res, 400, 'WALLET_CLAIM_NOT_REISSUABLE', '受取URLを発行できる状態ではありません');
   }
 
   const base = await getWalletClaimWebBaseUrl();
   if (!base) {
     return sendError(res, 503, 'WALLET_CLAIM_URL_NOT_CONFIGURED', '受取URLの設定が完了していません');
+  }
+
+  const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+  if (!token) {
+    // 上のisWalletClaimReissuableチェック後、他プロセスによる同時再発行と競合した場合など。
+    return sendError(res, 409, 'WALLET_CLAIM_REISSUE_CONFLICT', '他の処理と競合しました。もう一度お試しください');
   }
 
   res.json({ url: `${base}/claim/${token}` });

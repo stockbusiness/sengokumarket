@@ -1,7 +1,12 @@
 import crypto from 'crypto';
 import type { Order, OrderItem, Prisma, PrismaClient, WalletClaim } from '@prisma/client';
 import { isWalletClaimEnabled } from './walletClaimConfig';
-import { getDigitalCollectibleRule } from './digitalCollectible';
+import {
+  getDigitalCollectibleRule,
+  buildCollectibleSnapshot,
+  DIGITAL_COLLECTIBLE_DESTINATION,
+  DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+} from './digitalCollectible';
 
 type Tx = Prisma.TransactionClient;
 type Db = Tx | PrismaClient;
@@ -22,6 +27,11 @@ function generateClaimToken(): string {
 // 同一トランザクションで作成する。対象商品(itemType=nft かつ 有効なdigital_collectibleの
 // ProductIntegrationRuleが存在)がなければ作成しない。ENABLE_WALLET_CLAIM=false(既定)の間は
 // 常にno-op(この機能全体がdormant)。
+//
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase4「決済時スナップショットの固定」: 対象NftIssue
+// ごとにWalletClaimItem(購入時点のルール・商品スナップショット)を同一トランザクションで作成する。
+// この関数の呼び出し元(applyPaidOrderSideEffects)はcreateNftIssuesForOrderの後にこの関数を
+// 呼ぶため、対象NftIssue行は既に作成済みである前提。
 export async function createWalletClaimIfEligible(
   tx: Tx,
   order: Order,
@@ -32,15 +42,39 @@ export async function createWalletClaimIfEligible(
   const nftItems = orderItems.filter((item) => item.itemType === 'nft');
   if (nftItems.length === 0) return null;
 
-  let eligible = false;
+  const itemRows: Prisma.WalletClaimItemCreateManyInput[] = [];
   for (const item of nftItems) {
     const rule = await getDigitalCollectibleRule(tx, item.productId);
-    if (rule) {
-      eligible = true;
-      break;
+    if (!rule) continue;
+    const product = await tx.product.findUnique({ where: { id: item.productId } });
+    if (!product) continue;
+
+    const snapshot = buildCollectibleSnapshot(rule, product);
+    const nftIssues = await tx.nftIssue.findMany({ where: { orderItemId: item.id } });
+    for (const nftIssue of nftIssues) {
+      itemRows.push({
+        walletClaimId: '', // 後でWalletClaim作成後に埋める
+        nftIssueId: nftIssue.id,
+        orderItemId: item.id,
+        productId: item.productId,
+        productIntegrationRuleId: rule.id,
+        // getDigitalCollectibleRuleは常にこの2値で絞り込んでいるため、rule自体の値ではなく
+        // 定数を使う(ruleの型上はnullable)。
+        destinationSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+        entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+        productCode: rule.productCode,
+        assetCode: snapshot.assetCode,
+        serialNumber: nftIssue.serialNumber,
+        name: snapshot.name,
+        description: snapshot.description,
+        imageUrl: snapshot.imageUrl,
+        thumbnailUrl: snapshot.thumbnailUrl,
+        imageHash: snapshot.imageHash,
+        rarity: snapshot.rarity,
+      });
     }
   }
-  if (!eligible) return null;
+  if (itemRows.length === 0) return null;
 
   // order_idはUNIQUE。同一注文に対して複数回この関数が呼ばれても(呼び出し元は決済確定処理の
   // 一部のため通常は1回のみだが、防御的に)二重作成しない。
@@ -48,13 +82,16 @@ export async function createWalletClaimIfEligible(
   if (existing) return null;
 
   const token = generateClaimToken();
-  await tx.walletClaim.create({
+  const claim = await tx.walletClaim.create({
     data: {
       orderId: order.id,
       tokenHash: hashClaimToken(token),
       status: 'PENDING',
       expiresAt: new Date(Date.now() + CLAIM_TOKEN_TTL_MS),
     },
+  });
+  await tx.walletClaimItem.createMany({
+    data: itemRows.map((row) => ({ ...row, walletClaimId: claim.id })),
   });
   return token;
 }
@@ -63,28 +100,46 @@ export async function getWalletClaimForOrder(orderId: string, db: Db): Promise<W
   return db.walletClaim.findUnique({ where: { orderId } });
 }
 
+function isReissuableStatus(status: string): boolean {
+  return status === 'PENDING' || status === 'EXPIRED' || status === 'ERROR';
+}
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1「必須修正」: 呼び出し元(mypage.ts等)が
+// Token発行前の事前確認(状態・URL設定)を行うための、DBを変更しない軽量チェック。
+export async function isWalletClaimReissuable(orderId: string, db: Db): Promise<boolean> {
+  const claim = await db.walletClaim.findUnique({ where: { orderId } });
+  return Boolean(claim && isReissuableStatus(claim.status));
+}
+
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)6・7章: 期限切れ時、マイページから
 // 再発行する。生トークンは注文確定時にしか返さない(DBにはハッシュのみ保存)ため、マイページの
 // 「NFTカードを受け取る」操作自体もこの関数を使って都度新しいトークンを発行する
 // (未使用の旧トークンを無効化するだけなので安全に何度でも呼べる)。対象はPENDING/EXPIRED/ERROR
 // のみ(CLAIMED以降は既にウォレット側での確認が進行中のため、URLを再発行しても意味がない。
 // REVOKEDは返金・取消済みのため対象外)。
+//
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1「推奨追加項目」: 同時再発行時に古い処理が
+// 新Tokenを上書きしないよう、読み取り時点のtoken_hashを条件付きUPDATEのWHERE句に含める
+// (楽観ロック/CAS)。他の処理が先に更新していればcount=0になり、このプロセスはnullを返す
+// (呼び出し元は「再発行できなかった」として扱う。他プロセスが発行した新しい方のTokenが有効)。
 export async function reissueWalletClaimToken(tx: Tx, orderId: string): Promise<string | null> {
   const claim = await tx.walletClaim.findUnique({ where: { orderId } });
   if (!claim) return null;
-
-  const reissuable = claim.status === 'PENDING' || claim.status === 'EXPIRED' || claim.status === 'ERROR';
-  if (!reissuable) return null;
+  if (!isReissuableStatus(claim.status)) return null;
 
   const token = generateClaimToken();
-  await tx.walletClaim.update({
-    where: { id: claim.id },
+  const updated = await tx.walletClaim.updateMany({
+    where: { id: claim.id, tokenHash: claim.tokenHash, status: claim.status },
     data: {
       tokenHash: hashClaimToken(token),
       status: 'PENDING',
       expiresAt: new Date(Date.now() + CLAIM_TOKEN_TTL_MS),
       lastError: null,
+      tokenVersion: { increment: 1 },
+      lastReissuedAt: new Date(),
+      reissueCount: { increment: 1 },
     },
   });
+  if (updated.count === 0) return null;
   return token;
 }
