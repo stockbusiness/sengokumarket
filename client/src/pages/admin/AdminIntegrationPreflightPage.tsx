@@ -248,6 +248,15 @@ export default function AdminIntegrationPreflightPage() {
                 <td>{walletClaimReport.cronSecretConfigured ? '設定済み' : '未設定'}</td>
               </tr>
               <tr>
+                <th>Scheduler heartbeat(主系・直近10分以内)</th>
+                <td>
+                  {walletClaimReport.schedulerHeartbeatOk ? 'OK' : 'NG'}
+                  {walletClaimReport.schedulerHeartbeatLastSuccessAt && (
+                    <span className="admin-muted"> (最終成功: {new Date(walletClaimReport.schedulerHeartbeatLastSuccessAt).toLocaleString('ja-JP')})</span>
+                  )}
+                </td>
+              </tr>
+              <tr>
                 <th>未送信/dead/blocked件数</th>
                 <td>
                   {walletClaimReport.pendingCount} / {walletClaimReport.deadCount} / {walletClaimReport.blockedCount}

@@ -70,6 +70,8 @@ export interface WalletClaimPreflightReport {
   deadCount: number;
   blockedCount: number;
   cronSecretConfigured: boolean;
+  schedulerHeartbeatOk: boolean;
+  schedulerHeartbeatLastSuccessAt: string | null;
   issues: WalletClaimPreflightIssue[];
   walletClaimReady: boolean;
   collectibleDeliveryReady: boolean;

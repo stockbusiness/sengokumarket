@@ -227,6 +227,36 @@ describe('内部cron: 連携Outbox送信(仕様書外の拡張)', () => {
     expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 });
     expect(dispatchPendingOutboxEvents).toHaveBeenCalledTimes(1);
   });
+
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」: ?source=クエリパラメータが
+  // job_scheduler_heartbeats.scheduler_sourceへそのまま記録されることを確認する。
+  it('?source=クエリパラメータの値がscheduler_sourceとしてheartbeatへ記録される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+
+    const res = await request(app)
+      .get('/api/internal/cron/process-integration-outbox?source=vercel')
+      .set('Authorization', 'Bearer test-cron-secret-outbox');
+    expect(res.status).toBe(200);
+
+    const row = await prisma.jobSchedulerHeartbeat.findFirstOrThrow({ where: { jobName: 'process-integration-outbox' } });
+    expect(row.schedulerSource).toBe('vercel');
+    expect(row.status).toBe('success');
+
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+  });
+
+  it('?sourceが省略された場合はscheduler_source=manualとして記録される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+
+    await request(app).get('/api/internal/cron/process-integration-outbox').set('Authorization', 'Bearer test-cron-secret-outbox');
+
+    const row = await prisma.jobSchedulerHeartbeat.findFirstOrThrow({ where: { jobName: 'process-integration-outbox' } });
+    expect(row.schedulerSource).toBe('manual');
+
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+  });
 });
 
 // 残課題指示書Stage3の拡張: 代理店設定メール等のnotification_outbox_events送信cron配線確認。

@@ -5,6 +5,7 @@ import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE }
 import { checkMigrationsHealth } from './readinessCheck';
 import { signSennokuniRequest } from '../lib/sennokuniHmac';
 import { getSennokuniIntegrationStage, isSennokuniIntegrationEnabled } from './sennokuniIntegrationConfig';
+import { checkPrimarySchedulerHealth } from './schedulerHeartbeat';
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10章「Wallet Claim Preflight拡張」):
 // 既存のintegrationPreflight.ts(千ノ国全体連携)とは別に、Wallet Claim/digital_collectible
@@ -38,6 +39,8 @@ export interface WalletClaimPreflightReport {
   deadCount: number;
   blockedCount: number;
   cronSecretConfigured: boolean;
+  schedulerHeartbeatOk: boolean;
+  schedulerHeartbeatLastSuccessAt: string | null;
   issues: WalletClaimPreflightIssue[];
   walletClaimReady: boolean;
   collectibleDeliveryReady: boolean;
@@ -101,6 +104,7 @@ const PHASE6_BLOCKING_ISSUE_CODES = new Set([
   'secret_too_short',
   'wallet_events_hmac_self_test_failed',
   'global_flag_stage_inconsistent',
+  'scheduler_heartbeat_stale',
 ]);
 
 export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPreflightReport> {
@@ -191,6 +195,17 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     oveWalletEventsSecret && oveWalletEventsKeyId ? selfTestOveWalletEventsHmac(oveWalletEventsKeyId, oveWalletEventsSecret) : null;
   if (walletEventsHmacSelfTestPassed === false) {
     issues.push({ code: 'wallet_events_hmac_self_test_failed', message: 'カード送付(entitlement.granted/revoked)のHMAC自己診断に失敗しました。' });
+  }
+
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」: カード送付(entitlement.granted/
+  // revoked)を実際に送信するprocess-integration-outboxディスパッチャの主系スケジューラーが
+  // 直近10分以内に成功しているかを確認する。
+  const schedulerHeartbeat = await checkPrimarySchedulerHealth('process-integration-outbox');
+  if (!schedulerHeartbeat.ok) {
+    issues.push({
+      code: 'scheduler_heartbeat_stale',
+      message: `カード送付ディスパッチャ(process-integration-outbox)の主系スケジューラー(${schedulerHeartbeat.expectedSource})による直近10分以内の成功実績がありません。`,
+    });
   }
 
   // 最終安定化指示書Phase6「global flagとstage整合」: SENNOKUNI_INTEGRATION_ENABLED(全体)が
@@ -320,6 +335,8 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     deadCount,
     blockedCount,
     cronSecretConfigured,
+    schedulerHeartbeatOk: schedulerHeartbeat.ok,
+    schedulerHeartbeatLastSuccessAt: schedulerHeartbeat.lastSuccessAt ? schedulerHeartbeat.lastSuccessAt.toISOString() : null,
     issues,
     walletClaimReady,
     collectibleDeliveryReady,

@@ -23,6 +23,8 @@ export const REQUIRED_MIGRATIONS = [
   // 最終安定化指示書Phase4「Readiness最新化」。
   'wallet_claim_item_product_code',
   'integration_outbox_dedup_key',
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」。
+  'job_scheduler_heartbeats',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
@@ -38,6 +40,8 @@ const SENTINEL_QUERIES: { label: string; run: () => Promise<unknown> }[] = [
   // 最終安定化指示書Phase4「Readiness最新化」。
   { label: 'wallet_claim_items.product_code', run: () => prisma.$queryRaw`SELECT product_code FROM wallet_claim_items LIMIT 0` },
   { label: 'integration_outbox_events.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM integration_outbox_events LIMIT 0` },
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」。
+  { label: 'job_scheduler_heartbeats.scheduler_source', run: () => prisma.$queryRaw`SELECT scheduler_source FROM job_scheduler_heartbeats LIMIT 0` },
 ];
 
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; error?: string }> {

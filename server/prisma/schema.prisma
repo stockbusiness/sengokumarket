@@ -774,6 +774,26 @@ model NotificationOutboxEvent {
   @@map("notification_outbox_events")
 }
 
+// 最終安定化指示書Phase7「Scheduler主系/予備系整理」: Vercel CronとGitHub Actions Cronの
+// 二重実行を整理するにあたり、どちらのスケジューラーが各ジョブを実際に実行できているかを
+// 記録する。Preflight(walletClaimPreflight.ts)が「直近10分以内の主系成功」を確認する際の
+// データ源になる。
+model JobSchedulerHeartbeat {
+  id              String    @id @default(uuid()) @db.Uuid
+  jobName         String    @map("job_name") // internalCron.tsのルート名(例: process-integration-outbox)
+  schedulerSource String    @map("scheduler_source") // vercel | github-actions | manual | unknown
+  startedAt       DateTime  @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+  status          String    @default("running") // running | success | failed
+  claimedCount    Int?      @map("claimed_count")
+  succeededCount  Int?      @map("succeeded_count")
+  failedCount     Int?      @map("failed_count")
+  error           String?
+
+  @@index([jobName, schedulerSource, finishedAt])
+  @@map("job_scheduler_heartbeats")
+}
+
 model Notice {
   id          String    @id @default(uuid()) @db.Uuid
   title       String

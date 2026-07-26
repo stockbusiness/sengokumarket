@@ -1,0 +1,56 @@
+name: Dispatch background jobs (fallback)
+
+# 最終安定化指示書Phase7「Scheduler主系/予備系整理」: process-integration-outbox・
+# process-notification-outboxはVercel Cron(5分間隔・vercel.json)が主系。
+# このワークフローはVercel Cronが停止・失敗した場合の予備として20分間隔で同じ
+# エンドポイントを呼び出す(主系と同じ5分間隔にすると二重実行の意味が薄れるため、
+# 指示書の推奨(予備は15〜30分間隔)に従いあえて緩くする)。
+#
+# 事前準備はdispatch-cron.ymlと同じ(PRODUCTION_APP_URL・CRON_SECRET)。
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: dispatch-cron-fallback
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required secrets are configured
+        run: |
+          if [ -z "${{ secrets.PRODUCTION_APP_URL }}" ] || [ -z "${{ secrets.CRON_SECRET }}" ]; then
+            echo "PRODUCTION_APP_URL・CRON_SECRETがリポジトリのSecretsに未設定のため、何もせず終了します。" >&2
+            exit 0
+          fi
+          echo "secrets_ok=true" >> "$GITHUB_ENV"
+
+      - name: Call background dispatch endpoints (fallback role)
+        if: env.secrets_ok == 'true'
+        env:
+          BASE_URL: ${{ secrets.PRODUCTION_APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -u
+          failures=0
+          for path in \
+            "process-integration-outbox" \
+            "process-notification-outbox"; do
+            url="${BASE_URL%/}/api/internal/cron/${path}?source=github-actions"
+            status=$(curl -sS -o /tmp/response.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${CRON_SECRET}" \
+              "$url" || echo "000")
+            echo "GET ${path} -> HTTP ${status}"
+            cat /tmp/response.json 2>/dev/null || true
+            echo
+            if [ "$status" != "200" ]; then
+              failures=$((failures + 1))
+            fi
+          done
+          if [ "$failures" -gt 0 ]; then
+            echo "::error::${failures}件のエンドポイントが失敗しました"
+            exit 1
+          fi

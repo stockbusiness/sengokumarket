@@ -40,6 +40,7 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     await prisma.setting.deleteMany({ where: { key: { in: [...ALL_SETTING_KEYS] } } });
     await prisma.productIntegrationRule.deleteMany({ where: { productId: { in: createdProductIds } } });
     await prisma.product.deleteMany({ where: { id: { in: createdProductIds } } });
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
     createdProductIds.length = 0;
   });
 
@@ -154,10 +155,22 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     await setSetting('ove_wallet_events_key_id', 'events-key');
     await setSetting('ove_wallet_events_hmac_secret', 'events-secret-value');
     await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
+    // 最終安定化指示書Phase7「Scheduler主系/予備系整理」: overallReady=trueには
+    // 主系(vercel)による直近10分以内のprocess-integration-outbox成功実績も必要。
+    await prisma.jobSchedulerHeartbeat.create({
+      data: {
+        jobName: 'process-integration-outbox',
+        schedulerSource: 'vercel',
+        startedAt: new Date(),
+        finishedAt: new Date(),
+        status: 'success',
+      },
+    });
 
     const readyReport = await buildWalletClaimPreflightReport();
     expect(readyReport.walletClaimReady).toBe(true);
     expect(readyReport.collectibleDeliveryReady).toBe(true);
+    expect(readyReport.schedulerHeartbeatOk).toBe(true);
     expect(readyReport.overallReady).toBe(true);
 
     const event = await prisma.integrationOutboxEvent.create({
@@ -302,6 +315,67 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
       const report = await buildWalletClaimPreflightReport();
       expect(report.issues.map((i) => i.code)).toContain('global_flag_stage_inconsistent');
       expect(report.overallReady).toBe(false);
+    });
+  });
+
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」。
+  describe('Phase7: Scheduler heartbeat(主系の直近10分以内の成功実績)', () => {
+    afterEach(async () => {
+      await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+    });
+
+    it('process-integration-outboxのheartbeatが一度も記録されていない場合、scheduler_heartbeat_staleのissueを含みschedulerHeartbeatOkはfalse', async () => {
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.schedulerHeartbeatOk).toBe(false);
+      expect(report.issues.map((i) => i.code)).toContain('scheduler_heartbeat_stale');
+    });
+
+    it('主系(vercel)による直近10分以内の成功があればschedulerHeartbeatOk=trueになる', async () => {
+      await prisma.jobSchedulerHeartbeat.create({
+        data: {
+          jobName: 'process-integration-outbox',
+          schedulerSource: 'vercel',
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          status: 'success',
+        },
+      });
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.schedulerHeartbeatOk).toBe(true);
+      expect(report.issues.map((i) => i.code)).not.toContain('scheduler_heartbeat_stale');
+    });
+
+    it('10分より前の成功しかない場合はschedulerHeartbeatOk=falseになる', async () => {
+      await prisma.jobSchedulerHeartbeat.create({
+        data: {
+          jobName: 'process-integration-outbox',
+          schedulerSource: 'vercel',
+          startedAt: new Date(Date.now() - 20 * 60 * 1000),
+          finishedAt: new Date(Date.now() - 15 * 60 * 1000),
+          status: 'success',
+        },
+      });
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.schedulerHeartbeatOk).toBe(false);
+      expect(report.issues.map((i) => i.code)).toContain('scheduler_heartbeat_stale');
+    });
+
+    it('予備(github-actions)の成功のみでは主系不在としてschedulerHeartbeatOk=falseになる', async () => {
+      await prisma.jobSchedulerHeartbeat.create({
+        data: {
+          jobName: 'process-integration-outbox',
+          schedulerSource: 'github-actions',
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          status: 'success',
+        },
+      });
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.schedulerHeartbeatOk).toBe(false);
+      expect(report.issues.map((i) => i.code)).toContain('scheduler_heartbeat_stale');
     });
   });
 });
