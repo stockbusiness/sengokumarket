@@ -62,6 +62,8 @@ export interface WalletClaimPreflightReport {
   rulesMissingAssetCode: number;
   rulesWithoutRequireCommonUserId: number;
   rulesOnNonNftProduct: number;
+  rulesMissingRarity: number;
+  rulesWithInvalidDestination: number;
   migrationsOk: boolean;
   missingMigrations: string[];
   pendingCount: number;

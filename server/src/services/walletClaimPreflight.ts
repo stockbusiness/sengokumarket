@@ -28,6 +28,8 @@ export interface WalletClaimPreflightReport {
   rulesMissingAssetCode: number;
   rulesWithoutRequireCommonUserId: number;
   rulesOnNonNftProduct: number;
+  rulesMissingRarity: number;
+  rulesWithInvalidDestination: number;
   migrationsOk: boolean;
   missingMigrations: string[];
   pendingCount: number;
@@ -61,6 +63,14 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
   // (productIntegrationRules.ts)で新規作成・更新時は既にitemType=nft以外を拒否しているが、
   // 商品自体のitemTypeが後から変更された等の既存データも念のためここで検知する。
   const rulesOnNonNftProduct = enabledRules.filter((r) => r.product.itemType !== 'nft').length;
+  // 最終安定化指示書Phase5「ProductIntegrationRule制約完成」。
+  const rulesMissingRarity = enabledRules.filter((r) => !r.collectibleRarity).length;
+  // enabledRulesはdestination=ove-walletで絞り込み済みのため、destination不一致(パスポート等へ
+  // digital_collectibleが設定された)を検知するには別途、entitlement_typeのみで数える
+  // (enabledに関わらず既存データの不整合を検知する)。
+  const rulesWithInvalidDestination = await prisma.productIntegrationRule.count({
+    where: { entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE, entitlementTargetSystemKey: { not: DIGITAL_COLLECTIBLE_DESTINATION } },
+  });
 
   const migrationsHealth = await checkMigrationsHealth();
   const [pendingCount, deadCount, blockedCount] = await Promise.all([
@@ -108,6 +118,18 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
       message: `requireCommonUserId=falseの有効なdigital_collectibleルールが${rulesWithoutRequireCommonUserId}件あります。common_user_id未解決のまま送付対象になりえます。`,
     });
   }
+  if (rulesMissingRarity > 0) {
+    issues.push({
+      code: 'rule_missing_rarity',
+      message: `rarity(collectibleRarity)未設定の有効なdigital_collectibleルールが${rulesMissingRarity}件あります。`,
+    });
+  }
+  if (rulesWithInvalidDestination > 0) {
+    issues.push({
+      code: 'rule_invalid_destination',
+      message: `entitlement_type=digital_collectibleなのに送信先が${DIGITAL_COLLECTIBLE_DESTINATION}以外のルールが${rulesWithInvalidDestination}件あります。`,
+    });
+  }
   if (!migrationsHealth.ok) {
     issues.push({
       code: 'migration_missing',
@@ -143,12 +165,17 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     migrationsHealth.ok;
 
   // 10.3「overallReady」: Wallet Claim・Delivery双方の必須設定が揃い、かつ機能横断の警告
-  // (Feature Flag不整合・asset_code欠落・itemType不整合・dead/blocked滞留)も無い状態。
+  // (Feature Flag不整合・asset_code欠落・itemType不整合・common_user_id必須化漏れ・
+  // dead/blocked滞留)も無い状態。最終安定化指示書Phase3「production切替ゲート」がこの値を
+  // 直接参照するため、本番へ切り替えてはならない条件はすべてここへ集約する。
   const overallReady =
     walletClaimReady &&
     collectibleDeliveryReady &&
     rulesMissingAssetCode === 0 &&
     rulesOnNonNftProduct === 0 &&
+    rulesWithoutRequireCommonUserId === 0 &&
+    rulesMissingRarity === 0 &&
+    rulesWithInvalidDestination === 0 &&
     deadCount === 0 &&
     blockedCount === 0;
 
@@ -160,6 +187,8 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     rulesMissingAssetCode,
     rulesWithoutRequireCommonUserId,
     rulesOnNonNftProduct,
+    rulesMissingRarity,
+    rulesWithInvalidDestination,
     migrationsOk: migrationsHealth.ok,
     missingMigrations: migrationsHealth.missing ?? [],
     pendingCount,

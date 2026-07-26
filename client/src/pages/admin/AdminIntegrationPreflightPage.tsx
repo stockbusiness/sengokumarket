@@ -232,6 +232,14 @@ export default function AdminIntegrationPreflightPage() {
                 <td>{walletClaimReport.rulesOnNonNftProduct}</td>
               </tr>
               <tr>
+                <th>rarity未設定ルール数</th>
+                <td>{walletClaimReport.rulesMissingRarity}</td>
+              </tr>
+              <tr>
+                <th>送信先不整合ルール数(digital_collectibleなのにove-wallet以外)</th>
+                <td>{walletClaimReport.rulesWithInvalidDestination}</td>
+              </tr>
+              <tr>
                 <th>必須migration</th>
                 <td>{walletClaimReport.migrationsOk ? '適用済み' : `不足: ${walletClaimReport.missingMigrations.join(', ')}`}</td>
               </tr>

@@ -20,6 +20,9 @@ export const REQUIRED_MIGRATIONS = [
   // 指示書の表記そのままでは部分一致しないため、実フォルダ名の並びに合わせる。
   'fix_product_integration_rules_index_name',
   'rate_limit_bucket_updated_at_index',
+  // 最終安定化指示書Phase4「Readiness最新化」。
+  'wallet_claim_item_product_code',
+  'integration_outbox_dedup_key',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
@@ -32,6 +35,9 @@ const SENTINEL_QUERIES: { label: string; run: () => Promise<unknown> }[] = [
   { label: 'nft_issues.serial_number', run: () => prisma.$queryRaw`SELECT serial_number FROM nft_issues LIMIT 0` },
   { label: 'integration_outbox_events.original_payload', run: () => prisma.$queryRaw`SELECT original_payload FROM integration_outbox_events LIMIT 0` },
   { label: 'order_wallet_transactions.idempotency_key', run: () => prisma.$queryRaw`SELECT idempotency_key FROM order_wallet_transactions LIMIT 0` },
+  // 最終安定化指示書Phase4「Readiness最新化」。
+  { label: 'wallet_claim_items.product_code', run: () => prisma.$queryRaw`SELECT product_code FROM wallet_claim_items LIMIT 0` },
+  { label: 'integration_outbox_events.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM integration_outbox_events LIMIT 0` },
 ];
 
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; error?: string }> {

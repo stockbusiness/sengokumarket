@@ -111,7 +111,17 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     expect(report.issues.map((i) => i.code)).toContain('rule_missing_asset_code');
   });
 
-  it('requireCommonUserId=falseの有効なdigital_collectibleルールはrule_require_common_user_id_falseのissueを含む', async () => {
+  it('requireCommonUserId=falseの有効なdigital_collectibleルールはrule_require_common_user_id_falseのissueを含み、overallReadyもfalseになる(最終安定化指示書Phase3)', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY = 'true';
+    process.env.CRON_SECRET = 'cron-secret-abc';
+    await setSetting('wallet_claim_web_base_url', 'https://claim.example.com');
+    await setSetting('wallet_claim_inbound_key_id', 'inbound-key');
+    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret');
+    await setSetting('ove_wallet_events_key_id', 'events-key');
+    await setSetting('ove_wallet_events_hmac_secret', 'events-secret');
+    await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
+
     const product = await createProduct('require-common-false');
     createdProductIds.push(product.id);
     await prisma.productIntegrationRule.create({
@@ -128,6 +138,9 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     const report = await buildWalletClaimPreflightReport();
     expect(report.rulesWithoutRequireCommonUserId).toBeGreaterThanOrEqual(1);
     expect(report.issues.map((i) => i.code)).toContain('rule_require_common_user_id_false');
+    // requireCommonUserId=falseのルールが1件でもあればoverallReadyはfalse
+    // (production/staging切替ゲートがこのフラグを直接参照するため)。
+    expect(report.overallReady).toBe(false);
   });
 
   it('dead/blocked件数が1件以上ある間はoverallReady=falseになる', async () => {
@@ -164,5 +177,47 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     expect(report.overallReady).toBe(false);
 
     await prisma.integrationOutboxEvent.deleteMany({ where: { id: event.id } });
+  });
+
+  // 最終安定化指示書Phase5「ProductIntegrationRule制約完成」
+  it('rarity未設定の有効なdigital_collectibleルールはrule_missing_rarityのissueを含み、overallReadyもfalseになる', async () => {
+    const product = await createProduct('no-rarity');
+    createdProductIds.push(product.id);
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        enabled: true,
+        assetCode: 'SGK-CARD-001',
+        requireCommonUserId: true,
+        collectibleRarity: null,
+      },
+    });
+
+    const report = await buildWalletClaimPreflightReport();
+    expect(report.rulesMissingRarity).toBeGreaterThanOrEqual(1);
+    expect(report.issues.map((i) => i.code)).toContain('rule_missing_rarity');
+    expect(report.overallReady).toBe(false);
+  });
+
+  it('destinationがove-wallet以外のdigital_collectibleルール(既存不正データ)はrule_invalid_destinationのissueを含み、overallReadyもfalseになる', async () => {
+    const product = await createProduct('invalid-destination');
+    createdProductIds.push(product.id);
+    // 管理API(productIntegrationRules.ts)は書き込み時にこの組合せを拒否するため、
+    // 既存不正データを再現するためにPrismaで直接作成する。
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'sengoku-passport',
+        entitlementType: 'digital_collectible',
+        enabled: false,
+      },
+    });
+
+    const report = await buildWalletClaimPreflightReport();
+    expect(report.rulesWithInvalidDestination).toBeGreaterThanOrEqual(1);
+    expect(report.issues.map((i) => i.code)).toContain('rule_invalid_destination');
+    expect(report.overallReady).toBe(false);
   });
 });

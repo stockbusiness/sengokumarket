@@ -45,16 +45,17 @@ router.put('/integration-stage', async (req, res) => {
       );
     }
 
-    // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10.4「production有効化前にfail-close」):
-    // digital_collectible向けの有効なルールが存在する場合、カード送付固有の必須設定
-    // (events HMAC・CRON_SECRET等)も揃っていなければこの段階へは変更できない。
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10.4「production有効化前にfail-close」)・
+    // 最終安定化指示書Phase3「production切替ゲート」: digital_collectible向けの有効なルールが
+    // 存在する場合、walletClaimReport.overallReady===trueを必須にする(カード送付固有の必須設定・
+    // ルール整合性・dead/blocked滞留・migration状態をすべて含む)。
     const walletClaimReport = await buildWalletClaimPreflightReport();
-    if (walletClaimReport.enabledDigitalCollectibleRuleCount > 0 && !walletClaimReport.collectibleDeliveryReady) {
+    if (walletClaimReport.enabledDigitalCollectibleRuleCount > 0 && !walletClaimReport.overallReady) {
       return sendError(
         res,
         422,
         'WALLET_CLAIM_PREFLIGHT_NOT_READY',
-        'digital_collectible向けの有効なルールがありますが、カード送付固有の必須設定が不足しているためこの段階へは変更できません。GET /api/admin/wallet-claim-preflightで詳細を確認してください',
+        'digital_collectible向けの有効なルールがありますが、カード送付固有の必須設定・整合性チェックが不足しているためこの段階へは変更できません。GET /api/admin/wallet-claim-preflightで詳細を確認してください',
       );
     }
   }

@@ -77,6 +77,7 @@ function validateDigitalCollectibleConstraints(input: {
   entitlementTargetSystemKey: string | null;
   entitlementType: string | null;
   assetCode: string | null;
+  collectibleRarity: string | null;
   requireCommonUserId: boolean;
 }): string | null {
   if (input.enabled && !input.entitlementTargetSystemKey) {
@@ -86,12 +87,21 @@ function validateDigitalCollectibleConstraints(input: {
     return '有効にする場合、entitlement_typeの指定が必須です';
   }
 
+  // 最終安定化指示書Phase5「禁止」: entitlement_type=digital_collectibleは送信先が
+  // ove-wallet以外(パスポート等)へは設定できない(enabledに関わらず禁止)。
+  if (input.entitlementType === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE && input.entitlementTargetSystemKey !== DIGITAL_COLLECTIBLE_DESTINATION) {
+    return `entitlement_type=digital_collectibleの送信先は${DIGITAL_COLLECTIBLE_DESTINATION}以外に設定できません`;
+  }
+
   if (isDigitalCollectibleCombo(input.entitlementTargetSystemKey, input.entitlementType)) {
     if (input.productItemType !== 'nft') {
       return 'デジタル会員証(digital_collectible)向けの設定は、itemTypeがnftの商品にのみ設定できます';
     }
     if (input.enabled && !input.assetCode) {
       return 'デジタル会員証(digital_collectible)向けの設定は、asset_codeの指定が必須です';
+    }
+    if (input.enabled && !input.collectibleRarity) {
+      return 'デジタル会員証(digital_collectible)向けの設定は、rarity(collectibleRarity)の指定が必須です';
     }
     if (input.enabled && !input.requireCommonUserId) {
       return 'デジタル会員証(digital_collectible)向けの設定はrequireCommonUserIdをtrueにする必要があります(common_user_id未解決のままの誤送付を防ぐため)';
@@ -134,6 +144,7 @@ router.post('/products/:productId/integration-rules', async (req, res) => {
   const resultingTargetKey = isNonEmptyString(body.entitlementTargetSystemKey) ? body.entitlementTargetSystemKey : null;
   const resultingEntitlementType = isNonEmptyString(body.entitlementType) ? body.entitlementType : null;
   const resultingAssetCode = isNonEmptyString(body.assetCode) ? body.assetCode : null;
+  const resultingCollectibleRarity = isNonEmptyString(body.collectibleRarity) ? body.collectibleRarity : null;
   const resultingRequireCommonUserId = body.requireCommonUserId ?? false;
 
   const constraintError = validateDigitalCollectibleConstraints({
@@ -142,6 +153,7 @@ router.post('/products/:productId/integration-rules', async (req, res) => {
     entitlementTargetSystemKey: resultingTargetKey,
     entitlementType: resultingEntitlementType,
     assetCode: resultingAssetCode,
+    collectibleRarity: resultingCollectibleRarity,
     requireCommonUserId: resultingRequireCommonUserId,
   });
   if (constraintError) return sendError(res, 400, 'VALIDATION_ERROR', constraintError);
@@ -198,6 +210,8 @@ router.patch('/products/:productId/integration-rules/:ruleId', async (req, res) 
         : null;
   const resultingAssetCode =
     body.assetCode === undefined ? existing.assetCode : isNonEmptyString(body.assetCode) ? body.assetCode : null;
+  const resultingCollectibleRarity =
+    body.collectibleRarity === undefined ? existing.collectibleRarity : isNonEmptyString(body.collectibleRarity) ? body.collectibleRarity : null;
   const resultingRequireCommonUserId = body.requireCommonUserId === undefined ? existing.requireCommonUserId : body.requireCommonUserId;
 
   const constraintError = validateDigitalCollectibleConstraints({
@@ -206,6 +220,7 @@ router.patch('/products/:productId/integration-rules/:ruleId', async (req, res) 
     entitlementTargetSystemKey: resultingTargetKey,
     entitlementType: resultingEntitlementType,
     assetCode: resultingAssetCode,
+    collectibleRarity: resultingCollectibleRarity,
     requireCommonUserId: resultingRequireCommonUserId,
   });
   if (constraintError) return sendError(res, 400, 'VALIDATION_ERROR', constraintError);

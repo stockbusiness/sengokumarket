@@ -242,7 +242,7 @@ describe('管理API: 商品連携ルール(Wallet Claim Feature Flag整合・本
     const res = await agent
       .post(`/api/admin/products/${product.id}/integration-rules`)
       .set('Origin', TEST_ORIGIN)
-      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', requireCommonUserId: true });
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', collectibleRarity: 'common', requireCommonUserId: true });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('WALLET_CLAIM_DISABLED');
   });
@@ -269,7 +269,7 @@ describe('管理API: 商品連携ルール(Wallet Claim Feature Flag整合・本
     const res = await agent
       .post(`/api/admin/products/${product.id}/integration-rules`)
       .set('Origin', TEST_ORIGIN)
-      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', requireCommonUserId: true });
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', collectibleRarity: 'common', requireCommonUserId: true });
     expect(res.status).toBe(201);
   });
 
@@ -285,6 +285,7 @@ describe('管理API: 商品連携ルール(Wallet Claim Feature Flag整合・本
         entitlementTargetSystemKey: 'ove-wallet',
         entitlementType: 'digital_collectible',
         assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'common',
         requireCommonUserId: true,
         enabled: false,
       });
@@ -469,6 +470,7 @@ describe('管理API: 商品連携ルール(ProductIntegrationRule入力制約・
         entitlementTargetSystemKey: 'ove-wallet',
         entitlementType: 'digital_collectible',
         assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'common',
         requireCommonUserId: true,
       });
     const ruleId = created.body.rule.id;
@@ -477,6 +479,67 @@ describe('管理API: 商品連携ルール(ProductIntegrationRule入力制約・
       .patch(`/api/admin/products/${product.id}/integration-rules/${ruleId}`)
       .set('Origin', TEST_ORIGIN)
       .send({ assetCode: null });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  // 最終安定化指示書Phase5「ProductIntegrationRule制約完成」
+  it('digital_collectibleでcollectibleRarity未設定は400', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('no-rarity');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', requireCommonUserId: true });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('entitlementType=digital_collectibleで送信先がove-wallet以外は拒否される(enabledに関わらず)', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('wrong-destination');
+    createdProductIds.push(product.id);
+
+    const res = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'sengoku-passport',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'common',
+        requireCommonUserId: true,
+        enabled: false,
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('既存ルールの更新でcollectibleRarityを外すと400になる(更新時も同じvalidation)', async () => {
+    process.env.ENABLE_WALLET_CLAIM = 'true';
+    const { agent } = await createAdminAgent(app);
+    const product = await createProduct('update-remove-rarity');
+    createdProductIds.push(product.id);
+    const created = await agent
+      .post(`/api/admin/products/${product.id}/integration-rules`)
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'common',
+        requireCommonUserId: true,
+      });
+    const ruleId = created.body.rule.id;
+
+    const res = await agent
+      .patch(`/api/admin/products/${product.id}/integration-rules/${ruleId}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ collectibleRarity: null });
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('VALIDATION_ERROR');
   });

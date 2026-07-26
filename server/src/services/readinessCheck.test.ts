@@ -1,6 +1,8 @@
+import fs from 'fs';
+import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../lib/prisma';
-import { checkDatabaseHealth, checkMigrationsHealth } from './readinessCheck';
+import { checkDatabaseHealth, checkMigrationsHealth, REQUIRED_MIGRATIONS } from './readinessCheck';
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11章「/api/ready最新化」)。
 describe('readinessCheck', () => {
@@ -51,5 +53,22 @@ describe('readinessCheck', () => {
     expect(result.ok).toBe(false);
     expect(result.missing).toContain('collectible_deliveries.entitlement_id');
     expect(result.missing).toContain('order_wallet_transactions.idempotency_key');
+  });
+
+  // 最終安定化指示書Phase4「今後の更新漏れを防ぐ」: migration追加時にREQUIRED_MIGRATIONSへの
+  // 登録を忘れると、_prisma_migrations上は適用済みでも新カラム・新テーブルの不足を検知できない
+  // (checkMigrationsHealthは名前一致するmigrationがREQUIRED_MIGRATIONS側にあることが前提のため)。
+  // 最新のmigrationフォルダが登録漏れなら、このテストがCIで失敗して気づけるようにする。
+  it('migration directoryの最新フォルダはREQUIRED_MIGRATIONSに登録されている(登録漏れの検知)', () => {
+    const migrationsDir = path.resolve(__dirname, '../../prisma/migrations');
+    const latest = fs
+      .readdirSync(migrationsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort()
+      .at(-1);
+
+    expect(latest).toBeTruthy();
+    expect(REQUIRED_MIGRATIONS.some((required) => latest!.includes(required))).toBe(true);
   });
 });
