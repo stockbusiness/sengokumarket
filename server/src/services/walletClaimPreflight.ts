@@ -3,6 +3,8 @@ import { getSetting } from './settings';
 import { isWalletClaimEnabled, isDigitalCollectibleDeliveryEnabled } from './walletClaimConfig';
 import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 import { checkMigrationsHealth } from './readinessCheck';
+import { signSennokuniRequest } from '../lib/sennokuniHmac';
+import { getSennokuniIntegrationStage, isSennokuniIntegrationEnabled } from './sennokuniIntegrationConfig';
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10章「Wallet Claim Preflight拡張」):
 // 既存のintegrationPreflight.ts(千ノ国全体連携)とは別に、Wallet Claim/digital_collectible
@@ -45,6 +47,62 @@ export interface WalletClaimPreflightReport {
 const WALLET_CLAIM_SETTING_KEYS = ['wallet_claim_web_base_url', 'wallet_claim_inbound_key_id', 'wallet_claim_inbound_hmac_secret'] as const;
 const DELIVERY_SETTING_KEYS = ['ove_wallet_events_key_id', 'ove_wallet_events_hmac_secret', 'ove_wallet_base_url'] as const;
 
+// 最終安定化指示書Phase6「Wallet Claim Preflight高度化」。
+const MIN_KEY_ID_LENGTH = 8;
+const MIN_SECRET_LENGTH = 16;
+// よく使われがちな仮値・初期値のまま本番運用してしまうことを防ぐ(大文字小文字を区別しない)。
+const KNOWN_PLACEHOLDER_VALUES = new Set([
+  'changeme',
+  'change-me',
+  'change_me',
+  'test',
+  'testsecret',
+  'test-secret',
+  'secret',
+  'password',
+  'placeholder',
+  'your-secret-here',
+  'dummy',
+  'example',
+  '00000000',
+  '12345678',
+]);
+
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+  } catch {
+    return false;
+  }
+}
+
+function isKnownPlaceholder(value: string): boolean {
+  return KNOWN_PLACEHOLDER_VALUES.has(value.trim().toLowerCase());
+}
+
+// カード送付(entitlement.granted/revoked)はintegrationOutboxDispatcher.tsのbuildSennokuniHeaders/
+// signSennokuniRequest(共通契約のX-SenNoKuni-*方式)をove_wallet_events_*の鍵で使うため、
+// integrationPreflight.tsのselfTestSennokuniHmacと同じ検証方法(決定論的・64桁16進)を用いる。
+function selfTestOveWalletEventsHmac(keyId: string, secret: string): boolean {
+  const input = { keyId, timestamp: '1700000000', nonce: 'wallet-claim-preflight-self-test-nonce', method: 'POST', path: '/preflight-self-test', rawBody: '{}' };
+  const a = signSennokuniRequest({ ...input, secret });
+  const b = signSennokuniRequest({ ...input, secret });
+  return a === b && /^[0-9a-f]{64}$/.test(a);
+}
+
+// 最終安定化指示書Phase6で追加した項目のうち、1件でも該当があれば本番/staging切替を
+// ブロックすべきもの(overallReadyへ折り込む対象)。
+const PHASE6_BLOCKING_ISSUE_CODES = new Set([
+  'url_not_absolute',
+  'url_not_https_in_production',
+  'placeholder_value_detected',
+  'key_id_too_short',
+  'secret_too_short',
+  'wallet_events_hmac_self_test_failed',
+  'global_flag_stage_inconsistent',
+]);
+
 export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPreflightReport> {
   const walletClaimEnabled = isWalletClaimEnabled();
   const digitalCollectibleDeliveryEnabled = isDigitalCollectibleDeliveryEnabled();
@@ -79,8 +137,72 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     prisma.integrationOutboxEvent.count({ where: { status: 'blocked' } }),
   ]);
   const cronSecretConfigured = Boolean(process.env.CRON_SECRET);
+  const stage = await getSennokuniIntegrationStage();
 
   const issues: WalletClaimPreflightIssue[] = [];
+
+  // 最終安定化指示書Phase6: URL形式(絶対URL・productionはHTTPS)。
+  const webBaseUrl = await getSetting('wallet_claim_web_base_url');
+  const oveWalletBaseUrl = await getSetting('ove_wallet_base_url');
+  for (const [label, url] of [
+    ['wallet_claim_web_base_url', webBaseUrl],
+    ['ove_wallet_base_url', oveWalletBaseUrl],
+  ] as const) {
+    if (!url) continue;
+    if (!isAbsoluteUrl(url)) {
+      issues.push({ code: 'url_not_absolute', message: `${label}が絶対URLではありません: ${url}` });
+    } else if (stage === 'production' && !url.startsWith('https://')) {
+      issues.push({ code: 'url_not_https_in_production', message: `${label}はproduction環境ではHTTPSである必要があります: ${url}` });
+    }
+  }
+
+  // 最終安定化指示書Phase6: key ID・secretの最低長・既知の仮値禁止。
+  const keyIdChecks: [string, string | null][] = [
+    ['wallet_claim_inbound_key_id', await getSetting('wallet_claim_inbound_key_id')],
+    ['ove_wallet_events_key_id', await getSetting('ove_wallet_events_key_id')],
+  ];
+  const secretChecks: [string, string | null][] = [
+    ['wallet_claim_inbound_hmac_secret', await getSetting('wallet_claim_inbound_hmac_secret')],
+    ['ove_wallet_events_hmac_secret', await getSetting('ove_wallet_events_hmac_secret')],
+  ];
+  for (const [label, value] of keyIdChecks) {
+    if (!value) continue;
+    if (isKnownPlaceholder(value)) {
+      issues.push({ code: 'placeholder_value_detected', message: `${label}が既知の仮値のままです。実際の値に置き換えてください。` });
+    } else if (value.length < MIN_KEY_ID_LENGTH) {
+      issues.push({ code: 'key_id_too_short', message: `${label}が短すぎます(${MIN_KEY_ID_LENGTH}文字以上を推奨)。` });
+    }
+  }
+  for (const [label, value] of secretChecks) {
+    if (!value) continue;
+    if (isKnownPlaceholder(value)) {
+      issues.push({ code: 'placeholder_value_detected', message: `${label}が既知の仮値のままです。実際の値に置き換えてください。` });
+    } else if (value.length < MIN_SECRET_LENGTH) {
+      issues.push({ code: 'secret_too_short', message: `${label}が短すぎます(${MIN_SECRET_LENGTH}文字以上を推奨)。` });
+    }
+  }
+
+  // 最終安定化指示書Phase6「HMAC付きconnection-test成功」: 正式な相互テストベクトルは
+  // 統合責任者確定前のため(integrationPreflight.tsの自己診断と同じ方針)、ここでは
+  // 「設定された鍵で決定論的に正しい形式(64桁16進)の署名を生成できるか」の自己診断にとどめる。
+  const oveWalletEventsSecret = await getSetting('ove_wallet_events_hmac_secret');
+  const oveWalletEventsKeyId = await getSetting('ove_wallet_events_key_id');
+  const walletEventsHmacSelfTestPassed =
+    oveWalletEventsSecret && oveWalletEventsKeyId ? selfTestOveWalletEventsHmac(oveWalletEventsKeyId, oveWalletEventsSecret) : null;
+  if (walletEventsHmacSelfTestPassed === false) {
+    issues.push({ code: 'wallet_events_hmac_self_test_failed', message: 'カード送付(entitlement.granted/revoked)のHMAC自己診断に失敗しました。' });
+  }
+
+  // 最終安定化指示書Phase6「global flagとstage整合」: SENNOKUNI_INTEGRATION_ENABLED(全体)が
+  // 無効の間はstageに関わらずカード送付は実送信されない(dispatcher側のisSennokuniIntegrationEnabled
+  // ガード)。有効なdigital_collectibleルールがあるのにこのFlagが無効なままだと気づきにくいため
+  // Preflightで明示する。
+  if (enabledRules.length > 0 && !isSennokuniIntegrationEnabled()) {
+    issues.push({
+      code: 'global_flag_stage_inconsistent',
+      message: `有効なdigital_collectibleルールが${enabledRules.length}件ありますが、SENNOKUNI_INTEGRATION_ENABLEDが無効なためカード送付は実行されません。`,
+    });
+  }
 
   if (walletClaimEnabled && !digitalCollectibleDeliveryEnabled) {
     issues.push({
@@ -168,6 +290,8 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
   // (Feature Flag不整合・asset_code欠落・itemType不整合・common_user_id必須化漏れ・
   // dead/blocked滞留)も無い状態。最終安定化指示書Phase3「production切替ゲート」がこの値を
   // 直接参照するため、本番へ切り替えてはならない条件はすべてここへ集約する。
+  const hasPhase6BlockingIssue = issues.some((issue) => PHASE6_BLOCKING_ISSUE_CODES.has(issue.code));
+
   const overallReady =
     walletClaimReady &&
     collectibleDeliveryReady &&
@@ -177,7 +301,8 @@ export async function buildWalletClaimPreflightReport(): Promise<WalletClaimPref
     rulesMissingRarity === 0 &&
     rulesWithInvalidDestination === 0 &&
     deadCount === 0 &&
-    blockedCount === 0;
+    blockedCount === 0 &&
+    !hasPhase6BlockingIssue;
 
   return {
     walletClaimEnabled,

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { prisma } from '../lib/prisma';
 import { setSetting } from './settings';
+import { setSennokuniIntegrationStageSetting } from './sennokuniIntegrationConfig';
 import { buildWalletClaimPreflightReport } from './walletClaimPreflight';
 
 const ALL_SETTING_KEYS = [
@@ -61,7 +62,7 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     process.env.ENABLE_WALLET_CLAIM = 'true';
     await setSetting('wallet_claim_web_base_url', 'https://claim.example.com');
     await setSetting('wallet_claim_inbound_key_id', 'inbound-key');
-    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret');
+    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret-value');
 
     const report = await buildWalletClaimPreflightReport();
     expect(report.walletClaimReady).toBe(true);
@@ -71,7 +72,7 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY = 'true';
     process.env.CRON_SECRET = 'cron-secret-abc';
     await setSetting('ove_wallet_events_key_id', 'events-key');
-    await setSetting('ove_wallet_events_hmac_secret', 'events-secret');
+    await setSetting('ove_wallet_events_hmac_secret', 'events-secret-value');
     await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
 
     const report = await buildWalletClaimPreflightReport();
@@ -117,9 +118,9 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     process.env.CRON_SECRET = 'cron-secret-abc';
     await setSetting('wallet_claim_web_base_url', 'https://claim.example.com');
     await setSetting('wallet_claim_inbound_key_id', 'inbound-key');
-    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret');
+    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret-value');
     await setSetting('ove_wallet_events_key_id', 'events-key');
-    await setSetting('ove_wallet_events_hmac_secret', 'events-secret');
+    await setSetting('ove_wallet_events_hmac_secret', 'events-secret-value');
     await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
 
     const product = await createProduct('require-common-false');
@@ -149,9 +150,9 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     process.env.CRON_SECRET = 'cron-secret-abc';
     await setSetting('wallet_claim_web_base_url', 'https://claim.example.com');
     await setSetting('wallet_claim_inbound_key_id', 'inbound-key');
-    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret');
+    await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret-value');
     await setSetting('ove_wallet_events_key_id', 'events-key');
-    await setSetting('ove_wallet_events_hmac_secret', 'events-secret');
+    await setSetting('ove_wallet_events_hmac_secret', 'events-secret-value');
     await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
 
     const readyReport = await buildWalletClaimPreflightReport();
@@ -219,5 +220,88 @@ describe('walletClaimPreflight: buildWalletClaimPreflightReport', () => {
     expect(report.rulesWithInvalidDestination).toBeGreaterThanOrEqual(1);
     expect(report.issues.map((i) => i.code)).toContain('rule_invalid_destination');
     expect(report.overallReady).toBe(false);
+  });
+
+  // 最終安定化指示書Phase6「Wallet Claim Preflight高度化」。
+  describe('Phase6: URL形式・鍵/秘密の妥当性・HMAC自己診断・global flag整合', () => {
+    it('wallet_claim_web_base_urlが絶対URLでない場合、url_not_absoluteのissueを含みoverallReadyもfalseになる', async () => {
+      process.env.ENABLE_WALLET_CLAIM = 'true';
+      await setSetting('wallet_claim_web_base_url', 'not-a-url');
+      await setSetting('wallet_claim_inbound_key_id', 'inbound-key');
+      await setSetting('wallet_claim_inbound_hmac_secret', 'inbound-secret-value');
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).toContain('url_not_absolute');
+      expect(report.overallReady).toBe(false);
+    });
+
+    it('production環境でove_wallet_base_urlがHTTPSでない場合、url_not_https_in_productionのissueを含む', async () => {
+      const originalStage = process.env.SENNOKUNI_INTEGRATION_ENABLED;
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSennokuniIntegrationStageSetting('production');
+      await setSetting('ove_wallet_base_url', 'http://ove-wallet.example.com');
+
+      try {
+        const report = await buildWalletClaimPreflightReport();
+        expect(report.issues.map((i) => i.code)).toContain('url_not_https_in_production');
+        expect(report.overallReady).toBe(false);
+      } finally {
+        process.env.SENNOKUNI_INTEGRATION_ENABLED = originalStage;
+        await prisma.setting.deleteMany({ where: { key: 'sennokuni_integration_stage' } });
+      }
+    });
+
+    it('鍵/秘密が既知の仮値の場合、placeholder_value_detectedのissueを含む', async () => {
+      await setSetting('ove_wallet_events_key_id', 'changeme');
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).toContain('placeholder_value_detected');
+      expect(report.overallReady).toBe(false);
+    });
+
+    it('key_idが短すぎる場合、key_id_too_shortのissueを含む', async () => {
+      await setSetting('wallet_claim_inbound_key_id', 'short');
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).toContain('key_id_too_short');
+      expect(report.overallReady).toBe(false);
+    });
+
+    it('secretが短すぎる場合、secret_too_shortのissueを含む', async () => {
+      await setSetting('ove_wallet_events_hmac_secret', 'short-secret');
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).toContain('secret_too_short');
+      expect(report.overallReady).toBe(false);
+    });
+
+    it('ove_wallet_events_*が正しく設定されていればHMAC自己診断は失敗issueを含まない', async () => {
+      await setSetting('ove_wallet_events_key_id', 'valid-events-key-id');
+      await setSetting('ove_wallet_events_hmac_secret', 'valid-events-hmac-secret-value');
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).not.toContain('wallet_events_hmac_self_test_failed');
+    });
+
+    it('有効なdigital_collectibleルールがあるのにSENNOKUNI_INTEGRATION_ENABLEDが無効な場合、global_flag_stage_inconsistentのissueを含みoverallReadyもfalseになる', async () => {
+      delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
+      const product = await createProduct('global-flag-inconsistent');
+      createdProductIds.push(product.id);
+      await prisma.productIntegrationRule.create({
+        data: {
+          productId: product.id,
+          entitlementTargetSystemKey: 'ove-wallet',
+          entitlementType: 'digital_collectible',
+          enabled: true,
+          assetCode: 'SGK-CARD-001',
+          requireCommonUserId: true,
+          collectibleRarity: 'common',
+        },
+      });
+
+      const report = await buildWalletClaimPreflightReport();
+      expect(report.issues.map((i) => i.code)).toContain('global_flag_stage_inconsistent');
+      expect(report.overallReady).toBe(false);
+    });
   });
 });
