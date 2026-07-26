@@ -191,7 +191,7 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
   });
 
   it('送付後・Mint前(DELIVERED状態のNftIssueが未Mint)の返金でNftIssue単位のentitlement.revokedイベントがenqueueされる', async () => {
-    const { order, product, nftIssue, paymentIntentId } = await createFixture('delivered-pre-mint', {
+    const { order, product, nftIssue, delivery, paymentIntentId } = await createFixture('delivered-pre-mint', {
       claimStatus: 'DELIVERED',
       nftIssueStatus: 'ready_to_issue',
       withDelivery: true,
@@ -209,6 +209,12 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
     // WalletClaimはDELIVEREDのまま残さずREVOCATION_PENDINGへ進める。
     const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
     expect(updatedClaim.status).toBe('REVOCATION_PENDING');
+
+    // 最終安定化指示書Phase1: syncCollectibleDeliveryOnSendはoutbox_event_id基準でDeliveryを
+    // 検索するため、新しく作った取消イベントへ張り替わっていないと取消送信が成功しても
+    // このDeliveryへ反映されない(=WalletClaimがREVOCATION_PENDINGのまま滞留するバグ)。
+    const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery!.id } });
+    expect(updatedDelivery.outboxEventId).toBe(matching!.id);
 
     await cleanup(order.id, product.id);
   });

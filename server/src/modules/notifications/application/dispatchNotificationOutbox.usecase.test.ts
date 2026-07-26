@@ -287,6 +287,51 @@ describe('dispatchPendingNotifications: wallet_claim_reissued(Wallet Claim本番
     expect(result.retrying).toBe(1);
     expect(sendViaResendOrThrow).not.toHaveBeenCalled();
   });
+
+  // 最終安定化指示書Phase2「Notification Tokenの安定化」: NOTIFICATION_TOKEN_DERIVATION_SECRET
+  // 設定時は、同一Notification Outbox Event(送信失敗→retry)のToken発行が同じ値を返し続け、
+  // 先に配送されたメールのURLを後続retryが無効化しない。
+  describe('NOTIFICATION_TOKEN_DERIVATION_SECRET設定時', () => {
+    const originalSecret = process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+
+    beforeEach(() => {
+      process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = 'c'.repeat(32);
+    });
+
+    afterEach(() => {
+      if (originalSecret === undefined) delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+      else process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = originalSecret;
+    });
+
+    it('送信失敗後のretryでも同一Tokenを再利用する(URLが無効化されない)', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order, claim } = await createOrderWithClaim('deterministic-resendfail');
+      await repo.enqueueNotification(prisma, {
+        eventType: 'wallet_claim_reissued',
+        recipient: order.customerEmail,
+        payload: { orderId: order.id },
+      });
+
+      sendViaResendOrThrow.mockImplementationOnce(async () => {
+        throw new Error('resend 5xx');
+      });
+      await dispatchPendingNotifications();
+      const afterFirstFailure = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(afterFirstFailure.reissueCount).toBe(1);
+
+      await prisma.notificationOutboxEvent.updateMany({
+        where: { recipient: order.customerEmail },
+        data: { nextAttemptAt: new Date(Date.now() - 1000) },
+      });
+
+      const secondResult = await dispatchPendingNotifications();
+      expect(secondResult.succeeded).toBe(1);
+      const afterSecondSuccess = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      // 決定論的発行のため、retryでもTokenをrotateしない(reissueCountは1のまま)。
+      expect(afterSecondSuccess.reissueCount).toBe(1);
+      expect(afterSecondSuccess.tokenHash).toBe(afterFirstFailure.tokenHash);
+    });
+  });
 });
 
 describe('claimBatch(残課題指示書Stage3)', () => {

@@ -27,6 +27,10 @@ export interface EnqueueOutboxEventInput {
   destinationSystemKey: string;
   payload: Record<string, unknown>;
   correlationId?: string | null;
+  // 最終安定化指示書Phase1: 補償取消(grant成功後に返金判明時のentitlement.revoked)等、
+  // 二重enqueueを防ぎたい場合に指定する(例: digital-collectible-revoke:<nft_issue_id>)。
+  // 指定時はcreateではなくupsert(重複時no-op)で作成する(order_linking_jobsと同じ設計)。
+  deduplicationKey?: string | null;
 }
 
 function buildEventId(): string {
@@ -46,18 +50,27 @@ export function hashOutboxPayload(payload: unknown): string {
 // outbox_event_idを紐づけるために使う(既存の呼び出し元は戻り値を無視するため後方互換)。
 export async function enqueueOutboxEvent(tx: Tx, input: EnqueueOutboxEventInput): Promise<string> {
   const payloadHash = hashOutboxPayload(input.payload);
-  const created = await tx.integrationOutboxEvent.create({
-    data: {
-      eventId: buildEventId(),
-      eventType: input.eventType,
-      destinationSystemKey: input.destinationSystemKey,
-      originalPayload: input.payload as Prisma.InputJsonValue,
-      originalPayloadHash: payloadHash,
-      deliveryPayload: input.payload as Prisma.InputJsonValue,
-      deliveryPayloadHash: payloadHash,
-      correlationId: input.correlationId ?? null,
-    },
-  });
+  const data = {
+    eventId: buildEventId(),
+    eventType: input.eventType,
+    destinationSystemKey: input.destinationSystemKey,
+    originalPayload: input.payload as Prisma.InputJsonValue,
+    originalPayloadHash: payloadHash,
+    deliveryPayload: input.payload as Prisma.InputJsonValue,
+    deliveryPayloadHash: payloadHash,
+    correlationId: input.correlationId ?? null,
+  };
+
+  if (input.deduplicationKey) {
+    const created = await tx.integrationOutboxEvent.upsert({
+      where: { deduplicationKey: input.deduplicationKey },
+      update: {},
+      create: { ...data, deduplicationKey: input.deduplicationKey },
+    });
+    return created.id;
+  }
+
+  const created = await tx.integrationOutboxEvent.create({ data });
   return created.id;
 }
 
@@ -153,12 +166,14 @@ export async function enqueueDigitalCollectibleEvent(
     claimItem: WalletClaimItem;
     commonUserId: string;
     eventType: 'entitlement.granted' | 'entitlement.revoked';
+    deduplicationKey?: string | null;
   },
 ): Promise<string> {
   return enqueueOutboxEvent(tx, {
     eventType: input.eventType,
     destinationSystemKey: input.claimItem.destinationSystemKey,
     correlationId: input.order.correlationId ?? input.order.id,
+    deduplicationKey: input.deduplicationKey ?? null,
     payload: {
       ...baseEventPayload(input.order),
       // 本番安定化指示書Stage6由来のreconcileEntitlementFieldsが再取得の起点にするため、

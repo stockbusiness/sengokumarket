@@ -363,6 +363,82 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     await cleanup(order.id, product.id, walletClaim.id, revokedEventId);
   });
 
+  // 最終安定化指示書Phase1「返金とカード送付の競合防止」
+  it('grant送信直前に注文が全額返金済みだと送信せずblocked(wallet_claim_refunded_before_send)になり、CollectibleDeliveryはREVOKEDになる', async () => {
+    const { product, order, walletClaim, delivery, outboxEventId } = await createEligibleFixture('refund-before-send');
+    await prisma.order.update({ where: { id: order.id }, data: { paymentStatus: 'refunded', orderStatus: 'refunded' } });
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.blocked).toBe(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const event = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: outboxEventId } });
+    expect(event.status).toBe('blocked');
+    expect(event.blockedReason).toBe('wallet_claim_refunded_before_send');
+
+    const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery.id } });
+    expect(updatedDelivery.status).toBe('REVOKED');
+    expect(updatedDelivery.revokedAt).not.toBeNull();
+
+    await cleanup(order.id, product.id, walletClaim.id, outboxEventId);
+  });
+
+  it('grant送信中(外部API呼び出し中)に返金された場合、2xx応答が返ってもDELIVEREDへは進まず、補償のentitlement.revokedが1件だけenqueueされる', async () => {
+    const { product, order, walletClaim, delivery, outboxEventId } = await createEligibleFixture('refund-during-send');
+
+    // 送信直前(sendAndRecordResultのPROCESSING遷移)まではまだpaidのため、送信自体は開始される。
+    // fetch呼び出しの最中(=外部APIへ届いた後、応答が返る前)に返金が確定した状況を、
+    // fetchのモック内で注文を返金済みへ更新することで再現する。
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await prisma.order.update({ where: { id: order.id }, data: { paymentStatus: 'refunded', orderStatus: 'refunded' } });
+      return { ok: true, text: () => Promise.resolve('{}') };
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { dispatchPendingOutboxEvents } = await loadDispatcher();
+    const result = await dispatchPendingOutboxEvents();
+
+    expect(result.succeeded).toBe(1); // grant自体はHTTPレベルでは成功している
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // grantイベント自体はsucceeded(実際に2xxで送信済みのため嘘の記録にはしない)。
+    const grantEvent = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: outboxEventId } });
+    expect(grantEvent.status).toBe('succeeded');
+
+    // しかしCollectibleDeliveryはDELIVEREDへは進まない(返金済みのため)。
+    const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery.id } });
+    expect(updatedDelivery.status).not.toBe('DELIVERED');
+
+    // 補償取消(entitlement.revoked)が1件だけ作られ、delivery.outbox_event_idがそちらへ張り替わる。
+    expect(updatedDelivery.outboxEventId).not.toBe(outboxEventId);
+    const revokeEvent = await prisma.integrationOutboxEvent.findUniqueOrThrow({ where: { id: updatedDelivery.outboxEventId! } });
+    expect(revokeEvent.eventType).toBe('entitlement.revoked');
+    expect(revokeEvent.deduplicationKey).toBe(`digital-collectible-revoke:${delivery.nftIssueId}`);
+    expect(revokeEvent.status).toBe('pending');
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: walletClaim.id } });
+    expect(updatedClaim.status).toBe('REVOCATION_PENDING');
+
+    const auditLogs = await prisma.walletClaimAuditLog.findMany({ where: { walletClaimId: walletClaim.id } });
+    expect(auditLogs.some((a) => a.eventType === 'compensating_revoke_enqueued')).toBe(true);
+
+    // 二重にrevokeが作られないことを確認するため、もう一度dispatchを回してもrevoke行は1件のまま。
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{}') }));
+    await dispatchPendingOutboxEvents();
+    const revokeEventsAfter = await prisma.integrationOutboxEvent.findMany({
+      where: { deduplicationKey: `digital-collectible-revoke:${delivery.nftIssueId}` },
+    });
+    expect(revokeEventsAfter).toHaveLength(1);
+
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId } });
+    await prisma.integrationOutboxEvent.deleteMany({ where: { id: outboxEventId } });
+    await cleanup(order.id, product.id, walletClaim.id, updatedDelivery.outboxEventId!);
+  });
+
   it('ENABLE_DIGITAL_COLLECTIBLE_DELIVERY=falseの間はSENNOKUNI_INTEGRATION_ENABLED=trueでも送信せずblockedのまま保留する', async () => {
     delete process.env.ENABLE_DIGITAL_COLLECTIBLE_DELIVERY;
     const { product, order, walletClaim, delivery, outboxEventId } = await createEligibleFixture('flag-off');

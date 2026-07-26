@@ -27,6 +27,13 @@ export const appConfig = {
   get cronSecret(): string | undefined {
     return process.env.CRON_SECRET;
   },
+  // 最終安定化指示書Phase2: Notification Tokenの決定論的発行に使う鍵。未設定・32byte未満の間は
+  // 従来通りの都度ランダム発行にフォールバックする(この鍵は既存の本番稼働中の通知経路
+  // (password_reset・purchase_complete等)にも影響するため、未設定を理由に送信自体を
+  // 止めてはならない)。
+  get notificationTokenDerivationSecret(): string | undefined {
+    return process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+  },
   // 仕様書外の拡張(指示書12.2「ブランド名のConfig化」): 通知メール件名等で使うブランド表記。
   // 現時点では環境変数化しておらず(変更頻度が低いため)、この1箇所のみを変更点とする。
   get brandName(): string {

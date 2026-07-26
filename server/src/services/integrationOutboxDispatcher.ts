@@ -11,7 +11,7 @@ import {
 } from './sennokuniIntegrationConfig';
 import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
 import { grantReward, reverseReward } from './oveWalletRewardClient';
-import { hashOutboxPayload } from './integrationOutbox';
+import { hashOutboxPayload, enqueueDigitalCollectibleEvent } from './integrationOutbox';
 import { getOveWalletEventsCredentials, isDigitalCollectibleDeliveryEnabled } from './walletClaimConfig';
 import { DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
@@ -244,6 +244,50 @@ async function sendAndRecordResult(
     return;
   }
 
+  // 最終安定化指示書Phase1(返金とカード送付の競合防止): digital_collectibleのgrant送信直前に
+  // 返金・取消が既に決まっていないか再確認する。ここで検知できれば、外部Wallet APIへの送信自体を
+  // 避けられる(以降の「2xx受信後」チェックは、この確認をすり抜けて送信中に返金された場合の保険)。
+  const isDigitalCollectibleGrant =
+    effectivePayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE && event.eventType === 'entitlement.granted';
+  const collectibleDelivery = isDigitalCollectibleGrant
+    ? await prisma.collectibleDelivery.findFirst({ where: { outboxEventId: event.id } })
+    : null;
+
+  if (isDigitalCollectibleGrant && collectibleDelivery) {
+    const orderId = typeof effectivePayload.order_id === 'string' ? effectivePayload.order_id : null;
+    const guard = orderId ? await checkDigitalCollectibleRefundGuard(prisma, orderId) : { blocked: false };
+    if (guard.blocked) {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.integrationOutboxEvent.updateMany({
+          where: { id: event.id, status: 'processing', processingToken },
+          data: {
+            status: 'blocked',
+            blockedReason: 'wallet_claim_refunded_before_send',
+            deliveryPayload: effectivePayload as Prisma.InputJsonValue,
+            deliveryPayloadHash,
+            processingToken: null,
+            processingStartedAt: null,
+          },
+        });
+        if (updated.count > 0) {
+          await tx.collectibleDelivery.updateMany({
+            where: { id: collectibleDelivery.id, status: { not: 'REVOKED' } },
+            data: { status: 'REVOKED', revokedAt: new Date(), lastError: 'wallet_claim_refunded_before_send' },
+          });
+        }
+      });
+      result.blocked++;
+      return;
+    }
+
+    // 送信直前にPROCESSINGへ進める。返金処理側(applyWalletClaimRefundEffects)はこの状態を見て、
+    // 送信中の可能性がある行を強制変更せず注記のみ残す(処理中の外部呼び出しと競合させないため)。
+    await prisma.collectibleDelivery.updateMany({
+      where: { id: collectibleDelivery.id, status: 'PENDING' },
+      data: { status: 'PROCESSING' },
+    });
+  }
+
   const effectiveEvent: IntegrationOutboxEvent = { ...event, deliveryPayload: effectivePayload as Prisma.JsonValue };
   const attemptNumber = event.attemptCount + 1;
   const startedAt = new Date();
@@ -301,7 +345,17 @@ async function sendAndRecordResult(
           },
         });
       }
-      if (updated.count > 0 && finalPayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE) {
+      if (updated.count > 0 && finalPayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE && event.eventType === 'entitlement.granted') {
+        // 最終安定化指示書Phase1: 2xx受信後、DELIVERED反映の直前にもう一度返金・取消状態を
+        // 確認する(送信中に返金されたが外部側ではgrantが成功してしまった場合の検知)。
+        const orderId = typeof finalPayload.order_id === 'string' ? finalPayload.order_id : null;
+        const guard = orderId ? await checkDigitalCollectibleRefundGuard(tx, orderId) : { blocked: false };
+        if (guard.blocked) {
+          await enqueueCompensatingRevoke(tx, event.id, finalPayload);
+        } else {
+          await syncCollectibleDeliveryOnSend(tx, event.id, event.eventType, 'succeeded', null);
+        }
+      } else if (updated.count > 0 && finalPayload.entitlement_type === DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE) {
         await syncCollectibleDeliveryOnSend(tx, event.id, event.eventType, 'succeeded', null);
       }
     });
@@ -405,6 +459,74 @@ async function recordAttempt(input: {
       destinationUrl: input.destinationUrl,
       responseBodyExcerpt: input.responseBodyExcerpt,
     },
+  });
+}
+
+// 最終安定化指示書Phase1: digital_collectibleのgrant送信前後で、注文の返金・WalletClaimの
+// 取消が既に決まっていないかを確認する。返金済み・REVOKED/REVOCATION_PENDING/
+// MANUAL_REVIEW_REQUIREDのいずれかであれば送付を進めてはならない。
+async function checkDigitalCollectibleRefundGuard(
+  client: Prisma.TransactionClient,
+  orderId: string,
+): Promise<{ blocked: boolean }> {
+  const order = await client.order.findUnique({ where: { id: orderId } });
+  if (order && (order.paymentStatus === 'refunded' || order.orderStatus === 'refunded')) {
+    return { blocked: true };
+  }
+
+  const claim = await client.walletClaim.findUnique({ where: { orderId } });
+  if (claim && ['REVOKED', 'REVOCATION_PENDING', 'MANUAL_REVIEW_REQUIRED'].includes(claim.status)) {
+    return { blocked: true };
+  }
+
+  return { blocked: false };
+}
+
+// 最終安定化指示書Phase1: entitlement.grantedが2xxで成功した直後に返金が判明した場合の
+// 補償取消。DELIVERED反映は行わず、同じNftIssue宛のentitlement.revokedを1件だけenqueueする
+// (deduplication_keyで多重送信中の重複作成を防ぐ)。WalletClaimはREVOCATION_PENDINGへ進める
+// (既にREVOKED/MANUAL_REVIEW_REQUIREDならそのままにする)。
+async function enqueueCompensatingRevoke(
+  tx: Prisma.TransactionClient,
+  grantedOutboxEventId: string,
+  finalPayload: Record<string, unknown>,
+): Promise<void> {
+  const delivery = await tx.collectibleDelivery.findFirst({ where: { outboxEventId: grantedOutboxEventId } });
+  if (!delivery) return;
+  // 既に取消済み・取消送信中なら何もしない(このgranted成功反映自体が既に古い可能性がある)。
+  if (delivery.status === 'REVOKED') return;
+
+  const nftIssue = await tx.nftIssue.findUnique({ where: { id: delivery.nftIssueId } });
+  if (!nftIssue) return;
+  const orderItem = await tx.orderItem.findUnique({ where: { id: nftIssue.orderItemId } });
+  const claimItem = await tx.walletClaimItem.findUnique({ where: { nftIssueId: nftIssue.id } });
+  const orderId = typeof finalPayload.order_id === 'string' ? finalPayload.order_id : null;
+  const order = orderId ? await tx.order.findUnique({ where: { id: orderId } }) : null;
+  if (!orderItem || !claimItem || !order) return;
+
+  const revokeOutboxEventId = await enqueueDigitalCollectibleEvent(tx, {
+    order,
+    orderItem,
+    nftIssue,
+    claimItem,
+    commonUserId: delivery.commonUserId,
+    eventType: 'entitlement.revoked',
+    deduplicationKey: `digital-collectible-revoke:${nftIssue.id}`,
+  });
+  await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { outboxEventId: revokeOutboxEventId } });
+
+  await tx.walletClaimAuditLog.create({
+    data: {
+      walletClaimId: delivery.walletClaimId,
+      orderId: order.id,
+      eventType: 'compensating_revoke_enqueued',
+      detail: { nftIssueId: nftIssue.id, grantedOutboxEventId },
+    },
+  });
+
+  await tx.walletClaim.updateMany({
+    where: { id: delivery.walletClaimId, status: { notIn: ['REVOKED', 'MANUAL_REVIEW_REQUIRED'] } },
+    data: { status: 'REVOCATION_PENDING' },
   });
 }
 

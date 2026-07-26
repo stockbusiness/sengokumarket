@@ -275,4 +275,50 @@ describe('walletClaim: reissueWalletClaimToken', () => {
     expect(updated.tokenHash).toBe(hashClaimToken(firstToken!));
     expect(updated.reissueCount).toBe(1);
   });
+
+  // 最終安定化指示書Phase2「Notification Tokenの安定化」
+  describe('notificationEventId指定時(決定論的発行)', () => {
+    const originalSecret = process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+
+    afterEach(() => {
+      if (originalSecret === undefined) delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+      else process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = originalSecret;
+    });
+
+    it('同一notification_event_idでの再試行はrotateせず同じTokenを返す(reissueCountも増えない)', async () => {
+      process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = 'b'.repeat(32);
+      const order = await createTestOrder('reissue-deterministic-retry');
+      const claim = await prisma.walletClaim.create({
+        data: { orderId: order.id, tokenHash: hashClaimToken('old-token'), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60) },
+      });
+
+      const first = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, 'notif-evt-1'));
+      const second = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, 'notif-evt-1'));
+
+      expect(first).not.toBeNull();
+      expect(second).toBe(first);
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(updated.tokenHash).toBe(hashClaimToken(first!));
+      expect(updated.reissueCount).toBe(1); // 2回目は同一Tokenの再確認のみでrotateしない
+    });
+
+    it('異なるnotification_event_id(=新しい再発行要求)は別のTokenへrotateする', async () => {
+      process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = 'b'.repeat(32);
+      const order = await createTestOrder('reissue-deterministic-newevent');
+      await prisma.walletClaim.create({
+        data: { orderId: order.id, tokenHash: hashClaimToken('old-token'), status: 'PENDING', expiresAt: new Date(Date.now() + 1000 * 60) },
+      });
+
+      const first = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, 'notif-evt-a'));
+      const second = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, 'notif-evt-b'));
+
+      expect(first).not.toBeNull();
+      expect(second).not.toBeNull();
+      expect(second).not.toBe(first);
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
+      expect(updated.reissueCount).toBe(2);
+    });
+  });
 });

@@ -618,6 +618,10 @@ model IntegrationOutboxEvent {
   deliveryPayload      Json      @map("payload")
   deliveryPayloadHash  String    @map("payload_hash")
   correlationId        String?   @map("correlation_id")
+  // 最終安定化指示書Phase1: 補償取消(grant成功後に返金が判明した場合のentitlement.revoked)の
+  // 二重enqueue防止。例: digital-collectible-revoke:<nft_issue_id>。enqueue側はcreateではなく
+  // upsert(重複時no-op)で使う(order_linking_jobs.deduplication_keyと同じ設計)。
+  deduplicationKey     String?   @unique @map("deduplication_key")
   status               String    @default("pending") @map("status") // pending | processing | succeeded | failed | dead | blocked
   attemptCount         Int       @default(0) @map("attempt_count")
   lastError            String?   @map("last_error")

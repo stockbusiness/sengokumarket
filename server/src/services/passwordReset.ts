@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../lib/prisma';
+import { deriveDeterministicToken, type DeterministicTokenInput } from './notificationTokenDerivation';
 
 const TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
 
@@ -32,6 +33,26 @@ export async function createPasswordResetTokenWithId(userId: string): Promise<{ 
 // 新規発行する(残課題指示書5.5)。既に使用済み(usedAt設定済み)なら何もしない。
 export async function invalidatePasswordResetToken(tokenId: string): Promise<void> {
   await prisma.passwordResetToken.updateMany({ where: { id: tokenId, usedAt: null }, data: { usedAt: new Date() } });
+}
+
+// 最終安定化指示書Phase2: 同一Notification Outbox Event(event_idが不変)のretryでは、
+// invalidate→新規発行を繰り返さず、決定論的に導出した同じTokenを再利用する
+// (先に送信済みのメールのURLが後続retryで無効化されるのを防ぐ)。
+// NOTIFICATION_TOKEN_DERIVATION_SECRET未設定の間はnullを返し、呼び出し元は既存の
+// createPasswordResetTokenWithId(都度ランダム発行・invalidate)にフォールバックする。
+export async function getOrCreateDeterministicPasswordResetToken(
+  userId: string,
+  input: DeterministicTokenInput,
+): Promise<{ token: string; tokenId: string } | null> {
+  const token = deriveDeterministicToken(input);
+  if (!token) return null;
+
+  const record = await prisma.passwordResetToken.upsert({
+    where: { tokenHash: hashToken(token) },
+    update: {},
+    create: { userId, tokenHash: hashToken(token), expiresAt: new Date(Date.now() + TOKEN_TTL_MS) },
+  });
+  return { token, tokenId: record.id };
 }
 
 export async function consumePasswordResetToken(token: string, newPassword: string): Promise<boolean> {

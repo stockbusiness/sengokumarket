@@ -134,17 +134,29 @@ router.post('/wallet-claims/:id/reissue', async (req, res) => {
     return sendError(res, 400, 'WALLET_CLAIM_NOT_REISSUABLE', '現在の状態では再発行できません');
   }
 
-  await prisma.$transaction(async (tx) => {
-    await enqueueNotification(tx, {
+  // 最終安定化指示書Phase2「受入条件」: 同一Claimにpending/processingの再発行通知が
+  // 既にある場合は新規作成しない(連打対策)。
+  const existing = await prisma.notificationOutboxEvent.findFirst({
+    where: {
       eventType: 'wallet_claim_reissued',
-      recipient: claim.order.customerEmail,
-      payload: { orderId: claim.orderId },
-    });
-    await tx.walletClaimAuditLog.create({
-      data: { walletClaimId: claim.id, orderId: claim.orderId, eventType: 'reissue_requested_by_admin' },
-    });
+      status: { in: ['pending', 'processing'] },
+      payload: { path: ['orderId'], equals: claim.orderId },
+    },
   });
-  await triggerImmediateNotificationDispatch();
+
+  if (!existing) {
+    await prisma.$transaction(async (tx) => {
+      await enqueueNotification(tx, {
+        eventType: 'wallet_claim_reissued',
+        recipient: claim.order.customerEmail,
+        payload: { orderId: claim.orderId },
+      });
+      await tx.walletClaimAuditLog.create({
+        data: { walletClaimId: claim.id, orderId: claim.orderId, eventType: 'reissue_requested_by_admin' },
+      });
+    });
+    await triggerImmediateNotificationDispatch();
+  }
 
   res.json({ ok: true, queued: true, sentTo: claim.order.customerEmail });
 });

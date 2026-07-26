@@ -178,6 +178,40 @@ describe('管理API: /admin/wallet-claims(戦国マーケットNFTカード受�
     await cleanup(order.id, product.id);
   });
 
+  // 最終安定化指示書Phase2「受入条件」: 連打対策(同一Claimにpending/processingの再発行通知が
+  // 既にある場合は新規作成しない)。
+  it('再発行連打: 直前の再発行通知がまだpending/processingの間は、新規イベントを作らずに既存のqueued応答を返す', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { agent } = await createAdminAgent(app);
+    const { order, product, claim } = await createFixture(`reissue-double-click-${Date.now()}`);
+
+    // 1回目のリクエストの直前に、まだ処理されていないpendingの再発行通知が既にある状態を再現する
+    // (dispatchが間に合わなかった/連打された状況)。
+    await prisma.notificationOutboxEvent.create({
+      data: {
+        eventType: 'wallet_claim_reissued',
+        recipient: order.customerEmail,
+        payload: { orderId: order.id },
+        status: 'pending',
+      },
+    });
+
+    const res = await agent.post(`/api/admin/wallet-claims/${claim.id}/reissue`).set('Origin', TEST_ORIGIN);
+    expect(res.status).toBe(200);
+    expect(res.body.queued).toBe(true);
+
+    const events = await prisma.notificationOutboxEvent.findMany({
+      where: { recipient: order.customerEmail, eventType: 'wallet_claim_reissued' },
+    });
+    expect(events).toHaveLength(1); // 新規enqueueされていない
+
+    const auditLogs = await prisma.walletClaimAuditLog.findMany({ where: { walletClaimId: claim.id } });
+    expect(auditLogs.some((a) => a.eventType === 'reissue_requested_by_admin')).toBe(false);
+
+    await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: order.customerEmail } });
+    await cleanup(order.id, product.id);
+  });
+
   it('再発行: DELIVERY_PENDING以降のClaimは再発行できない(400)', async () => {
     const { agent } = await createAdminAgent(app);
     const { order, product, claim } = await createFixture(`reissue-ng-${Date.now()}`, 'DELIVERY_PENDING');

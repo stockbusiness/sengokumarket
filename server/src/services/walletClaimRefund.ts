@@ -90,7 +90,10 @@ export async function applyWalletClaimRefundEffects(tx: Tx, order: Order): Promi
       const claimItem = await tx.walletClaimItem.findUnique({ where: { nftIssueId: nftIssue.id } });
       if (!claimItem) continue;
 
-      await enqueueDigitalCollectibleEvent(tx, {
+      // 最終安定化指示書Phase1: syncCollectibleDeliveryOnSendはoutbox_event_id基準でDeliveryを
+      // 検索するため、新しく作った取消イベントのidへ張り替えないと、取消送信が成功しても
+      // このDeliveryへ反映されずWalletClaimがREVOCATION_PENDINGのまま滞留してしまう。
+      const revokeOutboxEventId = await enqueueDigitalCollectibleEvent(tx, {
         order,
         orderItem,
         nftIssue,
@@ -98,6 +101,7 @@ export async function applyWalletClaimRefundEffects(tx: Tx, order: Order): Promi
         commonUserId: delivery.commonUserId,
         eventType: 'entitlement.revoked',
       });
+      await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { outboxEventId: revokeOutboxEventId } });
       revocationInProgressCount += 1;
     }
 

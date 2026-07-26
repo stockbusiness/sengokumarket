@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import type { Order, OrderItem, Prisma, PrismaClient, WalletClaim } from '@prisma/client';
 import { isWalletClaimEnabled } from './walletClaimConfig';
+import { deriveDeterministicToken } from './notificationTokenDerivation';
 import {
   getDigitalCollectibleRule,
   buildCollectibleSnapshot,
@@ -122,10 +123,40 @@ export async function isWalletClaimReissuable(orderId: string, db: Db): Promise<
 // 新Tokenを上書きしないよう、読み取り時点のtoken_hashを条件付きUPDATEのWHERE句に含める
 // (楽観ロック/CAS)。他の処理が先に更新していればcount=0になり、このプロセスはnullを返す
 // (呼び出し元は「再発行できなかった」として扱う。他プロセスが発行した新しい方のTokenが有効)。
-export async function reissueWalletClaimToken(tx: Tx, orderId: string): Promise<string | null> {
+// 最終安定化指示書Phase2: notificationEventIdを渡すと、同じNotification Outbox Event
+// (event_idはretryをまたいで不変)の再試行では同一Tokenを返す(先に送信済みメールのURLが
+// 後続retryで無効化されるのを防ぐ)。NOTIFICATION_TOKEN_DERIVATION_SECRET未設定・
+// notificationEventId未指定の間は従来通り都度ランダムなTokenを発行する。
+export async function reissueWalletClaimToken(tx: Tx, orderId: string, notificationEventId?: string): Promise<string | null> {
   const claim = await tx.walletClaim.findUnique({ where: { orderId } });
   if (!claim) return null;
   if (!isReissuableStatus(claim.status)) return null;
+
+  const deterministicToken = notificationEventId
+    ? deriveDeterministicToken({ eventId: notificationEventId, subjectId: orderId, tokenVersion: 0, purpose: 'wallet_claim_reissue' })
+    : null;
+
+  if (deterministicToken) {
+    const deterministicHash = hashClaimToken(deterministicToken);
+    if (claim.tokenHash === deterministicHash) {
+      // 同一Notification Eventの再試行(前回既にこのEventで発行済み)。rotateせず同じTokenを返す。
+      return deterministicToken;
+    }
+    const updated = await tx.walletClaim.updateMany({
+      where: { id: claim.id, tokenHash: claim.tokenHash, status: claim.status },
+      data: {
+        tokenHash: deterministicHash,
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + CLAIM_TOKEN_TTL_MS),
+        lastError: null,
+        tokenVersion: { increment: 1 },
+        lastReissuedAt: new Date(),
+        reissueCount: { increment: 1 },
+      },
+    });
+    if (updated.count === 0) return null;
+    return deterministicToken;
+  }
 
   const token = generateClaimToken();
   const updated = await tx.walletClaim.updateMany({

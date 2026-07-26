@@ -1,7 +1,11 @@
 import type { AdminRole } from '@sengoku/contracts';
 import type { NotificationOutboxEvent } from '@prisma/client';
 import { prisma } from '../../../lib/prisma';
-import { createPasswordResetTokenWithId, invalidatePasswordResetToken } from '../../../services/passwordReset';
+import {
+  createPasswordResetTokenWithId,
+  getOrCreateDeterministicPasswordResetToken,
+  invalidatePasswordResetToken,
+} from '../../../services/passwordReset';
 import { getBankTransferConfig, BANK_TRANSFER_EXPIRY_DAYS } from '../../../services/bankTransfer';
 import { sendNotificationOrThrow } from './sendNotification.usecase';
 import {
@@ -84,13 +88,32 @@ export async function dispatchPendingNotifications(): Promise<DispatchNotificati
   return result;
 }
 
+// 最終安定化指示書Phase2: 同一Notification Outbox Event(event.id)のretryは同じTokenを
+// 再利用する(決定論的発行、NOTIFICATION_TOKEN_DERIVATION_SECRET設定時のみ)。未設定の間は
+// 既存の都度ランダム発行(invalidate→新規create)にフォールバックする。
+async function getOrCreatePasswordResetTokenForEvent(
+  event: NotificationOutboxEvent,
+  userId: string,
+  purpose: string,
+): Promise<{ token: string; tokenId: string }> {
+  const deterministic = await getOrCreateDeterministicPasswordResetToken(userId, {
+    eventId: event.id,
+    subjectId: userId,
+    tokenVersion: 0,
+    purpose,
+  });
+  if (deterministic) return deterministic;
+
+  if (event.passwordResetTokenId) {
+    await invalidatePasswordResetToken(event.passwordResetTokenId);
+  }
+  return createPasswordResetTokenWithId(userId);
+}
+
 async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
   if (event.eventType === 'agency_account_setup') {
     const payload = event.payload as unknown as AgencyAccountSetupPayload;
-    if (event.passwordResetTokenId) {
-      await invalidatePasswordResetToken(event.passwordResetTokenId);
-    }
-    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'agency_account_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
     await sendNotificationOrThrow(buildAgencyAccountSetupEmail(event.recipient, payload.name, token));
     return;
@@ -111,7 +134,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const base = await getWalletClaimWebBaseUrl();
     if (!base) throw new Error('wallet_claim_web_base_url is not configured');
 
-    const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, payload.orderId));
+    const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, payload.orderId, event.id));
     if (!token) throw new Error('wallet claim is not reissuable in its current status');
 
     await sendNotificationOrThrow(buildWalletClaimReissuedEmail(event.recipient, order.customerName, `${base}/claim/${token}`));
@@ -126,16 +149,13 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
     if (!order) throw new Error('order not found for purchase_complete notification');
     const items = await prisma.orderItem.findMany({ where: { orderId: order.id } });
-    const walletClaimToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    const walletClaimToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, event.id));
     await sendNotificationOrThrow(await buildPurchaseCompleteEmail(order, items, walletClaimToken));
     return;
   }
   if (event.eventType === 'guest_password_setup') {
     const payload = event.payload as unknown as GuestPasswordSetupPayload;
-    if (event.passwordResetTokenId) {
-      await invalidatePasswordResetToken(event.passwordResetTokenId);
-    }
-    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'guest_password_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
     await sendNotificationOrThrow(buildGuestPasswordSetupEmail(event.recipient, payload.name, token));
     return;
@@ -151,10 +171,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
   }
   if (event.eventType === 'password_reset') {
     const payload = event.payload as unknown as PasswordResetPayload;
-    if (event.passwordResetTokenId) {
-      await invalidatePasswordResetToken(event.passwordResetTokenId);
-    }
-    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'password_reset');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
     await sendNotificationOrThrow(buildPasswordResetEmail(event.recipient, payload.name, token));
     return;
@@ -169,10 +186,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
   }
   if (event.eventType === 'admin_account_setup') {
     const payload = event.payload as unknown as AdminAccountSetupPayload;
-    if (event.passwordResetTokenId) {
-      await invalidatePasswordResetToken(event.passwordResetTokenId);
-    }
-    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'admin_account_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
     const roleLabel = ADMIN_ROLE_LABEL[payload.role as AdminRole] ?? payload.role;
     await sendNotificationOrThrow(buildAdminAccountSetupEmail(event.recipient, payload.name, token, roleLabel));
