@@ -85,6 +85,42 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     }
   });
 
+  // 最終安定化指示書Phase8「Notification Outbox claim改善」受入条件: 時間予算切れで
+  // 打ち切った際、claimBatch方式(先行batch claim)であればprocessing残留が起き得たが、
+  // 1件claim→処理→次の1件claimのループへ改めたことで、未処理分はclaimすらされず
+  // pendingのまま残る(processing残留なし・stale reclaimの10分待ちが不要)ことを確認する。
+  it('時間予算切れで打ち切った場合、未処理のpendingイベントはprocessingに残らずpendingのまま', async () => {
+    process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS = '20';
+    const userA = await createUser();
+    const userB = await createUser();
+    const eventA = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: userA.email,
+      payload: { name: userA.name },
+    });
+    const eventB = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: userB.email,
+      payload: { name: userB.name },
+    });
+
+    sendViaResendOrThrow.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    try {
+      const result = await dispatchPendingNotifications();
+      expect(result.claimed).toBeGreaterThanOrEqual(1);
+
+      const updatedA = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: eventA.id } });
+      const updatedB = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: eventB.id } });
+      expect(updatedA.status).not.toBe('processing');
+      expect(updatedB.status).not.toBe('processing');
+    } finally {
+      delete process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS;
+    }
+  });
+
   it('最大試行回数を超えるとdeadになる', async () => {
     const user = await createUser();
     const event = await repo.enqueueNotification(prisma, {
@@ -334,8 +370,10 @@ describe('dispatchPendingNotifications: wallet_claim_reissued(Wallet Claim本番
   });
 });
 
-describe('claimBatch(残課題指示書Stage3)', () => {
-  const emailSuffix = `claim-batch-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+// 最終安定化指示書Phase8「Notification Outbox claim改善」: claimBatch(先行batch claim)を
+// claimOne(1件claim)へ置き換えた。
+describe('claimOne(最終安定化指示書Phase8)', () => {
+  const emailSuffix = `claim-one-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   afterEach(async () => {
     await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: emailSuffix } } });
@@ -349,9 +387,9 @@ describe('claimBatch(残課題指示書Stage3)', () => {
     });
     expect(event.attemptCount).toBe(0);
 
-    const [claimed] = await repo.claimBatch(prisma, 10);
-    expect(claimed.id).toBe(event.id);
-    expect(claimed.attemptCount).toBe(1);
+    const claimed = await repo.claimOne(prisma);
+    expect(claimed?.id).toBe(event.id);
+    expect(claimed?.attemptCount).toBe(1);
 
     const persisted = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(persisted?.attemptCount).toBe(1);

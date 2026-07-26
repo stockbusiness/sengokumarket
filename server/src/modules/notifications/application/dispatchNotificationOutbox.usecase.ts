@@ -60,6 +60,11 @@ export interface DispatchNotificationOutboxResult {
 // を処理する。setup系はここでパスワード設定トークンを発行する(生成済みトークンはpayloadへ
 // 保存しない。前回の未使用トークンがあれば無効化してから新規発行し、無制限に有効トークンが
 // 増えるのを防ぐ)。
+//
+// 最終安定化指示書Phase8「Notification Outbox claim改善」: 事前にBATCH_LIMIT件を
+// まとめてclaimするのではなく、1件claim→処理→次の1件claimというループにすることで、
+// 時間予算切れで打ち切った際にprocessing状態のまま残る行が生じないようにする
+// (stale reclaim(10分)を待つ必要がなくなる)。
 export async function dispatchPendingNotifications(): Promise<DispatchNotificationOutboxResult> {
   const result: DispatchNotificationOutboxResult = { claimed: 0, succeeded: 0, retrying: 0, dead: 0 };
   const startedAt = Date.now();
@@ -67,21 +72,10 @@ export async function dispatchPendingNotifications(): Promise<DispatchNotificati
 
   await repo.reclaimStaleProcessing(prisma);
 
-  if (Date.now() - startedAt >= timeBudgetMs) {
-    // Functionの残り時間に余裕がないため、新規claimを行わずpendingのまま残す
-    // (次回の呼び出しで再評価される)。
-    return result;
-  }
-
-  const claimedEvents = await repo.claimBatch(prisma, BATCH_LIMIT);
-  result.claimed = claimedEvents.length;
-
-  for (const event of claimedEvents) {
-    if (Date.now() - startedAt >= timeBudgetMs) {
-      // Functionの残り時間に余裕がないため、以降は処理を打ち切る(既にclaimBatchでprocessingへ
-      // 遷移済みの残りの行は、次回呼び出し時にreclaimStaleProcessingで拾われる)。
-      break;
-    }
+  while (Date.now() - startedAt < timeBudgetMs && result.claimed < BATCH_LIMIT) {
+    const event = await repo.claimOne(prisma);
+    if (!event) break;
+    result.claimed++;
     await processEvent(event, result);
   }
 
