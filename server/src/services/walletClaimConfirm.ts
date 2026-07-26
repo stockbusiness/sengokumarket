@@ -144,8 +144,9 @@ export async function confirmWalletClaim(
       const orderItem = orderItemById.get(claimItem.orderItemId);
       const nftIssue = nftIssueById.get(claimItem.nftIssueId);
       if (!orderItem || !nftIssue) continue;
-      // 返金等でNftIssue自体がcancelledになった行は送付しない(WalletClaimItem.status自体の
-      // 同期はPhase6で追加する。現時点ではNftIssue.statusを併せて確認することで二重に防ぐ)。
+      // 返金等でNftIssue自体がcancelledになった行は送付しない。WalletClaimItem.status自体の
+      // 同期(PENDING→CANCELLED)は最終安定化指示書Phase9で追加済みだが(claimItemsの
+      // 絞り込み条件で既に除外されるはず)、念のためNftIssue.statusも併せて確認し二重に防ぐ。
       if (nftIssue.status === 'cancelled') continue;
 
       // 8章: NftIssue単位でCollectibleDelivery upsert(同時実行・リトライでの重複作成を防ぐ)。

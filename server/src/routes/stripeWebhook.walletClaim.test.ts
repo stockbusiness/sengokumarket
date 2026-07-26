@@ -162,18 +162,23 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
   });
 
   it('Claim前(PENDING)の返金でWalletClaim=REVOKEDになる', async () => {
-    const { order, product, paymentIntentId } = await createFixture('claim-before', { claimStatus: 'PENDING' });
+    const { order, product, nftIssue, paymentIntentId } = await createFixture('claim-before', { claimStatus: 'PENDING' });
     const res = await postFullRefund(paymentIntentId, 10000);
     expect(res.status).toBe(200);
 
     const claim = await prisma.walletClaim.findUniqueOrThrow({ where: { orderId: order.id } });
     expect(claim.status).toBe('REVOKED');
 
+    // 最終安定化指示書Phase9「WalletClaimItem状態整理」: Confirm未到達のためWalletClaimItemも
+    // CANCELLEDになる。
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
+    expect(claimItem.status).toBe('CANCELLED');
+
     await cleanup(order.id, product.id);
   });
 
   it('Claim後・送付前(DELIVERY_PENDING)の返金で未送付CollectibleDeliveryがREVOKED・WalletClaimもREVOKEDになる', async () => {
-    const { order, product, claim, delivery, paymentIntentId } = await createFixture('claim-after-before-delivery', {
+    const { order, product, claim, nftIssue, delivery, paymentIntentId } = await createFixture('claim-after-before-delivery', {
       claimStatus: 'DELIVERY_PENDING',
       withDelivery: true,
       deliveryStatus: 'PENDING',
@@ -186,6 +191,31 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
     const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery!.id } });
     expect(updatedDelivery.status).toBe('REVOKED');
     expect(updatedDelivery.revokedAt).not.toBeNull();
+
+    // 最終安定化指示書Phase9: 未送付のまま取り消された明細はWalletClaimItemもCANCELLEDになる。
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
+    expect(claimItem.status).toBe('CANCELLED');
+
+    await cleanup(order.id, product.id);
+  });
+
+  it('Claim後・送付処理中(PROCESSING)の返金はCollectibleDelivery・WalletClaimItemを強制変更せず注記のみ追加する', async () => {
+    const { order, product, nftIssue, delivery, paymentIntentId } = await createFixture('claim-after-processing', {
+      claimStatus: 'DELIVERY_PENDING',
+      withDelivery: true,
+      deliveryStatus: 'PROCESSING',
+    });
+    const res = await postFullRefund(paymentIntentId, 10000);
+    expect(res.status).toBe(200);
+
+    const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery!.id } });
+    expect(updatedDelivery.status).toBe('PROCESSING');
+    expect(updatedDelivery.lastError).toContain('要手動確認');
+
+    // 送信中の可能性がある行は、送信が成功しDELIVEREDへ至る可能性が残るため
+    // WalletClaimItemもPENDINGのまま(CANCELLEDにしない)。
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
+    expect(claimItem.status).toBe('PENDING');
 
     await cleanup(order.id, product.id);
   });
@@ -215,6 +245,12 @@ describe('charge.refunded: WalletClaim/CollectibleDeliveryの段階別取消(戦
     // このDeliveryへ反映されない(=WalletClaimがREVOCATION_PENDINGのまま滞留するバグ)。
     const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery!.id } });
     expect(updatedDelivery.outboxEventId).toBe(matching!.id);
+
+    // 最終安定化指示書Phase9: 送付済み(DELIVERED)の明細は購入時対象スナップショットとして
+    // 有効だったことに変わりないため、WalletClaimItemはPENDINGのまま(配送状態の正本は
+    // CollectibleDelivery側)。
+    const claimItem = await prisma.walletClaimItem.findUniqueOrThrow({ where: { nftIssueId: nftIssue.id } });
+    expect(claimItem.status).toBe('PENDING');
 
     await cleanup(order.id, product.id);
   });

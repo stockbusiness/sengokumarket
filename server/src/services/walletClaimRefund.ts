@@ -25,7 +25,10 @@ export async function applyWalletClaimRefundEffects(tx: Tx, order: Order): Promi
 
   if (claim.status === 'PENDING' || claim.status === 'ERROR') {
     // Claim前: NftIssue=cancelledは既存のhandleChargeRefunded内の処理(wallet_required/
-    // ready_to_issue → cancelled)で対応済みのため、ここではWalletClaimのみ無効化する。
+    // ready_to_issue → cancelled)で対応済みのため、ここではWalletClaimを無効化する。
+    // 最終安定化指示書Phase9「WalletClaimItem状態整理」: この注文分のWalletClaimItemは
+    // 一件も送付対象になっていない(Confirm未到達)ため、全件CANCELLEDにする。
+    await tx.walletClaimItem.updateMany({ where: { walletClaimId: claim.id, status: 'PENDING' }, data: { status: 'CANCELLED' } });
     await tx.walletClaim.update({ where: { id: claim.id }, data: { status: 'REVOKED', revokedAt: new Date() } });
     return;
   }
@@ -40,6 +43,8 @@ export async function applyWalletClaimRefundEffects(tx: Tx, order: Order): Promi
       if (delivery.status === 'PROCESSING') {
         // 外部Mint API連携のprocessing行と同じ方針: 送信中の可能性がある行は状態を強制変更せず、
         // 注記のみ残して手動確認に委ねる(処理中の外部呼び出しと競合させないため)。
+        // 送信が成功しDELIVEREDへ至る可能性が残るため、対応するWalletClaimItemもここでは
+        // CANCELLEDにしない。
         const note = '返金発生・送付処理中のため要手動確認';
         await tx.collectibleDelivery.update({
           where: { id: delivery.id },
@@ -54,6 +59,11 @@ export async function applyWalletClaimRefundEffects(tx: Tx, order: Order): Promi
         });
       }
       await tx.collectibleDelivery.update({ where: { id: delivery.id }, data: { status: 'REVOKED', revokedAt: new Date() } });
+      // 最終安定化指示書Phase9: 送付されずに取り消された明細はWalletClaimItemもCANCELLEDにする。
+      await tx.walletClaimItem.updateMany({
+        where: { nftIssueId: delivery.nftIssueId, status: 'PENDING' },
+        data: { status: 'CANCELLED' },
+      });
     }
     await tx.walletClaim.update({ where: { id: claim.id }, data: { status: 'REVOKED', revokedAt: new Date() } });
     return;

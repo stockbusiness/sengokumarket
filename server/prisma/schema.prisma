@@ -506,9 +506,10 @@ model WalletClaimItem {
   thumbnailUrl             String?  @map("thumbnail_url")
   imageHash                String?  @map("image_hash")
   rarity                   String?
-  // PENDING(未送付)|DELIVERED|REVOKED。CollectibleDelivery作成前の対象確定用フラグであり、
-  // 実際の送付状況の正はCollectibleDeliveryが持つ(この列は「返金でこの明細をもう対象にしない」
-  // 用途のみに使う)。
+  // 最終安定化指示書Phase9「WalletClaimItem状態整理」: PENDING(購入時対象・有効)|
+  // CANCELLED(返金によりClaim/送付対象から外れた)の2値のみとする。配送状況の正本は
+  // CollectibleDeliveryが持つため、DELIVERED等の配送状態はこの列では表現しない
+  // (この列は「返金でこの明細をもう対象にしない」というConfirm時のスコープ判定にのみ使う)。
   status                   String   @default("PENDING")
   createdAt                DateTime @default(now()) @map("created_at")
   updatedAt                DateTime @updatedAt @map("updated_at")
