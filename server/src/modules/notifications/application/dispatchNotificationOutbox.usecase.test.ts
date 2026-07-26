@@ -45,15 +45,14 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
       payload: { name: user.name },
     });
 
-    sendViaResendOrThrow.mockImplementationOnce(async () => {
-      throw new Error('resend api error');
+    // フルスイート実行時は他テストが積んだpendingイベントがBATCH_LIMIT内に混在しうるため、
+    // 「最初の1回」ではなく「このテストの送信先宛てのみ」失敗させることで、この注文分のイベントの
+    // 挙動だけを厳密に検証する(他の無関係なイベントは正常送信されても構わない)。
+    sendViaResendOrThrow.mockImplementation(async (message: unknown) => {
+      if ((message as { to?: string }).to === user.email) throw new Error('resend api error');
     });
 
-    const result = await dispatchPendingNotifications();
-    expect(result.claimed).toBe(1);
-    expect(result.retrying).toBe(1);
-    expect(result.succeeded).toBe(0);
-    expect(result.dead).toBe(0);
+    await dispatchPendingNotifications();
 
     const updated = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(updated?.status).toBe('pending');
@@ -96,12 +95,13 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     // 既に4回失敗済みの状態を再現する(次の失敗で5回目=上限)。
     await prisma.notificationOutboxEvent.update({ where: { id: event.id }, data: { attemptCount: 4 } });
 
-    sendViaResendOrThrow.mockImplementation(async () => {
-      throw new Error('resend api error');
+    // フルスイート実行時に他テストのpendingイベントが同一バッチに混在しても正常送信できるよう、
+    // このテストの送信先宛てのみ失敗させる。
+    sendViaResendOrThrow.mockImplementation(async (message: unknown) => {
+      if ((message as { to?: string }).to === user.email) throw new Error('resend api error');
     });
 
-    const result = await dispatchPendingNotifications();
-    expect(result.dead).toBe(1);
+    await dispatchPendingNotifications();
 
     const updated = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(updated?.status).toBe('dead');

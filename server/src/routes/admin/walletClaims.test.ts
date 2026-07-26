@@ -5,6 +5,7 @@ import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 import { setSetting } from '../../services/settings';
 import { hashClaimToken } from '../../services/walletClaim';
+import { dispatchPendingNotifications } from '../../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 const sendNotificationOrThrowMock = vi.fn(async (..._args: unknown[]) => {});
 vi.mock('../../modules/notifications/application/sendNotification.usecase', () => ({
@@ -152,8 +153,20 @@ describe('管理API: /admin/wallet-claims(戦国マーケットNFTカード受�
     expect(res.body.queued).toBe(true);
     expect(res.body.sentTo).toBe(order.customerEmail);
     expect(JSON.stringify(res.body)).not.toMatch(/[0-9a-f]{64}/); // 64桁16進の生トークンが含まれない
+
     // Notification Outbox経由でDispatcherが実際にToken発行・送信を行う(即時トリガーで完了する)。
-    expect(sendNotificationOrThrowMock).toHaveBeenCalledTimes(1);
+    // 1回のdispatchPendingNotifications呼び出しはBATCH_LIMIT件までしか処理しないため、
+    // フルスイート実行時は他テストが積んだ古いpendingイベントが先に消化され、この注文向けの
+    // イベントが同じ呼び出し内で処理されないことがある。その場合は成功するまで追加でdispatchする。
+    let event = await prisma.notificationOutboxEvent.findFirstOrThrow({
+      where: { recipient: order.customerEmail, eventType: 'wallet_claim_reissued' },
+    });
+    for (let i = 0; i < 5 && event.status !== 'succeeded'; i++) {
+      await dispatchPendingNotifications();
+      event = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: event.id } });
+    }
+    expect(event.status).toBe('succeeded');
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(expect.objectContaining({ to: order.customerEmail }));
 
     const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
     expect(updatedClaim.tokenHash).not.toBe(claim.tokenHash);

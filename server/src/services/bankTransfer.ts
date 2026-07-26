@@ -1,7 +1,7 @@
 import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { getSetting, setSetting } from './settings';
-import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
+import { applyPaidOrderSideEffects } from './orderFulfillment';
 import { cancelCouponUsage } from './coupon';
 
 // 仕様書外の拡張: 銀行振込(手動確認型)決済。
@@ -56,12 +56,11 @@ export async function confirmBankTransferPayment(orderId: string) {
     return applyPaidOrderSideEffects(tx, updatedOrder);
   });
 
-  await sendPostPaymentEmails(result.order, result.items, result.walletClaimToken);
-  // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
-  // 上記トランザクション内(applyPaidOrderSideEffects)で既に永続化済み。以前はここで
-  // ベストエフォートの即時ディスパッチを試みていたが、管理者の入金確認操作(この関数の
-  // 呼び出し元)が外部API待ちで遅延してしまうため廃止した。処理はCron(またはFeature Flag
-  // 有効時の管理者による明示的な再送)に委ねる。
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.2「銀行振込入金確認がResendを待たない」):
+  // 購入完了・ゲストパスワード設定メールの通知予定(Outbox)は上記トランザクション内
+  // (applyPaidOrderSideEffects)で既に永続化済み。本番安定化指示書Stage1と同じ方針で、管理者の
+  // 入金確認操作(この関数の呼び出し元)がResend呼び出しの遅延に晒されないよう、ベストエフォート
+  // の即時ディスパッチも行わない。実送信は5分Cronに委ねる。
   return result;
 }
 

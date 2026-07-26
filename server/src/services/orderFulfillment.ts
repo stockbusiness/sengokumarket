@@ -1,6 +1,4 @@
-import type { Order, OrderItem, Prisma } from '@prisma/client';
-import { createPasswordResetToken } from './passwordReset';
-import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
+import type { Order, Prisma } from '@prisma/client';
 import { confirmCouponUsage } from './coupon';
 import { getNftChain } from './nftMint';
 import { enqueueEntitlementEvents } from './integrationOutbox';
@@ -8,6 +6,7 @@ import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
 import { isWalletClaimEnabled } from './walletClaimConfig';
 import { getDigitalCollectibleRule, incrementProductSerialCounter } from './digitalCollectible';
 import { createWalletClaimIfEligible } from './walletClaim';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 type Tx = Prisma.TransactionClient;
 
@@ -109,23 +108,21 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
   }
 
   // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)4章: `paymentStatus=paid`確定と
-  // 同一トランザクションでWalletClaimを作成する。生トークンはこの1回しか取得できないため、
-  // 呼び出し元がsendPostPaymentEmailsへ引き渡して受取URLをメールへ含める。
+  // 同一トランザクションでWalletClaimを作成する。生Tokenは通知Outbox実行時に発行する
+  // (purchase_completeイベントのpayloadへは含めない)。
   const walletClaimToken = await createWalletClaimIfEligible(tx, order, orderItems);
 
-  return { order, items: orderItems, walletClaimToken };
-}
-
-// メール送信はトランザクション外で行い、失敗しても決済確定処理自体は失敗させない(仕様書v1.5 7.2 手順8 / 7.6)。
-export async function sendPostPaymentEmails(order: Order, items: OrderItem[], walletClaimToken?: string | null) {
-  try {
-    await sendPurchaseCompleteEmail(order, items, walletClaimToken ?? null);
-
-    if (order.guestAccountCreated && order.userId) {
-      const token = await createPasswordResetToken(order.userId);
-      await sendGuestPasswordSetupEmail(order.customerEmail, order.customerName, token);
-    }
-  } catch (e) {
-    console.error('post-payment email dispatch failed', { orderId: order.id, error: e });
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13章「通知全般のOutbox化」): 購入完了・
+  // ゲストパスワード設定メールは、決済確定と同一トランザクションで通知予定(Outbox)だけを
+  // 作成する。Resend完了は待たず、実送信はcommit後のベストエフォート即時実行またはCronが行う。
+  await enqueueNotification(tx, { eventType: 'purchase_complete', recipient: order.customerEmail, payload: { orderId: order.id } });
+  if (order.guestAccountCreated && order.userId) {
+    await enqueueNotification(tx, {
+      eventType: 'guest_password_setup',
+      recipient: order.customerEmail,
+      payload: { name: order.customerName, userId: order.userId },
+    });
   }
+
+  return { order, items: orderItems, walletClaimToken };
 }

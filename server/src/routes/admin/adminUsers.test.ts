@@ -1,18 +1,14 @@
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { createApp } from '../../app';
 import { prisma } from '../../lib/prisma';
 import { createAdminAgent, TEST_ORIGIN } from '../../test/adminAgent';
 
-const sendAdminAccountSetupEmail = vi.fn(async (..._args: unknown[]) => {});
-
-vi.mock('../../services/mailTemplates', () => ({
-  sendAdminAccountSetupEmail: (...args: unknown[]) => sendAdminAccountSetupEmail(...args),
-  sendAgencyAccountSetupEmail: vi.fn(async () => {}),
-  sendPasswordResetEmail: vi.fn(async () => {}),
-  sendPurchaseCompleteEmail: vi.fn(async () => {}),
-  sendGuestPasswordSetupEmail: vi.fn(async () => {}),
+const sendNotificationOrThrowMock = vi.fn(async (..._args: unknown[]) => {});
+vi.mock('../../modules/notifications/application/sendNotification.usecase', () => ({
+  sendNotification: async (..._args: unknown[]) => {},
+  sendNotificationOrThrow: (...args: unknown[]) => sendNotificationOrThrowMock(...args),
 }));
 
 const app = createApp();
@@ -24,11 +20,16 @@ async function createViewerAgent(name: string) {
   });
   const agent = request.agent(app);
   await agent.post('/api/auth/login').set('Origin', TEST_ORIGIN).send({ email, password: 'viewerpassword1' });
-  return { agent, userId: user.id };
+  return { agent, userId: user.id, email };
 }
 
 describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () => {
+  afterEach(() => {
+    sendNotificationOrThrowMock.mockClear();
+  });
+
   afterAll(async () => {
+    await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: 'admin-users-test' } } });
     await prisma.passwordResetToken.deleteMany({ where: { user: { email: { contains: 'admin-users-test' } } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'admin-users-test' } } });
     await prisma.user.deleteMany({ where: { email: { contains: 'admin-test' } } });
@@ -46,7 +47,14 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
 
     expect(res.status).toBe(201);
     expect(res.body.adminUser.role).toBe('admin_viewer');
-    expect(sendAdminAccountSetupEmail).toHaveBeenCalledWith(email, '閲覧太郎', expect.any(String), '閲覧専用管理者');
+
+    // Wallet Claim本番前安定化指示書Phase11: 管理者操作起点の送信のため即時ディスパッチまで
+    // リクエスト応答内で完了している(admin_account_setupはOutboxを経由しつつも同期的に送信される)。
+    const event = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { recipient: email, eventType: 'admin_account_setup' } });
+    expect(event.status).toBe('succeeded');
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
+      expect.objectContaining({ to: email, text: expect.stringContaining('閲覧専用管理者') }),
+    );
 
     const list = await agent.get('/api/admin/admin-users');
     expect(list.body.adminUsers.some((u: { email: string }) => u.email === email)).toBe(true);
@@ -107,7 +115,12 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
 
     expect(res.status).toBe(201);
     expect(res.body.adminUser.role).toBe('staff');
-    expect(sendAdminAccountSetupEmail).toHaveBeenCalledWith(email, 'スタッフ太郎', expect.any(String), 'スタッフ');
+
+    const event = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { recipient: email, eventType: 'admin_account_setup' } });
+    expect(event.status).toBe('succeeded');
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
+      expect.objectContaining({ to: email, text: expect.stringContaining('スタッフ') }),
+    );
 
     const list = await agent.get('/api/admin/admin-users');
     expect(list.body.adminUsers.some((u: { email: string }) => u.email === email)).toBe(true);
@@ -115,14 +128,19 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
 
   it('パスワード設定メールを再送できる', async () => {
     const { agent } = await createAdminAgent(app);
-    const { userId: viewerUserId } = await createViewerAgent('再送対象太郎');
+    const { userId: viewerUserId, email: viewerEmail } = await createViewerAgent('再送対象太郎');
 
-    sendAdminAccountSetupEmail.mockClear();
+    sendNotificationOrThrowMock.mockClear();
     const res = await agent.post(`/api/admin/admin-users/${viewerUserId}/resend-setup-email`).set('Origin', TEST_ORIGIN).send({});
 
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(sendAdminAccountSetupEmail).toHaveBeenCalledWith(expect.any(String), '再送対象太郎', expect.any(String), '閲覧専用管理者');
+
+    const events = await prisma.notificationOutboxEvent.findMany({ where: { recipient: viewerEmail, eventType: 'admin_account_setup' } });
+    expect(events.some((e) => e.status === 'succeeded')).toBe(true);
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
+      expect.objectContaining({ to: viewerEmail, text: expect.stringContaining('再送対象太郎') }),
+    );
   });
 
   it('存在しないアカウントへの再送は404になる', async () => {

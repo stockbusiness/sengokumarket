@@ -1,13 +1,37 @@
+import type { AdminRole } from '@sengoku/contracts';
 import type { NotificationOutboxEvent } from '@prisma/client';
 import { prisma } from '../../../lib/prisma';
 import { createPasswordResetTokenWithId, invalidatePasswordResetToken } from '../../../services/passwordReset';
+import { getBankTransferConfig, BANK_TRANSFER_EXPIRY_DAYS } from '../../../services/bankTransfer';
 import { sendNotificationOrThrow } from './sendNotification.usecase';
-import { buildAgencyAccessGrantedEmail, buildAgencyAccountSetupEmail } from '../templates/passwordSetup';
+import {
+  ADMIN_ROLE_LABEL,
+  buildAdminAccountSetupEmail,
+  buildAgencyAccessGrantedEmail,
+  buildAgencyAccountSetupEmail,
+  buildGuestPasswordSetupEmail,
+} from '../templates/passwordSetup';
 import { buildWalletClaimReissuedEmail } from '../templates/walletClaimReissued';
+import { buildPurchaseCompleteEmail } from '../templates/purchaseComplete';
+import { buildBankTransferInstructionsEmail } from '../templates/bankTransfer';
+import { buildPasswordResetEmail } from '../templates/passwordReset';
+import { buildCartAbandonedEmail } from '../templates/cartAbandoned';
+import { buildWalletReminderEmail } from '../templates/walletReminder';
 import { reissueWalletClaimToken } from '../../../services/walletClaim';
 import { getWalletClaimWebBaseUrl } from '../../../services/walletClaimConfig';
 import * as repo from '../infrastructure/notificationOutbox.repository';
-import type { AgencyAccessGrantedPayload, AgencyAccountSetupPayload, WalletClaimReissuedPayload } from '../domain/notificationOutbox.types';
+import type {
+  AdminAccountSetupPayload,
+  AgencyAccessGrantedPayload,
+  AgencyAccountSetupPayload,
+  BankTransferInstructionsPayload,
+  CartAbandonedPayload,
+  GuestPasswordSetupPayload,
+  PasswordResetPayload,
+  PurchaseCompletePayload,
+  WalletClaimReissuedPayload,
+  WalletReminderPayload,
+} from '../domain/notificationOutbox.types';
 
 const BATCH_LIMIT = 10;
 
@@ -91,6 +115,76 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!token) throw new Error('wallet claim is not reissuable in its current status');
 
     await sendNotificationOrThrow(buildWalletClaimReissuedEmail(event.recipient, order.customerName, `${base}/claim/${token}`));
+    return;
+  }
+  if (event.eventType === 'purchase_complete') {
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.3「Tokenを含む通知」): 受取Claim
+    // URLの生Tokenはpayloadへ保存せず、wallet_claim_reissuedと同じくDispatcher実行時に発行する
+    // (対象注文にWalletClaimが無い・既にCLAIMED以降で再発行不可の場合はnullが返り、その場合は
+    // Claimリンクを含めないメールとして送信する)。
+    const payload = event.payload as unknown as PurchaseCompletePayload;
+    const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order) throw new Error('order not found for purchase_complete notification');
+    const items = await prisma.orderItem.findMany({ where: { orderId: order.id } });
+    const walletClaimToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id));
+    await sendNotificationOrThrow(await buildPurchaseCompleteEmail(order, items, walletClaimToken));
+    return;
+  }
+  if (event.eventType === 'guest_password_setup') {
+    const payload = event.payload as unknown as GuestPasswordSetupPayload;
+    if (event.passwordResetTokenId) {
+      await invalidatePasswordResetToken(event.passwordResetTokenId);
+    }
+    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
+    await sendNotificationOrThrow(buildGuestPasswordSetupEmail(event.recipient, payload.name, token));
+    return;
+  }
+  if (event.eventType === 'bank_transfer_instructions') {
+    const payload = event.payload as unknown as BankTransferInstructionsPayload;
+    const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order) throw new Error('order not found for bank_transfer_instructions notification');
+    const items = await prisma.orderItem.findMany({ where: { orderId: order.id } });
+    const config = await getBankTransferConfig();
+    await sendNotificationOrThrow(buildBankTransferInstructionsEmail(order, items, config.info, BANK_TRANSFER_EXPIRY_DAYS));
+    return;
+  }
+  if (event.eventType === 'password_reset') {
+    const payload = event.payload as unknown as PasswordResetPayload;
+    if (event.passwordResetTokenId) {
+      await invalidatePasswordResetToken(event.passwordResetTokenId);
+    }
+    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
+    await sendNotificationOrThrow(buildPasswordResetEmail(event.recipient, payload.name, token));
+    return;
+  }
+  if (event.eventType === 'cart_abandoned') {
+    const payload = event.payload as unknown as CartAbandonedPayload;
+    const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order) throw new Error('order not found for cart_abandoned notification');
+    const items = await prisma.orderItem.findMany({ where: { orderId: order.id }, include: { product: true } });
+    await sendNotificationOrThrow(buildCartAbandonedEmail(order, items, items[0]?.product.slug ?? null));
+    return;
+  }
+  if (event.eventType === 'admin_account_setup') {
+    const payload = event.payload as unknown as AdminAccountSetupPayload;
+    if (event.passwordResetTokenId) {
+      await invalidatePasswordResetToken(event.passwordResetTokenId);
+    }
+    const { token, tokenId } = await createPasswordResetTokenWithId(payload.userId);
+    await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
+    const roleLabel = ADMIN_ROLE_LABEL[payload.role as AdminRole] ?? payload.role;
+    await sendNotificationOrThrow(buildAdminAccountSetupEmail(event.recipient, payload.name, token, roleLabel));
+    return;
+  }
+  if (event.eventType === 'wallet_reminder') {
+    const payload = event.payload as unknown as WalletReminderPayload;
+    const nftIssue = await prisma.nftIssue.findUnique({ where: { id: payload.nftIssueId }, include: { order: true } });
+    if (!nftIssue) throw new Error('nft issue not found for wallet_reminder notification');
+    await sendNotificationOrThrow(
+      buildWalletReminderEmail(event.recipient, nftIssue.order.customerName, nftIssue.order.orderNumber),
+    );
     return;
   }
   throw new Error(`unknown notification eventType: ${event.eventType}`);

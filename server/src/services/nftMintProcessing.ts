@@ -167,7 +167,7 @@ async function applyMintStatus(issueId: string, status: MintStatusResult, result
 
 // 決済確定直後にベストエフォートで即時実行するためのラッパー(仕様書外の拡張)。
 // Vercelのcronは日次のみを前提とするため、これを併用することで購入者を長時間待たせない。
-// sendPostPaymentEmailsと同様、例外は握りつぶし決済確定処理自体には影響させない。
+// triggerImmediateNotificationDispatchと同様、例外は握りつぶし決済確定処理自体には影響させない。
 export async function triggerImmediateNftMintProcessing(): Promise<void> {
   try {
     await processNftMints();
