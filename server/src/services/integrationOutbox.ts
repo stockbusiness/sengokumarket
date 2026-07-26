@@ -110,8 +110,20 @@ export async function enqueueEntitlementEvents(
   orderItems: OrderItem[],
   eventType: 'entitlement.granted' | 'entitlement.revoked',
 ): Promise<void> {
+  // 最終安定化指示書Phase10「Checkout性能改善」: order item単位で1件ずつルールを取得すると
+  // N+1になるため、対象productId分を1クエリでまとめて取得し、productIdごとにグループ化する。
+  const allRules = await tx.productIntegrationRule.findMany({
+    where: { productId: { in: [...new Set(orderItems.map((item) => item.productId))] } },
+  });
+  const rulesByProductId = new Map<string, typeof allRules>();
+  for (const rule of allRules) {
+    const list = rulesByProductId.get(rule.productId) ?? [];
+    list.push(rule);
+    rulesByProductId.set(rule.productId, list);
+  }
+
   for (const item of orderItems) {
-    const rules = await tx.productIntegrationRule.findMany({ where: { productId: item.productId } });
+    const rules = rulesByProductId.get(item.productId) ?? [];
     for (const rule of rules) {
       if (!rule.enabled) continue;
       if (!rule.entitlementTargetSystemKey) continue;

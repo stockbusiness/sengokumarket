@@ -3,7 +3,7 @@ import type { Order, OrderItem, Prisma, PrismaClient, WalletClaim } from '@prism
 import { isWalletClaimEnabled } from './walletClaimConfig';
 import { deriveDeterministicToken } from './notificationTokenDerivation';
 import {
-  getDigitalCollectibleRule,
+  getDigitalCollectibleRulesByProductIds,
   buildCollectibleSnapshot,
   DIGITAL_COLLECTIBLE_DESTINATION,
   DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
@@ -43,16 +43,31 @@ export async function createWalletClaimIfEligible(
   const nftItems = orderItems.filter((item) => item.itemType === 'nft');
   if (nftItems.length === 0) return null;
 
+  // 最終安定化指示書Phase10「Checkout性能改善」: order item単位でProductIntegrationRule・
+  // Product・NftIssueを1件ずつ取得するとN+1になるため、対象分をまとめて1クエリずつ取得する。
+  const productIds = nftItems.map((item) => item.productId);
+  const rulesByProductId = await getDigitalCollectibleRulesByProductIds(tx, productIds);
+  const products = await tx.product.findMany({ where: { id: { in: [...new Set(productIds)] } } });
+  const productById = new Map(products.map((p) => [p.id, p]));
+  const nftIssues = await tx.nftIssue.findMany({
+    where: { orderItemId: { in: nftItems.map((item) => item.id) } },
+  });
+  const nftIssuesByOrderItemId = new Map<string, typeof nftIssues>();
+  for (const nftIssue of nftIssues) {
+    const list = nftIssuesByOrderItemId.get(nftIssue.orderItemId) ?? [];
+    list.push(nftIssue);
+    nftIssuesByOrderItemId.set(nftIssue.orderItemId, list);
+  }
+
   const itemRows: Prisma.WalletClaimItemCreateManyInput[] = [];
   for (const item of nftItems) {
-    const rule = await getDigitalCollectibleRule(tx, item.productId);
+    const rule = rulesByProductId.get(item.productId);
     if (!rule) continue;
-    const product = await tx.product.findUnique({ where: { id: item.productId } });
+    const product = productById.get(item.productId);
     if (!product) continue;
 
     const snapshot = buildCollectibleSnapshot(rule, product);
-    const nftIssues = await tx.nftIssue.findMany({ where: { orderItemId: item.id } });
-    for (const nftIssue of nftIssues) {
+    for (const nftIssue of nftIssuesByOrderItemId.get(item.id) ?? []) {
       itemRows.push({
         walletClaimId: '', // 後でWalletClaim作成後に埋める
         nftIssueId: nftIssue.id,

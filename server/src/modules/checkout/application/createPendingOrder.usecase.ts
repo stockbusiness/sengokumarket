@@ -1,3 +1,5 @@
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { prisma } from '../../../lib/prisma';
 import { HttpError } from '../../../lib/httpError';
 import { appConfig } from '../../../shared/config/appConfig';
@@ -12,24 +14,49 @@ import { enqueueCommonUserResolveJob, enqueueReferralCaptureJob } from '../../..
 import { assertStockAvailable } from '../domain/stockAvailability.policy';
 import { assertAgentRequiredSatisfied } from '../domain/salesModel.policy';
 import { calculateOriginalAmount } from '../domain/orderPricing.service';
+import { logCheckoutMetrics } from '../../../services/checkoutMetrics';
 import type { CreatePendingOrderInput, CreatePendingOrderResult } from '../domain/checkout.types';
 
 // 指示書9.4「トランザクション境界」: このUseCaseの外側(このファイル内)で単一のPrismaトランザクションを
 // 維持し、内部で呼び出す各repository/adapterは独自にトランザクションを開始しない。
+//
+// 最終安定化指示書Phase10「Checkout性能改善」: 工程別の所要時間・DB操作回数を計測し、
+// checkoutMetrics.tsを通じてログへ出力する(負荷テスト時のボトルネック特定用)。
 export async function createPendingOrder(input: CreatePendingOrderInput): Promise<CreatePendingOrderResult> {
+  const validationStartedAt = Date.now();
   const termsVersion = appConfig.termsVersion;
   if (!termsVersion) throw new HttpError(500, 'CONFIG_ERROR', 'TERMS_VERSIONが設定されていません');
 
   // ロック順序を揃えてデッドロックを防ぐ
   const sortedVariantIds = [...new Set(input.items.map((i) => i.variantId))].sort();
 
-  return prisma.$transaction(async (tx) => {
+  // 最終安定化指示書Phase10「必須対応: bcrypt hashをPrisma transaction開始前に生成」: bcrypt
+  // (cost=10)は数十〜百ms程度かかりうる重い同期的CPU処理のため、行ロックを保持する
+  // トランザクション開始前に計算しておく(既存アカウントの場合はこの値は使われず破棄される)。
+  const guestPasswordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+  const validationMs = Date.now() - validationStartedAt;
+
+  let queryCount = 0;
+  const transactionStartedAt = Date.now();
+  let lockMs = 0;
+  let purchaserMs = 0;
+  let pricingMs = 0;
+  let orderWriteMs = 0;
+  let sideEffectsMs = 0;
+
+  const result = await prisma.$transaction(async (tx) => {
+    let stepStartedAt = Date.now();
     const rowByVariantId = await checkoutItemRepo.lockVariantsForCheckout(tx, sortedVariantIds);
+    queryCount += 1;
 
     assertStockAvailable(input.items, rowByVariantId);
     await checkoutItemRepo.reserveStock(tx, input.items);
+    queryCount += input.items.length;
+    lockMs = Date.now() - stepStartedAt;
 
-    const purchaserResolution = await purchaserRepo.resolveOrCreatePurchaser(tx, input);
+    stepStartedAt = Date.now();
+    const purchaserResolution = await purchaserRepo.resolveOrCreatePurchaser(tx, input, guestPasswordHash);
+    queryCount += 1;
     let user = purchaserResolution.user;
     const guestAccountCreated = purchaserResolution.guestAccountCreated;
 
@@ -42,8 +69,10 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         referralLinkId: user.referredByReferralLinkId,
         code: user.referredByCode,
       });
+      queryCount += 1;
     } else {
       referral = await resolveReferral(tx, input.referralCode);
+      queryCount += 1;
       if (referral.agencyId || referral.influencerId || referral.referralLinkId) {
         user = await purchaserRepo.attachReferralAttribution(tx, user.id, {
           agencyId: referral.agencyId,
@@ -51,18 +80,25 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
           referralLinkId: referral.referralLinkId,
           referralCode: referral.referralCode,
         });
+        queryCount += 1;
       }
     }
+    purchaserMs = Date.now() - stepStartedAt;
 
+    stepStartedAt = Date.now();
     assertAgentRequiredSatisfied(input.items, rowByVariantId, referral);
 
     const orderNumber = await generateOrderNumber(tx);
+    queryCount += 1;
     const originalAmount = calculateOriginalAmount(input.items, rowByVariantId);
 
     // 仕様書外の拡張: 紹介コードの持ち主とは別に、購入者に商品を説明した担当者名を記録する
     // (報酬計算には使わない。名簿と一致すればIDも記録、一致しなくても購入は継続する)。
     const explainerMatch = await matchExplainerName(tx, input.explainerName);
+    queryCount += 1;
+    pricingMs = Date.now() - stepStartedAt;
 
+    stepStartedAt = Date.now();
     let order = await orderWriter.createOrder(tx, {
       orderNumber,
       userId: user.id,
@@ -88,6 +124,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       termsVersion,
       guestAccountCreated,
     });
+    queryCount += 1;
 
     const items = await orderWriter.createOrderItems(
       tx,
@@ -105,6 +142,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
         };
       }),
     );
+    queryCount += 1;
 
     // 仕様書外の拡張(クーポン機能): 手入力クーポンが指定されていればそれを優先し、
     // なければ紹介リンクに設定された自動適用クーポンを使う。
@@ -124,6 +162,7 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
       // 手入力クーポンの検証失敗は購入者に見えるエラーとして中断する。自動適用クーポンの
       // 検証失敗(運用上の設定不備等)は購入自体を止めず、通常価格で購入を継続させる。
       const pricing = isManualCoupon ? await reserve() : await reserve().catch(() => null);
+      queryCount += 1;
 
       if (pricing) {
         order = await orderWriter.applyCouponPricing(tx, order.id, {
@@ -132,19 +171,38 @@ export async function createPendingOrder(input: CreatePendingOrderInput): Promis
           couponId: pricing.coupon.id,
           couponCode: pricing.coupon.code,
         });
+        queryCount += 1;
       }
     }
+    orderWriteMs = Date.now() - stepStartedAt;
 
+    stepStartedAt = Date.now();
     // 仕様書外の拡張(千ノ国全体連携・残課題指示書Stage4): common_user_id解決・referral captureは
     // 外部HTTP呼び出しを伴うため、注文作成トランザクション内では永続ジョブとして記録するのみに
     // とどめる(Serverlessのレスポンス完了後に処理が打ち切られてもジョブを失わないため)。
     // 実際の送信はcommit後にDispatcherがベストエフォートで行う。referral confirmは
     // 決済確定タイミングで別途enqueueする(Stage5)。
     await enqueueCommonUserResolveJob(tx, { userId: user.id, orderId: order.id });
+    queryCount += 1;
     if (order.referralCode) {
       await enqueueReferralCaptureJob(tx, order.id);
+      queryCount += 1;
     }
+    sideEffectsMs = Date.now() - stepStartedAt;
 
     return { order, items };
   });
+
+  logCheckoutMetrics({
+    validationMs,
+    lockMs,
+    purchaserMs,
+    pricingMs,
+    orderWriteMs,
+    sideEffectsMs,
+    totalTransactionMs: Date.now() - transactionStartedAt,
+    queryCount,
+  });
+
+  return result;
 }

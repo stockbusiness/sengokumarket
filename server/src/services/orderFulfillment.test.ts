@@ -87,6 +87,26 @@ describe('orderFulfillment: applyPaidOrderSideEffects (digital_collectible: seri
     await cleanup(order.id, product.id);
   });
 
+  // 最終安定化指示書Phase10「Checkout性能改善」: quantity分を1件ずつUPDATE...RETURNINGしていたのを
+  // 商品ごとに1回のUPDATEでまとめて確保する方式へ変更したため、大きいquantity(負荷テスト想定値の
+  // 10)でも連番が1から連続で重複なく払い出されることを確認する。
+  it('quantity=10のdigital_collectible対象商品は、10件のNftIssueに1〜10の連続したserialNumberが重複なく払い出される', async () => {
+    const product = await createDigitalCollectibleProduct('qty10');
+    const { order, orderItem } = await createOrderWithItem(product.id, 'qty10', 10);
+
+    const result = await prisma.$transaction((tx) => applyPaidOrderSideEffects(tx, order));
+    expect(result.walletClaimToken).not.toBeNull();
+
+    const nftIssues = await prisma.nftIssue.findMany({ where: { orderItemId: orderItem.id }, orderBy: { serialNumber: 'asc' } });
+    expect(nftIssues).toHaveLength(10);
+    expect(nftIssues.map((n) => n.serialNumber)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+    const walletClaimItems = await prisma.walletClaimItem.findMany({ where: { walletClaim: { orderId: order.id } } });
+    expect(walletClaimItems).toHaveLength(10);
+
+    await cleanup(order.id, product.id);
+  });
+
   it('digital_collectible対象外のNFT商品はserialNumberがnullのまま(既存挙動を変えない)・WalletClaimも作成しない', async () => {
     const product = await prisma.product.create({
       data: {

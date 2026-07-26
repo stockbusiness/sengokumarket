@@ -4,7 +4,7 @@ import { getNftChain } from './nftMint';
 import { enqueueEntitlementEvents } from './integrationOutbox';
 import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
 import { isWalletClaimEnabled } from './walletClaimConfig';
-import { getDigitalCollectibleRule, incrementProductSerialCounter } from './digitalCollectible';
+import { getDigitalCollectibleRulesByProductIds, reserveProductSerialNumbers } from './digitalCollectible';
 import { createWalletClaimIfEligible } from './walletClaim';
 import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
@@ -23,15 +23,29 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
   // 仕様書外の拡張: 署名検証(verified)を通過したウォレットのみready_to_issueへ即時遷移する。
   const hasVerifiedWallet = Boolean(wallet?.verified);
 
+  // 最終安定化指示書Phase10「Checkout性能改善」: 商品ごとにdigital_collectibleルールを
+  // 1件ずつ取得するとorder item数分のN+1になるため、対象productId分を1クエリでまとめて取得する。
+  const rulesByProductId = isWalletClaimEnabled()
+    ? await getDigitalCollectibleRulesByProductIds(
+        tx,
+        orderItems.map((item) => item.productId),
+      )
+    : new Map();
+
+  const rows: Prisma.NftIssueCreateManyInput[] = [];
   for (const item of orderItems) {
     // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: digital_collectible対象の
     // 商品のみ、マーケット側で不変のシリアル番号を発番する(既存の他NFT商品はnullのまま。
     // 引き続きnftMintProcessing.tsが従来通りベストエフォートで別途採番する)。
-    const digitalCollectibleRule = isWalletClaimEnabled() ? await getDigitalCollectibleRule(tx, item.productId) : null;
+    const digitalCollectibleRule = rulesByProductId.get(item.productId) ?? null;
 
-    const rows: Prisma.NftIssueCreateManyInput[] = [];
+    // 最終安定化指示書Phase10: quantity分だけ1件ずつUPDATE...RETURNINGするとNFT quantityに
+    // 比例したN+1になるため、対象商品につき1回のUPDATEでquantity分の連番をまとめて確保する。
+    const serialNumbers = digitalCollectibleRule
+      ? await reserveProductSerialNumbers(tx, item.productId, item.quantity)
+      : null;
+
     for (let i = 0; i < item.quantity; i += 1) {
-      const serialNumber = digitalCollectibleRule ? await incrementProductSerialCounter(tx, item.productId) : null;
       // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
       // digital_collectible対象商品は、検証済みウォレットを持つ購入者でもready_to_issueへ
       // 自動遷移させない(MVPでは自動Mintしない方針)。カード送付はWalletClaim/
@@ -47,11 +61,11 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
         walletAddress: readyToIssue ? wallet!.walletAddress : null,
         // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
         chain: getNftChain(),
-        serialNumber,
+        serialNumber: serialNumbers ? serialNumbers[i] : null,
       });
     }
-    await tx.nftIssue.createMany({ data: rows });
   }
+  await tx.nftIssue.createMany({ data: rows });
 }
 
 // referral_link_idがある注文のみcommissionsを作成する。0円はstatus=cancelledで作成(追跡用)。仕様書v1.5 6.14
