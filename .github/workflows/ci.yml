@@ -2,11 +2,7 @@ name: CI
 
 on:
   push:
-    # 本番安定化指示書Stage12(15.2): mainブランチを作成済みだが、GitHub既定ブランチ・
-    # Vercel Production Branch・branch protectionの切り替えは実際の管理者権限操作を伴うため、
-    # 移行が完了するまでの間はclaude/confirmation-needed-3wicju側のpushでもCIを実行し続ける
-    # (切り替え完了後、このブランチ名は削除してよい)。
-    branches: [main, claude/confirmation-needed-3wicju]
+    branches: [main]
   pull_request:
 
 jobs:
