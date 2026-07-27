@@ -1,13 +1,16 @@
 import crypto from 'crypto';
 
-// 千ノ国全体連携 共通インターフェース契約 v1.1 DRAFT 7章準拠(2026-07-22)。
-// 契約書7.1で「区切り文字、改行、pathのquery含有、bodyの文字コード、末尾改行、hex/base64形式は
-// 全システム共通テストベクトルで確定する」と明記されている未確定事項であり、この実装は統合責任者が
-// 確定させる正式テストベクトルに合格するまでの暫定案にすぎない。SENNOKUNI_INTEGRATION_ENABLED
-// (既定OFF)が有効化されない限り実送信されないため、契約確定前でも安全に着手できる。
-// 署名対象の組み立てをこのファイル1箇所に閉じ込めているのは、正式テストベクトル確定後の
-// 修正範囲を最小化するため。
-
+// 千ノ国 共通仕様確定パッケージv1.1(SEN_NO_KUNI_STEP1_COMMON_SPEC_PACKAGE_V1_1、
+// 01_COMMON_INTERFACE_CONTRACT_V1_1_FINAL.md 9章)で正式に確定した、全システム共通の
+// canonical string・固定HMACテストベクトル(02_HMAC_SIGNATURE_TEST_VECTOR_V1.md)に準拠する。
+//
+// canonical string(6行、末尾改行なし):
+//   key_id + "\n" + timestamp + "\n" + nonce + "\n" + uppercase(method) + "\n" +
+//   path_without_query + "\n" + raw_body
+//
+// Idempotency-KeyはHTTPヘッダーとしては送信するが、署名対象(canonical string)には含めない
+// (旧実装は署名対象の7行目にidempotencyKeyを含めていたため、固定テストベクトルの期待値と
+// 一致しなかった。千ノ国 Step1共通仕様採用確認で判明し修正した)。
 export interface SennokuniSigningInput {
   keyId: string;
   timestamp: string;
@@ -15,21 +18,12 @@ export interface SennokuniSigningInput {
   method: string;
   path: string;
   rawBody: string;
-  // 本番安定化指示書Stage5(8.2): Idempotency-Keyは送信ヘッダーだけでなく署名対象にも含める
-  // (途中の改ざんでIdempotency-Keyだけ差し替えられても検知できるようにするため)。
+  // 署名対象には含めない(Idempotency-Keyヘッダーの値としてのみ使う)。
   idempotencyKey?: string;
 }
 
 export function buildSennokuniSigningString(input: SennokuniSigningInput): string {
-  return [
-    input.keyId,
-    input.timestamp,
-    input.nonce,
-    input.method.toUpperCase(),
-    input.path,
-    input.rawBody,
-    input.idempotencyKey ?? '',
-  ].join('\n');
+  return [input.keyId, input.timestamp, input.nonce, input.method.toUpperCase(), input.path, input.rawBody].join('\n');
 }
 
 export function signSennokuniRequest(input: SennokuniSigningInput & { secret: string }): string {

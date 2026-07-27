@@ -8,8 +8,8 @@ import { appConfig } from '../shared/config/appConfig';
 import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../lib/validation';
 import { generateOrderNumber } from './orderNumber';
 import { createNftIssuesForOrder, createCommissionForOrder } from './orderFulfillment';
-import { createPasswordResetToken } from './passwordReset';
-import { sendGuestPasswordSetupEmail } from './mailTemplates';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 type Tx = Prisma.TransactionClient;
 
@@ -141,6 +141,16 @@ async function importOne(tx: Tx, input: ExternalOrderInput, dryRun: boolean): Pr
   await createNftIssuesForOrder(tx, order.id, user.id);
   await createCommissionForOrder(tx, order);
 
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11: ゲストパスワード設定メールは、
+  // 注文取り込みと同一トランザクションで通知予定(Outbox)だけを作成する。
+  if (guestAccountCreated) {
+    await enqueueNotification(tx, {
+      eventType: 'guest_password_setup',
+      recipient: order.customerEmail,
+      payload: { name: order.customerName, userId: user.id },
+    });
+  }
+
   return { order, guestAccountCreated };
 }
 
@@ -151,12 +161,7 @@ export async function createExternalOrder(input: ExternalOrderInput): Promise<Or
   const order = result.order!;
 
   if (result.guestAccountCreated) {
-    try {
-      const token = await createPasswordResetToken(order.userId!);
-      await sendGuestPasswordSetupEmail(order.customerEmail, order.customerName, token);
-    } catch (e) {
-      console.error('guest password setup email dispatch failed', { orderId: order.id, error: e });
-    }
+    await triggerImmediateNotificationDispatch();
   }
 
   // 本番安定化指示書Stage1: NFT発行行(nft_issues)はimportOne内で既に作成済み。以前は
@@ -296,14 +301,11 @@ export async function importExternalOrdersFromCsv(content: string, dryRun: boole
   }
 
   if (!dryRun && createdOrders.length > 0) {
-    for (const order of createdOrders) {
-      if (!order.guestAccountCreated || !order.userId) continue;
-      try {
-        const token = await createPasswordResetToken(order.userId);
-        await sendGuestPasswordSetupEmail(order.customerEmail, order.customerName, token);
-      } catch (e) {
-        console.error('guest password setup email dispatch failed', { orderId: order.id, error: e });
-      }
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase11: ゲストパスワード設定メールの通知予定は
+    // importOne内(各行のトランザクション)で既に作成済み。ここではベストエフォートの即時実行を
+    // 1回だけ試みる(取りこぼしはCronが拾う)。
+    if (createdOrders.some((order) => order.guestAccountCreated)) {
+      await triggerImmediateNotificationDispatch();
     }
     // 本番安定化指示書Stage1: NFT発行行は各注文の取り込み処理内で既に作成済み。以前は
     // ここでベストエフォートの即時Mint実行を試みていたが、CSV一括取り込みという1回の

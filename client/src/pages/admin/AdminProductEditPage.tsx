@@ -37,6 +37,8 @@ const EMPTY_RULE_FORM: IntegrationRuleRequest = {
   requireSalesAgentId: false,
   requireClosingAgentId: false,
   requireReferralSessionKey: false,
+  assetCode: '',
+  collectibleRarity: '',
 };
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
@@ -216,6 +218,8 @@ export default function AdminProductEditPage() {
       productCode: input.productCode?.trim() || null,
       rewardRuleId: input.rewardRuleId?.trim() || null,
       rewardCalculationMode: input.rewardCalculationMode?.trim() || null,
+      assetCode: input.assetCode?.trim() || null,
+      collectibleRarity: input.collectibleRarity?.trim() || null,
     };
   }
 
@@ -488,7 +492,7 @@ export default function AdminProductEditPage() {
               {rule.entitlementType ? ` / ${rule.entitlementType}` : ''}
               {!rule.enabled && <span className="status-badge status-badge--muted">無効</span>}
             </span>
-            {rule.entitlementTargetSystemKey === 'ove-wallet' && (
+            {rule.entitlementTargetSystemKey === 'ove-wallet' && rule.entitlementType !== 'digital_collectible' && (
               <>
                 <label className="admin-variant-row__price">
                   1個当たりポイント
@@ -515,6 +519,40 @@ export default function AdminProductEditPage() {
                       </option>
                     ))}
                   </select>
+                </label>
+              </>
+            )}
+            {rule.entitlementType === 'digital_collectible' && (
+              <>
+                <label className="admin-variant-row__price">
+                  asset code(必須)
+                  <input
+                    type="text"
+                    defaultValue={rule.assetCode ?? ''}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim() || null;
+                      if (next !== rule.assetCode) handleUpdateRule(rule, { assetCode: next });
+                    }}
+                  />
+                </label>
+                <label className="admin-variant-row__stock">
+                  レアリティ
+                  <input
+                    type="text"
+                    defaultValue={rule.collectibleRarity ?? ''}
+                    onBlur={(e) => {
+                      const next = e.target.value.trim() || null;
+                      if (next !== rule.collectibleRarity) handleUpdateRule(rule, { collectibleRarity: next });
+                    }}
+                  />
+                </label>
+                <label>
+                  common_user_id必須
+                  <input
+                    type="checkbox"
+                    checked={rule.requireCommonUserId}
+                    onChange={(e) => handleUpdateRule(rule, { requireCommonUserId: e.target.checked })}
+                  />
                 </label>
               </>
             )}
@@ -568,7 +606,7 @@ export default function AdminProductEditPage() {
               onChange={(e) => setNewRule((prev) => ({ ...prev, productCode: e.target.value }))}
             />
           </label>
-          {newRule.entitlementTargetSystemKey === 'ove-wallet' && (
+          {newRule.entitlementTargetSystemKey === 'ove-wallet' && newRule.entitlementType !== 'digital_collectible' && (
             <>
               <label className="admin-variant-row__price">
                 1個当たりポイント
@@ -599,6 +637,34 @@ export default function AdminProductEditPage() {
                   type="text"
                   value={newRule.rewardRuleId ?? ''}
                   onChange={(e) => setNewRule((prev) => ({ ...prev, rewardRuleId: e.target.value }))}
+                />
+              </label>
+            </>
+          )}
+          {newRule.entitlementType === 'digital_collectible' && (
+            <>
+              <label className="admin-variant-row__price">
+                asset code(必須)
+                <input
+                  type="text"
+                  value={newRule.assetCode ?? ''}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, assetCode: e.target.value }))}
+                />
+              </label>
+              <label className="admin-variant-row__stock">
+                レアリティ
+                <input
+                  type="text"
+                  value={newRule.collectibleRarity ?? ''}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, collectibleRarity: e.target.value }))}
+                />
+              </label>
+              <label>
+                common_user_id必須
+                <input
+                  type="checkbox"
+                  checked={newRule.requireCommonUserId ?? false}
+                  onChange={(e) => setNewRule((prev) => ({ ...prev, requireCommonUserId: e.target.checked }))}
                 />
               </label>
             </>

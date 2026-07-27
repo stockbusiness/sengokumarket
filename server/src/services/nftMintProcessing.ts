@@ -2,6 +2,7 @@ import type { NftIssue } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { getMintProvider, type MintProvider, type MintStatusResult } from './nftMint';
 import { buildNftMetadata, uploadNftMetadata } from './nftMetadata';
+import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 const BATCH_LIMIT = 50;
 const MAX_ATTEMPTS = 5;
@@ -44,8 +45,23 @@ export async function processNftMints(): Promise<ProcessNftMintsResult> {
   }
 
   // 2) 新規claim対象(nextAttemptAtが過去/未設定のready_to_issue行)。
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
+  // digital_collectible対象商品はready_to_issueへ遷移しない設計だが(orderFulfillment.ts・
+  // walletVerification.ts)、二重の安全策としてここでも明示的に除外する。
   const readyRows = await prisma.nftIssue.findMany({
-    where: { status: 'ready_to_issue', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
+    where: {
+      status: 'ready_to_issue',
+      OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
+      product: {
+        integrationRules: {
+          none: {
+            enabled: true,
+            entitlementTargetSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+            entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+          },
+        },
+      },
+    },
     take: BATCH_LIMIT,
   });
 
@@ -151,7 +167,7 @@ async function applyMintStatus(issueId: string, status: MintStatusResult, result
 
 // 決済確定直後にベストエフォートで即時実行するためのラッパー(仕様書外の拡張)。
 // Vercelのcronは日次のみを前提とするため、これを併用することで購入者を長時間待たせない。
-// sendPostPaymentEmailsと同様、例外は握りつぶし決済確定処理自体には影響させない。
+// triggerImmediateNotificationDispatchと同様、例外は握りつぶし決済確定処理自体には影響させない。
 export async function triggerImmediateNftMintProcessing(): Promise<void> {
   try {
     await processNftMints();

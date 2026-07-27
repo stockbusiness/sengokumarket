@@ -1,10 +1,11 @@
 import type Stripe from 'stripe';
 import { prisma } from '../lib/prisma';
 import { findOrderForEvent } from './orderLookup';
-import { applyPaidOrderSideEffects, sendPostPaymentEmails } from './orderFulfillment';
-import { sendCartAbandonedEmail } from './mailTemplates';
+import { applyPaidOrderSideEffects } from './orderFulfillment';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { enqueueEntitlementEvents } from './integrationOutbox';
+import { applyWalletClaimRefundEffects } from './walletClaimRefund';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 function eventTime(event: Stripe.Event): Date {
   return new Date(event.created * 1000);
@@ -45,15 +46,13 @@ export async function handleCheckoutSessionCompleted(event: Stripe.Event) {
 
   if (!result) return;
 
-  // stripe_events登録済みのため、ここで例外を投げるとWebhookが二重処理されずリトライされなくなってしまう
-  // (sendPostPaymentEmails内部で例外は握りつぶし済み)。
-  await sendPostPaymentEmails(result.order, result.items);
-
-  // 本番安定化指示書Stage1: NFT発行・order_linking_jobs・integration_outbox_eventsは
-  // 上記トランザクション内で既に永続化済み。以前はここでベストエフォートの即時ディスパッチを
-  // 試みていたが、外部Mint API・代理店API・OVE等の遅延がStripe Webhookの応答自体を
-  // 遅延させてしまう(Stripeのリトライ・タイムアウトを誘発しうる)ため廃止した。処理はCron
-  // (またはFeature Flag有効時の管理者による明示的な再送)に委ねる。
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.2「Stripe WebhookがResendを待たない」):
+  // 購入完了・ゲストパスワード設定メールの通知予定(Outbox)は上記トランザクション内
+  // (applyPaidOrderSideEffects)で既に永続化済み。本番安定化指示書Stage1と同じ方針(NFT発行・
+  // order_linking_jobs・integration_outbox_events)で、ここではベストエフォートの即時
+  // ディスパッチも行わない(実送信=Resend呼び出しがStripe Webhookの応答自体を遅延させ、
+  // Stripe側のリトライ・タイムアウトを誘発しうるため)。実送信は5分Cron
+  // (process-notification-outbox)に委ねる。
 }
 
 export async function handleCheckoutSessionExpired(event: Stripe.Event) {
@@ -89,17 +88,21 @@ export async function handleCheckoutSessionExpired(event: Stripe.Event) {
 
     await cancelCouponUsage(tx, order.id, 'expired');
 
+    // Wallet Claim本番前安定化指示書(2026-07-25)Phase11: カート放棄リマインドメールは注文の
+    // 失効と同一トランザクションで通知予定(Outbox)だけを作成する。Resend完了は待たない。
+    await enqueueNotification(tx, {
+      eventType: 'cart_abandoned',
+      recipient: updatedOrder.customerEmail,
+      payload: { orderId: updatedOrder.id },
+    });
+
     return { order: updatedOrder, items: orderItems };
   });
 
   if (!result) return;
 
-  // カート放棄リマインドメール。決済処理自体には影響させないためトランザクション外・例外握りつぶし(仕様書v1.5 7.6と同様の方針)。
-  try {
-    await sendCartAbandonedEmail(result.order, result.items, result.items[0]?.product.slug ?? null);
-  } catch (e) {
-    console.error('cart-abandoned email dispatch failed', { orderId: result.order.id, error: e });
-  }
+  // Phase11(13.2「Stripe WebhookがResendを待たない」): 上記と同じ理由でベストエフォート即時
+  // ディスパッチも行わない。実送信は5分Cronに委ねる。
 }
 
 export async function handlePaymentIntentFailed(event: Stripe.Event) {
@@ -179,6 +182,10 @@ export async function handleChargeRefunded(event: Stripe.Event) {
     const refundedOrder = await tx.order.findUniqueOrThrow({ where: { id: order.id } });
     const orderItems = await tx.orderItem.findMany({ where: { orderId: order.id } });
     await enqueueEntitlementEvents(tx, refundedOrder, orderItems, 'entitlement.revoked');
+
+    // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)16章: WalletClaim/
+    // CollectibleDeliveryの進行段階に応じた取消処理(この注文にWalletClaimがなければno-op)。
+    await applyWalletClaimRefundEffects(tx, refundedOrder);
 
     const commission = await tx.commission.findUnique({ where: { orderId: order.id } });
     if (commission) {

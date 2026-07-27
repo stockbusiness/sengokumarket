@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { afterAll, describe, expect, it } from 'vitest';
 import { prisma } from '../lib/prisma';
-import { enqueueEntitlementEvents, enqueueOutboxEvent } from './integrationOutbox';
+import { enqueueDigitalCollectibleEvent, enqueueEntitlementEvents, enqueueOutboxEvent } from './integrationOutbox';
 
 async function createTestProduct(name: string) {
   return prisma.product.create({
@@ -276,6 +276,135 @@ describe('integrationOutbox: enqueueEntitlementEvents', () => {
     const rows = await prisma.integrationOutboxEvent.findMany({ where: { correlationId: order.id } });
     expect(rows).toHaveLength(0);
 
+    await prisma.orderItem.delete({ where: { id: orderItem.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)11章: digital_collectibleは
+  // NftIssue単位の専用経路(enqueueDigitalCollectibleEvent)でのみ扱い、この既存のOrderItem単位
+  // 経路では意図的にスキップする(重複送信防止)。
+  it('entitlementType=digital_collectibleのルールはこのOrderItem単位の経路ではスキップする', async () => {
+    const product = await createTestProduct('digital-collectible-skip');
+    await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'rare',
+      },
+    });
+    const { order, orderItem } = await createTestOrder(product.id, { quantity: 2 });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueEntitlementEvents(tx, order, [orderItem], 'entitlement.granted');
+    });
+
+    const rows = await prisma.integrationOutboxEvent.findMany({ where: { correlationId: order.id } });
+    expect(rows).toHaveLength(0);
+
+    await prisma.orderItem.delete({ where: { id: orderItem.id } });
+    await prisma.order.delete({ where: { id: order.id } });
+    await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+});
+
+describe('integrationOutbox: enqueueDigitalCollectibleEvent', () => {
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('quantity=1・entitlement_id=NftIssue.id・画像スナップショットを含むpayloadでenqueueする', async () => {
+    const product = await prisma.product.create({
+      data: {
+        name: 'digital-collectible-test-product',
+        slug: `digital-collectible-test-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 5000,
+        status: 'published',
+        images: ['https://example.com/card.png'],
+        description: 'テストカード',
+      },
+    });
+    const rule = await prisma.productIntegrationRule.create({
+      data: {
+        productId: product.id,
+        entitlementTargetSystemKey: 'ove-wallet',
+        entitlementType: 'digital_collectible',
+        productCode: 'SGK-001',
+        assetCode: 'SGK-CARD-001',
+        collectibleRarity: 'rare',
+      },
+    });
+    const { order, orderItem } = await createTestOrder(product.id, { quantity: 1 });
+    const nftIssue = await prisma.nftIssue.create({
+      data: { orderId: order.id, orderItemId: orderItem.id, productId: product.id, status: 'wallet_required', serialNumber: 1 },
+    });
+    const walletClaim = await prisma.walletClaim.create({
+      data: {
+        orderId: order.id,
+        tokenHash: `hash-digital-collectible-payload-${Date.now()}`,
+        status: 'CLAIMED',
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60 * 24 * 30),
+      },
+    });
+    const claimItem = await prisma.walletClaimItem.create({
+      data: {
+        walletClaimId: walletClaim.id,
+        nftIssueId: nftIssue.id,
+        orderItemId: orderItem.id,
+        productId: product.id,
+        productIntegrationRuleId: rule.id,
+        destinationSystemKey: rule.entitlementTargetSystemKey!,
+        entitlementType: rule.entitlementType!,
+        productCode: rule.productCode,
+        assetCode: rule.assetCode,
+        serialNumber: nftIssue.serialNumber,
+        name: product.name,
+        description: product.description,
+        imageUrl: product.images[0],
+        thumbnailUrl: product.images[0],
+        rarity: rule.collectibleRarity,
+      },
+    });
+
+    await prisma.$transaction(async (tx) => {
+      await enqueueDigitalCollectibleEvent(tx, {
+        order,
+        orderItem,
+        nftIssue,
+        claimItem,
+        commonUserId: 'cu_test_00000001',
+        eventType: 'entitlement.granted',
+      });
+    });
+
+    const row = await prisma.integrationOutboxEvent.findFirstOrThrow({ where: { correlationId: order.id } });
+    const payload = row.deliveryPayload as Record<string, unknown>;
+    expect(payload).toMatchObject({
+      entitlement_type: 'digital_collectible',
+      quantity: 1,
+      nft_issue_id: nftIssue.id,
+      entitlement_id: nftIssue.id,
+      asset_code: 'SGK-CARD-001',
+      product_code: 'SGK-001',
+      serial_number: 1,
+      name: product.name,
+      description: 'テストカード',
+      image_url: 'https://example.com/card.png',
+      rarity: 'rare',
+      common_user_id: 'cu_test_00000001',
+    });
+    expect(row.destinationSystemKey).toBe('ove-wallet');
+
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId: order.id } });
+    await prisma.walletClaimItem.deleteMany({ where: { walletClaimId: walletClaim.id } });
+    await prisma.walletClaim.delete({ where: { id: walletClaim.id } });
+    await prisma.nftIssue.delete({ where: { id: nftIssue.id } });
     await prisma.orderItem.delete({ where: { id: orderItem.id } });
     await prisma.order.delete({ where: { id: order.id } });
     await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });

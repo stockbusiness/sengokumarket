@@ -7,7 +7,7 @@ exports[`buildCartAbandonedEmail > 件名・本文のスナップショット(pr
     <p>以下の内容でお手続き中でしたが、決済が完了していないため注文が保留となりました。</p>
     <ul><li>デジタル会員証 通常 × 1</li></ul>
     <p>引き続きご希望の場合は、お手数ですが商品ページから改めてお手続きください。</p>
-    <p><a href="/products/council-nft">商品ページを見る</a></p>
+    <p><a href="http://localhost:5173/products/council-nft">商品ページを見る</a></p>
   ",
   "subject": "お手続きが完了していません(戦国楽市楽座)",
   "text": "テスト太郎 様
@@ -17,7 +17,7 @@ exports[`buildCartAbandonedEmail > 件名・本文のスナップショット(pr
 ・デジタル会員証 通常 × 1
 
 引き続きご希望の場合は、お手数ですが商品ページから改めてお手続きください。
-/products/council-nft",
+http://localhost:5173/products/council-nft",
   "to": "test@example.com",
 }
 `;

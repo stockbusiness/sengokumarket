@@ -21,17 +21,20 @@ function generateProcessingToken(): string {
   return crypto.randomBytes(16).toString('hex');
 }
 
-// pending(またはnext_attempt_atが到来したもの)をprocessingへアトミックにclaimする。
-// 同時に複数のDispatcherが動いても、条件付きUPDATE(WHERE status='pending')により
-// 1件のClaimしか成功しない。
-export async function claimBatch(db: PrismaClient, limit: number): Promise<NotificationOutboxEvent[]> {
+// 最終安定化指示書Phase8「Notification Outbox claim改善」: 先行してbatch分すべてを
+// processingへclaimすると、時間予算切れで打ち切った際に未処理分がstale reclaim(10分)を
+// 待つまでprocessing残留してしまう。1件ずつclaim・処理・次の1件claimというループへ改め、
+// 常に高々1件しかprocessing状態を持たないようにする(同時実行下の二重取得防止は従来通り
+// 条件付きUPDATE(WHERE status='pending')で担保する)。
+const CLAIM_LOOKAHEAD = 10;
+
+export async function claimOne(db: PrismaClient): Promise<NotificationOutboxEvent | null> {
   const candidates = await db.notificationOutboxEvent.findMany({
     where: { status: 'pending', OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] },
     orderBy: { createdAt: 'asc' },
-    take: limit,
+    take: CLAIM_LOOKAHEAD,
   });
 
-  const claimed: NotificationOutboxEvent[] = [];
   for (const candidate of candidates) {
     const processingToken = generateProcessingToken();
     const result = await db.notificationOutboxEvent.updateMany({
@@ -41,10 +44,10 @@ export async function claimBatch(db: PrismaClient, limit: number): Promise<Notif
     if (result.count === 1) {
       // DB側はattemptCountをincrementしたため、メモリ上のcandidateも合わせて反映する
       // (古い値のままだとmarkFailedのbackoff計算がずれる)。
-      claimed.push({ ...candidate, processingToken, status: 'processing', attemptCount: candidate.attemptCount + 1 });
+      return { ...candidate, processingToken, status: 'processing', attemptCount: candidate.attemptCount + 1 };
     }
   }
-  return claimed;
+  return null;
 }
 
 // stale(claimしたまま一定時間放置された)processing行をpendingへ戻す。

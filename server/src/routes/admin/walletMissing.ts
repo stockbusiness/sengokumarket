@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
-import { sendWalletReminderEmail } from '../../services/mailTemplates';
+import { enqueueNotification } from '../../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 const router = Router();
 
@@ -37,10 +38,19 @@ router.post('/wallet-missing/:nftIssueId/reminder', async (req, res) => {
     return sendError(res, 400, 'VALIDATION_ERROR', '会員アカウントに紐づいていないため案内メールを送信できません');
   }
 
-  await sendWalletReminderEmail(nftIssue.order.customerEmail, nftIssue.order.customerName, nftIssue.order.orderNumber);
-  const log = await prisma.walletReminderEmail.create({
-    data: { nftIssueId: nftIssue.id, sentBy: req.authUser!.id },
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11: 送信記録の作成と通知予定の作成を
+  // 同一トランザクションで行い、Resend完了は待たない。
+  const log = await prisma.$transaction(async (tx) => {
+    await enqueueNotification(tx, {
+      eventType: 'wallet_reminder',
+      recipient: nftIssue.order.customerEmail,
+      payload: { nftIssueId: nftIssue.id },
+    });
+    return tx.walletReminderEmail.create({
+      data: { nftIssueId: nftIssue.id, sentBy: req.authUser!.id },
+    });
   });
+  await triggerImmediateNotificationDispatch();
 
   res.status(201).json({ lastReminderSentAt: log.sentAt });
 });

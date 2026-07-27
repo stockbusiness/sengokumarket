@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { privateKeyToAccount, generatePrivateKey } from 'viem/accounts';
 import { createApp } from '../app';
 import { prisma } from '../lib/prisma';
+import { setSetting } from '../services/settings';
+import { hashClaimToken } from '../services/walletClaim';
 
 const pushAgencyCandidateToExternalSystem = vi.fn(async (..._args: unknown[]) => ({
   external_id: 'x',
@@ -266,6 +268,110 @@ describe('マイページAPI', () => {
       expect(changeLog?.verificationMethod).toBe('personal_sign');
     });
 
+    it('digital_collectible対象商品のnft_issuesは、ウォレット確認が完了してもready_to_issueへ自動遷移しない(戦国マーケットNFTカード受取・送付17章)', async () => {
+      const email = `mypage-test-dc-${Date.now()}@example.com`;
+      const dcAgent = request.agent(app);
+      const registerRes = await dcAgent.post('/api/auth/register').set('Origin', ORIGIN).send({ name: 'DC太郎', email, password: 'password123' });
+      const dcUserId = registerRes.body.user.id;
+
+      const dcProduct = await prisma.product.create({
+        data: {
+          name: `mypage-test-dc-product-${Date.now()}`,
+          slug: `mypage-test-dc-product-${Date.now()}`,
+          category: 'テスト',
+          itemType: 'nft',
+          basePrice: 15000,
+          status: 'published',
+        },
+      });
+      await prisma.productIntegrationRule.create({
+        data: { productId: dcProduct.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+      });
+      const dcOrder = await prisma.order.create({
+        data: {
+          orderNumber: `SG-TEST-DC-${Math.random().toString(36).slice(2)}`,
+          userId: dcUserId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'テスト',
+          customerEmail: email,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const dcOrderItem = await prisma.orderItem.create({
+        data: {
+          orderId: dcOrder.id,
+          productId: dcProduct.id,
+          productName: dcProduct.name,
+          itemType: 'nft',
+          quantity: 1,
+          unitPrice: 15000,
+          subtotal: 15000,
+        },
+      });
+      const dcNftIssue = await prisma.nftIssue.create({
+        data: { orderId: dcOrder.id, orderItemId: dcOrderItem.id, userId: dcUserId, productId: dcProduct.id, status: 'wallet_required' },
+      });
+      // 通常のNFT商品の行(digital_collectible対象外)も同時に持たせ、こちらは従来通り
+      // ready_to_issueへ遷移することを確認する(既存の他NFT商品の挙動を変えないことの確認)。
+      const normalOrder = await prisma.order.create({
+        data: {
+          orderNumber: `SG-TEST-DC-NORMAL-${Math.random().toString(36).slice(2)}`,
+          userId: dcUserId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'テスト',
+          customerEmail: email,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const normalOrderItem = await prisma.orderItem.create({
+        data: {
+          orderId: normalOrder.id,
+          productId,
+          variantId,
+          productName: 'マイページテスト商品',
+          variantName: 'Black',
+          itemType: 'nft',
+          quantity: 1,
+          unitPrice: 15000,
+          subtotal: 15000,
+        },
+      });
+      const normalNftIssue = await prisma.nftIssue.create({
+        data: { orderId: normalOrder.id, orderItemId: normalOrderItem.id, userId: dcUserId, productId, variantId, status: 'wallet_required' },
+      });
+
+      const dcWalletAccount = privateKeyToAccount(generatePrivateKey());
+      const signature = await requestNonceAndSign(dcAgent, dcWalletAccount.address, dcWalletAccount);
+      const res = await dcAgent.post('/api/mypage/wallet').set('Origin', ORIGIN).send({ walletAddress: dcWalletAccount.address, signature });
+      expect(res.status).toBe(200);
+
+      const updatedDcIssue = await prisma.nftIssue.findUniqueOrThrow({ where: { id: dcNftIssue.id } });
+      expect(updatedDcIssue.status).toBe('wallet_required');
+      expect(updatedDcIssue.walletAddress).toBeNull();
+
+      const updatedNormalIssue = await prisma.nftIssue.findUniqueOrThrow({ where: { id: normalNftIssue.id } });
+      expect(updatedNormalIssue.status).toBe('ready_to_issue');
+      expect(updatedNormalIssue.walletAddress).toBe(dcWalletAccount.address);
+
+      await prisma.nftIssue.deleteMany({ where: { userId: dcUserId } });
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: [dcOrder.id, normalOrder.id] } } });
+      await prisma.order.deleteMany({ where: { id: { in: [dcOrder.id, normalOrder.id] } } });
+      await prisma.productIntegrationRule.deleteMany({ where: { productId: dcProduct.id } });
+      await prisma.product.delete({ where: { id: dcProduct.id } });
+      await prisma.walletChangeLog.deleteMany({ where: { userId: dcUserId } });
+      await prisma.walletVerificationNonce.deleteMany({ where: { userId: dcUserId } });
+      await prisma.wallet.deleteMany({ where: { userId: dcUserId } });
+      await prisma.user.delete({ where: { id: dcUserId } });
+    });
+
     it('確認コードを発行していないアドレスへの登録はNONCE_NOT_FOUNDで400を返す', async () => {
       const bogusSignature = await otherWalletAccount.signMessage({ message: '無関係なメッセージ' });
       const res = await agent
@@ -318,6 +424,99 @@ describe('マイページAPI', () => {
         .send({ walletAddress: walletAccount.address, signature });
       expect(replay.status).toBe(400);
       expect(replay.body.error.code).toBe('NONCE_ALREADY_USED');
+    });
+  });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase1「必須修正」: URL設定・メール送信の失敗で
+  // 旧URL(旧Token)だけが無効になることを防ぐため、Token発行より前に前提条件を確認する順序になっているか。
+  describe('マイページ: Wallet Claim受取URL再発行', () => {
+    afterEach(async () => {
+      await prisma.setting.deleteMany({ where: { key: 'wallet_claim_web_base_url' } });
+    });
+
+    async function createOwnOrderWithClaim(suffix: string, status = 'PENDING') {
+      const order = await prisma.order.create({
+        data: {
+          orderNumber: `SG-MYPAGE-WCTEST-${suffix}`,
+          userId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: 'マイページ太郎',
+          customerEmail: `mypage-wc-test-${suffix}@example.com`,
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+      const claim = await prisma.walletClaim.create({
+        data: { orderId: order.id, tokenHash: hashClaimToken(`old-token-${suffix}`), status, expiresAt: new Date(Date.now() + 1000 * 60 * 60) },
+      });
+      return { order, claim };
+    }
+
+    it('wallet_claim_web_base_url未設定の場合、503を返しTokenを書き換えない', async () => {
+      const suffix = `nourl-${Date.now()}`;
+      const { order, claim } = await createOwnOrderWithClaim(suffix);
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(503);
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(updated.tokenHash).toBe(hashClaimToken(`old-token-${suffix}`));
+      expect(updated.reissueCount).toBe(0);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('URL設定済みでPENDINGの場合、再発行できTokenが書き換わる', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order, claim } = await createOwnOrderWithClaim(`ok-${Date.now()}`);
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(200);
+      expect(res.body.url).toContain('https://wallet.example.com/claim/');
+
+      const updated = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(updated.reissueCount).toBe(1);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('DELIVERY_PENDING状態のClaimは再発行できない(400)', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order } = await createOwnOrderWithClaim(`inprogress-${Date.now()}`, 'DELIVERY_PENDING');
+
+      const res = await agent.post(`/api/mypage/orders/${order.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(400);
+
+      await prisma.walletClaim.deleteMany({ where: { orderId: order.id } });
+      await prisma.order.deleteMany({ where: { id: order.id } });
+    });
+
+    it('他人の注文には404を返す', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const otherOrder = await prisma.order.create({
+        data: {
+          orderNumber: `SG-MYPAGE-WCTEST-other-${Date.now()}`,
+          userId: otherUserId,
+          totalAmount: 15000,
+          originalAmount: 15000,
+          paymentStatus: 'paid',
+          orderStatus: 'paid',
+          customerName: '他人',
+          customerEmail: 'other@example.com',
+          termsAgreedAt: new Date(),
+          termsVersion: '2026-07-01',
+        },
+      });
+
+      const res = await agent.post(`/api/mypage/orders/${otherOrder.id}/wallet-claim/reissue`).set('Origin', ORIGIN);
+      expect(res.status).toBe(404);
+
+      await prisma.order.deleteMany({ where: { id: otherOrder.id } });
     });
   });
 

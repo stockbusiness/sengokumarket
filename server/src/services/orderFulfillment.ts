@@ -1,10 +1,12 @@
-import type { Order, OrderItem, Prisma } from '@prisma/client';
-import { createPasswordResetToken } from './passwordReset';
-import { sendGuestPasswordSetupEmail, sendPurchaseCompleteEmail } from './mailTemplates';
+import type { Order, Prisma } from '@prisma/client';
 import { confirmCouponUsage } from './coupon';
 import { getNftChain } from './nftMint';
 import { enqueueEntitlementEvents } from './integrationOutbox';
 import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
+import { isWalletClaimEnabled } from './walletClaimConfig';
+import { getDigitalCollectibleRulesByProductIds, reserveProductSerialNumbers } from './digitalCollectible';
+import { createWalletClaimIfEligible } from './walletClaim';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 type Tx = Prisma.TransactionClient;
 
@@ -21,20 +23,49 @@ export async function createNftIssuesForOrder(tx: Tx, orderId: string, userId: s
   // 仕様書外の拡張: 署名検証(verified)を通過したウォレットのみready_to_issueへ即時遷移する。
   const hasVerifiedWallet = Boolean(wallet?.verified);
 
+  // 最終安定化指示書Phase10「Checkout性能改善」: 商品ごとにdigital_collectibleルールを
+  // 1件ずつ取得するとorder item数分のN+1になるため、対象productId分を1クエリでまとめて取得する。
+  const rulesByProductId = isWalletClaimEnabled()
+    ? await getDigitalCollectibleRulesByProductIds(
+        tx,
+        orderItems.map((item) => item.productId),
+      )
+    : new Map();
+
+  const rows: Prisma.NftIssueCreateManyInput[] = [];
   for (const item of orderItems) {
-    const rows = Array.from({ length: item.quantity }, () => ({
-      orderId,
-      orderItemId: item.id,
-      userId,
-      productId: item.productId,
-      variantId: item.variantId,
-      status: hasVerifiedWallet ? 'ready_to_issue' : 'wallet_required',
-      walletAddress: hasVerifiedWallet ? wallet!.walletAddress : null,
-      // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
-      chain: getNftChain(),
-    }));
-    await tx.nftIssue.createMany({ data: rows });
+    // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: digital_collectible対象の
+    // 商品のみ、マーケット側で不変のシリアル番号を発番する(既存の他NFT商品はnullのまま。
+    // 引き続きnftMintProcessing.tsが従来通りベストエフォートで別途採番する)。
+    const digitalCollectibleRule = rulesByProductId.get(item.productId) ?? null;
+
+    // 最終安定化指示書Phase10: quantity分だけ1件ずつUPDATE...RETURNINGするとNFT quantityに
+    // 比例したN+1になるため、対象商品につき1回のUPDATEでquantity分の連番をまとめて確保する。
+    const serialNumbers = digitalCollectibleRule
+      ? await reserveProductSerialNumbers(tx, item.productId, item.quantity)
+      : null;
+
+    for (let i = 0; i < item.quantity; i += 1) {
+      // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
+      // digital_collectible対象商品は、検証済みウォレットを持つ購入者でもready_to_issueへ
+      // 自動遷移させない(MVPでは自動Mintしない方針)。カード送付はWalletClaim/
+      // CollectibleDeliveryの経路で行われ、この行のwalletAddress/statusは使わない。
+      const readyToIssue = hasVerifiedWallet && !digitalCollectibleRule;
+      rows.push({
+        orderId,
+        orderItemId: item.id,
+        userId,
+        productId: item.productId,
+        variantId: item.variantId,
+        status: readyToIssue ? 'ready_to_issue' : 'wallet_required',
+        walletAddress: readyToIssue ? wallet!.walletAddress : null,
+        // 仕様書外の拡張: 発行対象チェーンはNFT_CHAIN環境変数を唯一の参照元にする(コード固定しない)。
+        chain: getNftChain(),
+        serialNumber: serialNumbers ? serialNumbers[i] : null,
+      });
+    }
   }
+  await tx.nftIssue.createMany({ data: rows });
 }
 
 // referral_link_idがある注文のみcommissionsを作成する。0円はstatus=cancelledで作成(追跡用)。仕様書v1.5 6.14
@@ -90,19 +121,22 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
     await enqueueReferralConfirmPurchaseJob(tx, order.id);
   }
 
-  return { order, items: orderItems };
-}
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)4章: `paymentStatus=paid`確定と
+  // 同一トランザクションでWalletClaimを作成する。生Tokenは通知Outbox実行時に発行する
+  // (purchase_completeイベントのpayloadへは含めない)。
+  const walletClaimToken = await createWalletClaimIfEligible(tx, order, orderItems);
 
-// メール送信はトランザクション外で行い、失敗しても決済確定処理自体は失敗させない(仕様書v1.5 7.2 手順8 / 7.6)。
-export async function sendPostPaymentEmails(order: Order, items: OrderItem[]) {
-  try {
-    await sendPurchaseCompleteEmail(order, items);
-
-    if (order.guestAccountCreated && order.userId) {
-      const token = await createPasswordResetToken(order.userId);
-      await sendGuestPasswordSetupEmail(order.customerEmail, order.customerName, token);
-    }
-  } catch (e) {
-    console.error('post-payment email dispatch failed', { orderId: order.id, error: e });
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13章「通知全般のOutbox化」): 購入完了・
+  // ゲストパスワード設定メールは、決済確定と同一トランザクションで通知予定(Outbox)だけを
+  // 作成する。Resend完了は待たず、実送信はcommit後のベストエフォート即時実行またはCronが行う。
+  await enqueueNotification(tx, { eventType: 'purchase_complete', recipient: order.customerEmail, payload: { orderId: order.id } });
+  if (order.guestAccountCreated && order.userId) {
+    await enqueueNotification(tx, {
+      eventType: 'guest_password_setup',
+      recipient: order.customerEmail,
+      payload: { name: order.customerName, userId: order.userId },
+    });
   }
+
+  return { order, items: orderItems, walletClaimToken };
 }

@@ -75,6 +75,26 @@ function validateRateLimitHashSecret(value: string): string | null {
   return null;
 }
 
+// CI復旧・本番移行前最終指示書 Stage4「Notification Token本番必須化」: この鍵が未設定・
+// 短すぎる間は決定論的Token発行が都度ランダム発行へフォールバックし、retry時にClaim URL・
+// 設定URLが無効化される問題(最終安定化指示書Phase2で対処済みの前提)が再発しうる。
+// productionでのみ必須にする(ローカル・test環境は既存のフォールバックを許可する)。
+const MIN_NOTIFICATION_TOKEN_DERIVATION_SECRET_BYTES = 32;
+
+function validateNotificationTokenDerivationSecretForProduction(value: string | undefined, isProduction: boolean): string | null {
+  if (!isProduction) return null;
+  if (!value) {
+    return 'NOTIFICATION_TOKEN_DERIVATION_SECRETが未設定です(production環境では必須)';
+  }
+  if (Buffer.byteLength(value, 'utf8') < MIN_NOTIFICATION_TOKEN_DERIVATION_SECRET_BYTES) {
+    return `NOTIFICATION_TOKEN_DERIVATION_SECRETは${MIN_NOTIFICATION_TOKEN_DERIVATION_SECRET_BYTES}byte以上である必要があります`;
+  }
+  if (KNOWN_DEFAULT_JWT_SECRETS.has(value.toLowerCase())) {
+    return 'NOTIFICATION_TOKEN_DERIVATION_SECRETに既知のデフォルト値が設定されています';
+  }
+  return null;
+}
+
 // 本番安定化指示書Stage0(/api/ready)向け: プロセスを落とさずに検証結果だけを得たい
 // 呼び出し元のために、assertRequiredEnvから例外送出を分離した非throw版。
 export function collectRequiredEnvErrors(env: NodeJS.ProcessEnv = process.env): string[] {
@@ -91,6 +111,7 @@ export function collectRequiredEnvErrors(env: NodeJS.ProcessEnv = process.env): 
     validateDatabaseUrl(env.DATABASE_URL!),
     validateTermsVersion(env.TERMS_VERSION!),
     validateRateLimitHashSecret(env.RATE_LIMIT_HASH_SECRET!),
+    validateNotificationTokenDerivationSecretForProduction(env.NOTIFICATION_TOKEN_DERIVATION_SECRET, isProduction),
   ].filter((e): e is string => e !== null);
 }
 

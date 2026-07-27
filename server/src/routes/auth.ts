@@ -7,13 +7,14 @@ import { signAuthToken } from '../services/jwt';
 import { setAuthCookie, clearAuthCookie } from '../lib/authCookie';
 import { isLocked, recordLoginFailure, recordLoginSuccess } from '../services/loginAttempts';
 import { requireAuth } from '../middleware/auth';
-import { createPasswordResetToken, consumePasswordResetToken } from '../services/passwordReset';
-import { sendPasswordResetEmail } from '../services/mailTemplates';
+import { consumePasswordResetToken } from '../services/passwordReset';
 import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
 import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
 import { dbRateLimit } from '../middleware/dbRateLimit';
 import { hashRateLimitIdentifier } from '../services/rateLimiter';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 const router = Router();
 
@@ -199,8 +200,14 @@ router.post('/auth/password-reset/request', passwordResetRequestLimiter, async (
   if (isNonEmptyString(email) && isValidEmail(email)) {
     const user = await prisma.user.findFirst({ where: { email: emailFilterInsensitive(email) } });
     if (user) {
-      const token = await createPasswordResetToken(user.id);
-      await sendPasswordResetEmail(user.email, user.name, token);
+      // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.3「Tokenを含む通知」): 生Tokenは
+      // Outbox payloadへ保存せず、Dispatcher実行時に発行する(agency_account_setupと同じ設計)。
+      await enqueueNotification(prisma, {
+        eventType: 'password_reset',
+        recipient: user.email,
+        payload: { name: user.name, userId: user.id },
+      });
+      await triggerImmediateNotificationDispatch();
     }
   }
   res.json({ message: 'パスワード再設定用のメールを送信しました(該当するアカウントが存在する場合)' });

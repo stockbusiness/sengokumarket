@@ -41,6 +41,13 @@ vi.mock('../services/rateLimiter', async (importOriginal) => {
   return { ...actual, cleanupStaleRateLimitBuckets: () => cleanupStaleRateLimitBuckets() };
 });
 
+const cleanupWalletClaimApiNonces = vi.fn(async () => ({ deletedCount: 0 }));
+
+vi.mock('../middleware/walletClaimHmac', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../middleware/walletClaimHmac')>();
+  return { ...actual, cleanupWalletClaimApiNonces: () => cleanupWalletClaimApiNonces() };
+});
+
 const app = createApp();
 
 describe('内部cron: 外部代理店システム階層同期(仕様書外の拡張)', () => {
@@ -220,6 +227,36 @@ describe('内部cron: 連携Outbox送信(仕様書外の拡張)', () => {
     expect(res.body).toEqual({ claimed: 0, succeeded: 0, retrying: 0, dead: 0, skipped: 0, blocked: 0 });
     expect(dispatchPendingOutboxEvents).toHaveBeenCalledTimes(1);
   });
+
+  // 最終安定化指示書Phase7「Scheduler主系/予備系整理」: ?source=クエリパラメータが
+  // job_scheduler_heartbeats.scheduler_sourceへそのまま記録されることを確認する。
+  it('?source=クエリパラメータの値がscheduler_sourceとしてheartbeatへ記録される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+
+    const res = await request(app)
+      .get('/api/internal/cron/process-integration-outbox?source=vercel')
+      .set('Authorization', 'Bearer test-cron-secret-outbox');
+    expect(res.status).toBe(200);
+
+    const row = await prisma.jobSchedulerHeartbeat.findFirstOrThrow({ where: { jobName: 'process-integration-outbox' } });
+    expect(row.schedulerSource).toBe('vercel');
+    expect(row.status).toBe('success');
+
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+  });
+
+  it('?sourceが省略された場合はscheduler_source=manualとして記録される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-outbox';
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+
+    await request(app).get('/api/internal/cron/process-integration-outbox').set('Authorization', 'Bearer test-cron-secret-outbox');
+
+    const row = await prisma.jobSchedulerHeartbeat.findFirstOrThrow({ where: { jobName: 'process-integration-outbox' } });
+    expect(row.schedulerSource).toBe('manual');
+
+    await prisma.jobSchedulerHeartbeat.deleteMany({ where: { jobName: 'process-integration-outbox' } });
+  });
 });
 
 // 残課題指示書Stage3の拡張: 代理店設定メール等のnotification_outbox_events送信cron配線確認。
@@ -330,5 +367,38 @@ describe('内部cron: レート制限bucketの掃除(本番安定化指示書Sta
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ deletedCount: 0 });
     expect(cleanupStaleRateLimitBuckets).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase2(4.5「nonce cleanup」)。
+describe('内部cron: Wallet Claim HMAC nonceの掃除', () => {
+  const originalSecret = process.env.CRON_SECRET;
+
+  afterEach(() => {
+    process.env.CRON_SECRET = originalSecret;
+    cleanupWalletClaimApiNonces.mockClear();
+  });
+
+  it('CRON_SECRET未設定の場合は503', async () => {
+    delete process.env.CRON_SECRET;
+    const res = await request(app).get('/api/internal/cron/cleanup-wallet-claim-nonces');
+    expect(res.status).toBe(503);
+  });
+
+  it('Authorizationヘッダーが一致しない場合は401', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-nonce-cleanup';
+    const res = await request(app).get('/api/internal/cron/cleanup-wallet-claim-nonces').set('Authorization', 'Bearer wrong-secret');
+    expect(res.status).toBe(401);
+    expect(cleanupWalletClaimApiNonces).not.toHaveBeenCalled();
+  });
+
+  it('正しいCRON_SECRETでcleanupWalletClaimApiNoncesが実行される', async () => {
+    process.env.CRON_SECRET = 'test-cron-secret-nonce-cleanup';
+    const res = await request(app)
+      .get('/api/internal/cron/cleanup-wallet-claim-nonces')
+      .set('Authorization', 'Bearer test-cron-secret-nonce-cleanup');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ deletedCount: 0 });
+    expect(cleanupWalletClaimApiNonces).toHaveBeenCalledTimes(1);
   });
 });

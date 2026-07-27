@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
@@ -15,9 +16,18 @@ router.get('/integration-outbox', async (req, res) => {
   if (status !== undefined && !(STATUSES as readonly string[]).includes(status)) {
     return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスが不正です');
   }
+  const destinationSystemKey = typeof req.query.destinationSystemKey === 'string' ? req.query.destinationSystemKey : undefined;
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)19章「Digital Collectible Outbox」:
+  // 専用の一覧画面を新設する代わりに、この既存の汎用一覧へentitlement_id検索を追加し、
+  // クライアント側でdestinationSystemKey=ove-wallet固定のフィルタ済みビューとして再利用する。
+  const entitlementId = typeof req.query.entitlementId === 'string' ? req.query.entitlementId : undefined;
 
   const { page, pageSize, skip, take } = parsePagination(req.query);
-  const where = status ? { status } : undefined;
+  const where: Prisma.IntegrationOutboxEventWhereInput = {};
+  if (status) where.status = status;
+  if (destinationSystemKey) where.destinationSystemKey = destinationSystemKey;
+  if (entitlementId) where.deliveryPayload = { path: ['entitlement_id'], equals: entitlementId };
+
   const [events, total] = await Promise.all([
     prisma.integrationOutboxEvent.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }),
     prisma.integrationOutboxEvent.count({ where }),

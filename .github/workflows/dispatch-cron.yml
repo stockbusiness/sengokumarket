@@ -1,10 +1,17 @@
-name: Dispatch background jobs
+name: Dispatch background jobs (primary)
 
 # 本番安定化・外部連携有効化ゲート指示書 Stage2(5.3「推奨方式」#2): Vercel Cronは
 # Hobbyプランでは1日1回までしか設定できず、コード側のbackoff(5〜60分)と噛み合わない。
 # 外部スケジューラーからCron API(/api/internal/cron/process-*)を5分間隔で呼び出すことで、
-# Vercelのプランに依存せず短い間隔での再試行を実現する(vercel.jsonの日次crons設定は
-# 取りこぼし時の安全網として維持し、変更しない)。
+# Vercelのプランに依存せず短い間隔での再試行を実現する。
+#
+# 最終安定化指示書Phase7「Scheduler主系/予備系整理」: process-nft-mints・
+# process-order-linking-jobsはこのワークフロー(GitHub Actions・5分間隔)が主系。
+# process-integration-outbox・process-notification-outboxはVercel Cron(5分間隔・
+# vercel.json)が主系のため、二重実行を避けるためこのワークフローからは呼ばず
+# dispatch-cron-fallback.yml(20分間隔)で予備として呼び出す。
+# (vercel.jsonの日次crons設定は、このワークフロー自体が止まった場合の
+# 取りこぼし安全網として維持し、変更しない。)
 #
 # 事前準備(このリポジトリのSettings > Secrets and variables > Actionsで設定が必要):
 #   - PRODUCTION_APP_URL: 本番のベースURL(例: https://sengokumarket.example.com)
@@ -42,10 +49,8 @@ jobs:
           failures=0
           for path in \
             "process-nft-mints" \
-            "process-integration-outbox" \
-            "process-notification-outbox" \
             "process-order-linking-jobs"; do
-            url="${BASE_URL%/}/api/internal/cron/${path}"
+            url="${BASE_URL%/}/api/internal/cron/${path}?source=github-actions"
             status=$(curl -sS -o /tmp/response.json -w '%{http_code}' \
               -H "Authorization: Bearer ${CRON_SECRET}" \
               "$url" || echo "000")

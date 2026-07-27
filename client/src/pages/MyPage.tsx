@@ -7,6 +7,7 @@ import {
   fetchMyOrders,
   fetchMyWallet,
   markMyNoticeRead,
+  reissueWalletClaimUrl,
   submitAgencyApplication,
   type MyNftIssue,
   type MyNotice,
@@ -22,6 +23,18 @@ const NFT_STATUS_LABEL: Record<string, string> = {
   cancelled: 'キャンセル済み',
 };
 
+// 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)7章「マイページ状態」。
+const WALLET_CLAIM_STATUS_LABEL: Record<string, string> = {
+  PENDING: 'NFTカードを受け取る',
+  CLAIMED: '受取手続き中',
+  DELIVERY_PENDING: '送付処理中',
+  DELIVERED: '千ノ国ウォレットで確認',
+  EXPIRED: '受取URLを再発行',
+  REVOKED: '返金・取消済み',
+  ERROR: '再試行',
+};
+const WALLET_CLAIM_REISSUABLE = new Set(['PENDING', 'EXPIRED', 'ERROR']);
+
 export default function MyPage() {
   const { user, refresh } = useAuth();
   const [orders, setOrders] = useState<MyOrder[]>([]);
@@ -30,6 +43,8 @@ export default function MyPage() {
   const [hasWallet, setHasWallet] = useState<boolean | null>(null);
   const [applying, setApplying] = useState(false);
   const [applicationError, setApplicationError] = useState<string | null>(null);
+  const [claimUrlByOrderId, setClaimUrlByOrderId] = useState<Record<string, string>>({});
+  const [claimError, setClaimError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyOrders().then((d) => setOrders(d.orders));
@@ -41,6 +56,16 @@ export default function MyPage() {
     });
     fetchMyWallet().then((d) => setHasWallet(d.wallet !== null));
   }, []);
+
+  async function handleReceiveClick(orderId: string) {
+    setClaimError(null);
+    try {
+      const { url } = await reissueWalletClaimUrl(orderId);
+      setClaimUrlByOrderId((prev) => ({ ...prev, [orderId]: url }));
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : '受取URLの発行に失敗しました');
+    }
+  }
 
   async function handleApply() {
     setApplying(true);
@@ -98,6 +123,7 @@ export default function MyPage() {
       <section>
         <h2>購入履歴</h2>
         {orders.length === 0 && <p>購入履歴はありません。</p>}
+        {claimError && <p className="mypage-error">{claimError}</p>}
         <ul className="order-history-list">
           {orders.map((order) => (
             <li key={order.id}>
@@ -105,6 +131,21 @@ export default function MyPage() {
               <span>{order.totalAmount.toLocaleString()}円(税込)</span>
               <span>{order.paymentStatus}</span>
               {order.paymentStatus === 'paid' && <Link to={`/mypage/orders/${order.id}/receipt`}>領収書を表示</Link>}
+              {order.walletClaim && (
+                <span className={`wallet-claim-status wallet-claim-status--${order.walletClaim.status}`}>
+                  {claimUrlByOrderId[order.id] ? (
+                    <a href={claimUrlByOrderId[order.id]} target="_blank" rel="noreferrer">
+                      購入したNFTカードを受け取る
+                    </a>
+                  ) : WALLET_CLAIM_REISSUABLE.has(order.walletClaim.status) ? (
+                    <button type="button" onClick={() => handleReceiveClick(order.id)}>
+                      {WALLET_CLAIM_STATUS_LABEL[order.walletClaim.status] ?? order.walletClaim.status}
+                    </button>
+                  ) : (
+                    WALLET_CLAIM_STATUS_LABEL[order.walletClaim.status] ?? order.walletClaim.status
+                  )}
+                </span>
+              )}
             </li>
           ))}
         </ul>

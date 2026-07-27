@@ -7,6 +7,8 @@ import {
   isSennokuniIntegrationEnabled,
   type SennokuniIntegrationStage,
 } from './sennokuniIntegrationConfig';
+import { isWalletClaimEnabled } from './walletClaimConfig';
+import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 // 本番安定化指示書Stage8(11.3「Preflight」・11.2「有効化時必須設定」): production/staging
 // への切り替え前に確認すべき項目を1箇所にまとめる。管理API(GET /api/admin/integration-preflight)
@@ -48,6 +50,10 @@ export interface IntegrationPreflightReport {
   productRuleCount: number;
   missingSettings: SettingKey[];
   invalidFormatSettings: SettingKey[];
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase5(7.4「Preflightで明確に表示」):
+  // digital_collectibleルールが有効なのにENABLE_WALLET_CLAIM=falseだと、対象NftIssueが
+  // Claimも既存自動Mintも通らず滞留する。この不整合の有無・件数をPreflightに表示する。
+  walletClaimFlagInconsistentRuleCount: number;
   readyForActivation: boolean;
 }
 
@@ -163,18 +169,24 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
     connectionTests.push(await testConnection('ove-wallet', await getSetting('ove_wallet_base_url')));
   }
 
-  const [backlogCount, deadCount, blockedCount, productRuleCount] = await Promise.all([
+  const [backlogCount, deadCount, blockedCount, productRuleCount, walletClaimFlagInconsistentRuleCount] = await Promise.all([
     prisma.integrationOutboxEvent.count({ where: { status: 'pending' } }),
     prisma.integrationOutboxEvent.count({ where: { status: 'dead' } }),
     prisma.integrationOutboxEvent.count({ where: { status: 'blocked' } }),
     prisma.productIntegrationRule.count({ where: { enabled: true } }),
+    isWalletClaimEnabled()
+      ? Promise.resolve(0)
+      : prisma.productIntegrationRule.count({
+          where: { enabled: true, entitlementTargetSystemKey: DIGITAL_COLLECTIBLE_DESTINATION, entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE },
+        }),
   ]);
 
   const missingSettings = settingChecks.filter((c) => !c.configured).map((c) => c.key);
   const invalidFormatSettings = settingChecks.filter((c) => c.formatValid === false).map((c) => c.key);
   const hmacFailed = hmacSelfTests.some((t) => t.passed === false);
 
-  const readyForActivation = missingSettings.length === 0 && invalidFormatSettings.length === 0 && !hmacFailed;
+  const readyForActivation =
+    missingSettings.length === 0 && invalidFormatSettings.length === 0 && !hmacFailed && walletClaimFlagInconsistentRuleCount === 0;
 
   return {
     featureFlagEnabled,
@@ -189,6 +201,7 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
     productRuleCount,
     missingSettings,
     invalidFormatSettings,
+    walletClaimFlagInconsistentRuleCount,
     readyForActivation,
   };
 }

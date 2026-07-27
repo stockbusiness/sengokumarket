@@ -29,6 +29,10 @@ const AdminIntegrationRulesOverviewPage = lazyWithReload(() => import('../../pag
 const AdminExternalIdentityConflictsPage = lazyWithReload(() => import('../../pages/admin/AdminExternalIdentityConflictsPage'));
 const AdminWalletTransactionsPage = lazyWithReload(() => import('../../pages/admin/AdminWalletTransactionsPage'));
 const AdminIntegrationPreflightPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationPreflightPage'));
+const AdminWalletClaimsPage = lazyWithReload(() => import('../../pages/admin/AdminWalletClaimsPage'));
+const AdminWalletClaimDetailPage = lazyWithReload(() => import('../../pages/admin/AdminWalletClaimDetailPage'));
+const AdminCollectibleDeliveriesPage = lazyWithReload(() => import('../../pages/admin/AdminCollectibleDeliveriesPage'));
+const AdminCollectibleDeliveryDetailPage = lazyWithReload(() => import('../../pages/admin/AdminCollectibleDeliveryDetailPage'));
 
 // 管理画面(/admin)。日次業務系(staffも利用可)とadmin/admin_viewer専用機能に分かれる
 // (どの機能がstaffに公開されるかはAdminLayoutのNAV_GROUPS.staffHiddenと、各RouteのRequireFullAdmin
@@ -172,6 +176,39 @@ export function adminRoutes() {
         element={
           <RequireFullAdmin>
             <AdminIntegrationPreflightPage />
+          </RequireFullAdmin>
+        }
+      />
+      {/* 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)19章「管理画面」。 */}
+      <Route
+        path="wallet-claims"
+        element={
+          <RequireFullAdmin>
+            <AdminWalletClaimsPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="wallet-claims/:id"
+        element={
+          <RequireFullAdmin>
+            <AdminWalletClaimDetailPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="collectible-deliveries"
+        element={
+          <RequireFullAdmin>
+            <AdminCollectibleDeliveriesPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="collectible-deliveries/:id"
+        element={
+          <RequireFullAdmin>
+            <AdminCollectibleDeliveryDetailPage />
           </RequireFullAdmin>
         }
       />

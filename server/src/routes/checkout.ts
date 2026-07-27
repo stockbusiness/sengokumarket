@@ -5,8 +5,9 @@ import { HttpError } from '../lib/httpError';
 import { cancelOrderReservation, createPendingOrder, validateCreatePendingOrderInput } from '../services/checkout';
 import { createStripeCheckoutSession } from '../services/stripeCheckout';
 import { BANK_TRANSFER_EXPIRY_DAYS, getBankTransferConfig, isBankTransferAvailable } from '../services/bankTransfer';
-import { sendBankTransferInstructionsEmail } from '../services/mailTemplates';
 import { prisma } from '../lib/prisma';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 import { requireReferralOrAuth } from '../middleware/referralAccess';
 import { AUTH_COOKIE_NAME } from '../lib/authCookie';
 import { verifyAuthToken } from '../services/jwt';
@@ -74,7 +75,18 @@ router.post('/checkout/create-session', createSessionLimiter, requireReferralOrA
 
     if (input.paymentMethod === 'bank_transfer') {
       const config = await getBankTransferConfig();
-      await sendBankTransferInstructionsEmail(order, items, config.info, BANK_TRANSFER_EXPIRY_DAYS);
+      // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.2): 通知予定作成だけを行い実送信を
+      // 待たない対象として明示されているのはStripe Webhookと銀行振込入金確認(管理者の入金確認
+      // 操作)の2箇所のみで、ここ(顧客自身によるCheckout申込リクエスト)は含まれない。従来から
+      // このリクエスト内でメール送信まで完了させていた挙動を維持するため、Outboxへ通知予定を
+      // 作成した上で即時ディスパッチも行う(Resend呼び出し失敗時も注文自体は成立済みで、
+      // 取りこぼしは5分Cronが拾う)。
+      await enqueueNotification(prisma, {
+        eventType: 'bank_transfer_instructions',
+        recipient: order.customerEmail,
+        payload: { orderId: order.id },
+      });
+      await triggerImmediateNotificationDispatch();
 
       return res.status(201).json({
         orderId: order.id,

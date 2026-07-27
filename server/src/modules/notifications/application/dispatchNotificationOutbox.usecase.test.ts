@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../../../lib/prisma';
+import { setSetting } from '../../../services/settings';
+import { hashClaimToken } from '../../../services/walletClaim';
 import * as repo from '../infrastructure/notificationOutbox.repository';
 import { dispatchPendingNotifications, retryNotification } from './dispatchNotificationOutbox.usecase';
 
@@ -43,15 +45,14 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
       payload: { name: user.name },
     });
 
-    sendViaResendOrThrow.mockImplementationOnce(async () => {
-      throw new Error('resend api error');
+    // フルスイート実行時は他テストが積んだpendingイベントがBATCH_LIMIT内に混在しうるため、
+    // 「最初の1回」ではなく「このテストの送信先宛てのみ」失敗させることで、この注文分のイベントの
+    // 挙動だけを厳密に検証する(他の無関係なイベントは正常送信されても構わない)。
+    sendViaResendOrThrow.mockImplementation(async (message: unknown) => {
+      if ((message as { to?: string }).to === user.email) throw new Error('resend api error');
     });
 
-    const result = await dispatchPendingNotifications();
-    expect(result.claimed).toBe(1);
-    expect(result.retrying).toBe(1);
-    expect(result.succeeded).toBe(0);
-    expect(result.dead).toBe(0);
+    await dispatchPendingNotifications();
 
     const updated = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(updated?.status).toBe('pending');
@@ -84,6 +85,42 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     }
   });
 
+  // 最終安定化指示書Phase8「Notification Outbox claim改善」受入条件: 時間予算切れで
+  // 打ち切った際、claimBatch方式(先行batch claim)であればprocessing残留が起き得たが、
+  // 1件claim→処理→次の1件claimのループへ改めたことで、未処理分はclaimすらされず
+  // pendingのまま残る(processing残留なし・stale reclaimの10分待ちが不要)ことを確認する。
+  it('時間予算切れで打ち切った場合、未処理のpendingイベントはprocessingに残らずpendingのまま', async () => {
+    process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS = '20';
+    const userA = await createUser();
+    const userB = await createUser();
+    const eventA = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: userA.email,
+      payload: { name: userA.name },
+    });
+    const eventB = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: userB.email,
+      payload: { name: userB.name },
+    });
+
+    sendViaResendOrThrow.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+
+    try {
+      const result = await dispatchPendingNotifications();
+      expect(result.claimed).toBeGreaterThanOrEqual(1);
+
+      const updatedA = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: eventA.id } });
+      const updatedB = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: eventB.id } });
+      expect(updatedA.status).not.toBe('processing');
+      expect(updatedB.status).not.toBe('processing');
+    } finally {
+      delete process.env.NOTIFICATION_OUTBOX_TIME_BUDGET_MS;
+    }
+  });
+
   it('最大試行回数を超えるとdeadになる', async () => {
     const user = await createUser();
     const event = await repo.enqueueNotification(prisma, {
@@ -94,12 +131,13 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
     // 既に4回失敗済みの状態を再現する(次の失敗で5回目=上限)。
     await prisma.notificationOutboxEvent.update({ where: { id: event.id }, data: { attemptCount: 4 } });
 
-    sendViaResendOrThrow.mockImplementation(async () => {
-      throw new Error('resend api error');
+    // フルスイート実行時に他テストのpendingイベントが同一バッチに混在しても正常送信できるよう、
+    // このテストの送信先宛てのみ失敗させる。
+    sendViaResendOrThrow.mockImplementation(async (message: unknown) => {
+      if ((message as { to?: string }).to === user.email) throw new Error('resend api error');
     });
 
-    const result = await dispatchPendingNotifications();
-    expect(result.dead).toBe(1);
+    await dispatchPendingNotifications();
 
     const updated = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(updated?.status).toBe('dead');
@@ -161,8 +199,190 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
   });
 });
 
-describe('claimBatch(残課題指示書Stage3)', () => {
-  const emailSuffix = `claim-batch-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase1・Phase11: 管理者再発行のwallet_claim_reissued
+// イベント。実際のToken発行自体をDispatcher実行時に行うため(生Token・生URLをpayloadへ保存しない)、
+// ここで発行・送信・失敗時の挙動を検証する。
+describe('dispatchPendingNotifications: wallet_claim_reissued(Wallet Claim本番前安定化指示書Phase1)', () => {
+  const ORDER_PREFIX = 'SG-NOTIFWCTEST-';
+  // CI復旧・本番移行前最終指示書Stage4でCIが常にNOTIFICATION_TOKEN_DERIVATION_SECRETを設定する
+  // ようになったため、このdescribe直下のテスト(決定論的発行が無効な場合の都度ランダム発行
+  // フォールバックを検証する意図)はCI環境変数の影響を受けないよう明示的に未設定にする
+  // (決定論的発行時の挙動は下のネストしたdescribe('NOTIFICATION_TOKEN_DERIVATION_SECRET設定時')
+  // 側で別途検証する)。
+  const originalTokenDerivationSecret = process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+
+  beforeEach(() => {
+    sendViaResendOrThrow.mockReset();
+    sendViaResendOrThrow.mockImplementation(async () => undefined);
+    delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+  });
+
+  afterEach(async () => {
+    if (originalTokenDerivationSecret === undefined) delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+    else process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = originalTokenDerivationSecret;
+    await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: 'notif-wc-test-' } } });
+    await prisma.walletClaim.deleteMany({ where: { order: { orderNumber: { startsWith: ORDER_PREFIX } } } });
+    await prisma.order.deleteMany({ where: { orderNumber: { startsWith: ORDER_PREFIX } } });
+    await prisma.setting.deleteMany({ where: { key: 'wallet_claim_web_base_url' } });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  async function createOrderWithClaim(suffix: string, status = 'PENDING') {
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `${ORDER_PREFIX}${suffix}`,
+        totalAmount: 10000,
+        originalAmount: 10000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: '通知テスト太郎',
+        customerEmail: `notif-wc-test-${suffix}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    const claim = await prisma.walletClaim.create({
+      data: { orderId: order.id, tokenHash: hashClaimToken(`old-token-${suffix}`), status, expiresAt: new Date(Date.now() + 1000 * 60 * 60) },
+    });
+    return { order, claim };
+  }
+
+  it('URL設定済みの場合、Dispatcher実行時にTokenを発行してメール送信し、succeededになる', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order, claim } = await createOrderWithClaim('ok');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.succeeded).toBe(1);
+    expect(sendViaResendOrThrow).toHaveBeenCalledTimes(1);
+    const sentMessage = sendViaResendOrThrow.mock.calls[0][0] as { html: string; text: string };
+    expect(sentMessage.html).toContain('https://wallet.example.com/claim/');
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updatedClaim.tokenHash).not.toBe(hashClaimToken('old-token-ok'));
+    expect(updatedClaim.reissueCount).toBe(1);
+  });
+
+  it('wallet_claim_web_base_url未設定の場合、Tokenを書き換えずにretryへ回る(送信も試みない)', async () => {
+    const { order, claim } = await createOrderWithClaim('nourl');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.retrying).toBe(1);
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
+
+    const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    expect(updatedClaim.tokenHash).toBe(hashClaimToken('old-token-nourl')); // 変更されない
+    expect(updatedClaim.reissueCount).toBe(0);
+  });
+
+  it('メール送信(Resend)が失敗した場合はretryへ回り、次回成功時に最新Tokenが送信される', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order, claim } = await createOrderWithClaim('resendfail');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    sendViaResendOrThrow.mockImplementationOnce(async () => {
+      throw new Error('resend 5xx');
+    });
+    const firstResult = await dispatchPendingNotifications();
+    expect(firstResult.retrying).toBe(1);
+    const afterFirstFailure = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    // 送信失敗時点でToken自体は既に発行済み(この時点のTokenは配送されていない)。
+    expect(afterFirstFailure.reissueCount).toBe(1);
+
+    // backoff(5分後)を待たずに次回試行させる(テスト用にnext_attempt_atを過去へ戻す)。
+    await prisma.notificationOutboxEvent.updateMany({
+      where: { recipient: order.customerEmail },
+      data: { nextAttemptAt: new Date(Date.now() - 1000) },
+    });
+
+    const secondResult = await dispatchPendingNotifications();
+    expect(secondResult.succeeded).toBe(1);
+    const afterSecondSuccess = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+    // 再試行のたびに新しいTokenが発行されるため、実際に送信されたのは最新のTokenと一致する。
+    expect(afterSecondSuccess.reissueCount).toBe(2);
+    expect(afterSecondSuccess.tokenHash).not.toBe(afterFirstFailure.tokenHash);
+  });
+
+  it('CLAIMED以降・REVOKED等の再発行不可な状態はエラーとしてretryへ回る', async () => {
+    await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+    const { order } = await createOrderWithClaim('notreissuable', 'DELIVERY_PENDING');
+    await repo.enqueueNotification(prisma, {
+      eventType: 'wallet_claim_reissued',
+      recipient: order.customerEmail,
+      payload: { orderId: order.id },
+    });
+
+    const result = await dispatchPendingNotifications();
+    expect(result.retrying).toBe(1);
+    expect(sendViaResendOrThrow).not.toHaveBeenCalled();
+  });
+
+  // 最終安定化指示書Phase2「Notification Tokenの安定化」: NOTIFICATION_TOKEN_DERIVATION_SECRET
+  // 設定時は、同一Notification Outbox Event(送信失敗→retry)のToken発行が同じ値を返し続け、
+  // 先に配送されたメールのURLを後続retryが無効化しない。
+  describe('NOTIFICATION_TOKEN_DERIVATION_SECRET設定時', () => {
+    const originalSecret = process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+
+    beforeEach(() => {
+      process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = 'c'.repeat(32);
+    });
+
+    afterEach(() => {
+      if (originalSecret === undefined) delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+      else process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = originalSecret;
+    });
+
+    it('送信失敗後のretryでも同一Tokenを再利用する(URLが無効化されない)', async () => {
+      await setSetting('wallet_claim_web_base_url', 'https://wallet.example.com');
+      const { order, claim } = await createOrderWithClaim('deterministic-resendfail');
+      await repo.enqueueNotification(prisma, {
+        eventType: 'wallet_claim_reissued',
+        recipient: order.customerEmail,
+        payload: { orderId: order.id },
+      });
+
+      sendViaResendOrThrow.mockImplementationOnce(async () => {
+        throw new Error('resend 5xx');
+      });
+      await dispatchPendingNotifications();
+      const afterFirstFailure = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      expect(afterFirstFailure.reissueCount).toBe(1);
+
+      await prisma.notificationOutboxEvent.updateMany({
+        where: { recipient: order.customerEmail },
+        data: { nextAttemptAt: new Date(Date.now() - 1000) },
+      });
+
+      const secondResult = await dispatchPendingNotifications();
+      expect(secondResult.succeeded).toBe(1);
+      const afterSecondSuccess = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
+      // 決定論的発行のため、retryでもTokenをrotateしない(reissueCountは1のまま)。
+      expect(afterSecondSuccess.reissueCount).toBe(1);
+      expect(afterSecondSuccess.tokenHash).toBe(afterFirstFailure.tokenHash);
+    });
+  });
+});
+
+// 最終安定化指示書Phase8「Notification Outbox claim改善」: claimBatch(先行batch claim)を
+// claimOne(1件claim)へ置き換えた。
+describe('claimOne(最終安定化指示書Phase8)', () => {
+  const emailSuffix = `claim-one-test-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   afterEach(async () => {
     await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: emailSuffix } } });
@@ -176,9 +396,9 @@ describe('claimBatch(残課題指示書Stage3)', () => {
     });
     expect(event.attemptCount).toBe(0);
 
-    const [claimed] = await repo.claimBatch(prisma, 10);
-    expect(claimed.id).toBe(event.id);
-    expect(claimed.attemptCount).toBe(1);
+    const claimed = await repo.claimOne(prisma);
+    expect(claimed?.id).toBe(event.id);
+    expect(claimed?.attemptCount).toBe(1);
 
     const persisted = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
     expect(persisted?.attemptCount).toBe(1);

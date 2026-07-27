@@ -35,11 +35,51 @@ export interface IntegrationPreflightReport {
   productRuleCount: number;
   missingSettings: string[];
   invalidFormatSettings: string[];
+  walletClaimFlagInconsistentRuleCount: number;
   readyForActivation: boolean;
 }
 
 export function fetchAdminIntegrationPreflight() {
   return adminFetch<{ report: IntegrationPreflightReport }>('/integration-preflight');
+}
+
+// Wallet Claim本番前安定化指示書(2026-07-25)Phase8(10章「Wallet Claim Preflight拡張」)。
+export interface WalletClaimPreflightIssue {
+  code: string;
+  message: string;
+}
+
+export interface WalletClaimPreflightSettingCheck {
+  key: string;
+  configured: boolean;
+}
+
+export interface WalletClaimPreflightReport {
+  walletClaimEnabled: boolean;
+  digitalCollectibleDeliveryEnabled: boolean;
+  settingChecks: WalletClaimPreflightSettingCheck[];
+  enabledDigitalCollectibleRuleCount: number;
+  rulesMissingAssetCode: number;
+  rulesWithoutRequireCommonUserId: number;
+  rulesOnNonNftProduct: number;
+  rulesMissingRarity: number;
+  rulesWithInvalidDestination: number;
+  migrationsOk: boolean;
+  missingMigrations: string[];
+  pendingCount: number;
+  deadCount: number;
+  blockedCount: number;
+  cronSecretConfigured: boolean;
+  schedulerHeartbeatOk: boolean;
+  schedulerHeartbeatLastSuccessAt: string | null;
+  issues: WalletClaimPreflightIssue[];
+  walletClaimReady: boolean;
+  collectibleDeliveryReady: boolean;
+  overallReady: boolean;
+}
+
+export function fetchAdminWalletClaimPreflight() {
+  return adminFetch<{ report: WalletClaimPreflightReport }>('/wallet-claim-preflight');
 }
 
 export function fetchAdminIntegrationStage() {

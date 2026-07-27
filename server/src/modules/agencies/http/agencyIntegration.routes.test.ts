@@ -218,10 +218,16 @@ describe('外部代理店システム連携API', () => {
     expect(outboxEventBeforeDispatch?.eventType).toBe('agency_account_setup');
     expect(outboxEventBeforeDispatch?.status).toBe('pending');
 
-    await dispatchPendingNotifications();
+    // フルスイート実行時は他テストが積んだ古いpendingイベントがBATCH_LIMIT内に混在しうるため、
+    // 1回のdispatchPendingNotifications呼び出しでこのイベントが処理されないことがある。
+    // その場合は成功するまで追加でdispatchする。
+    let outboxEventAfterDispatch = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { recipient: loginEmail } });
+    for (let i = 0; i < 5 && outboxEventAfterDispatch.status !== 'succeeded'; i++) {
+      await dispatchPendingNotifications();
+      outboxEventAfterDispatch = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: outboxEventAfterDispatch.id } });
+    }
+    expect(outboxEventAfterDispatch.status).toBe('succeeded');
     expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }));
-    const outboxEventAfterDispatch = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: loginEmail } });
-    expect(outboxEventAfterDispatch?.status).toBe('succeeded');
 
     // 同じ代理店に対して再度login_emailを送っても二重作成されない
     sendViaResendOrThrow.mockClear();
@@ -273,10 +279,13 @@ describe('外部代理店システム連携API', () => {
     expect(outboxEventBeforeDispatch?.eventType).toBe('agency_access_granted');
     expect(outboxEventBeforeDispatch?.status).toBe('pending');
 
-    await dispatchPendingNotifications();
+    let outboxEvent = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { recipient: memberEmail } });
+    for (let i = 0; i < 5 && outboxEvent.status !== 'succeeded'; i++) {
+      await dispatchPendingNotifications();
+      outboxEvent = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: outboxEvent.id } });
+    }
+    expect(outboxEvent.status).toBe('succeeded');
     expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }));
-    const outboxEvent = await prisma.notificationOutboxEvent.findFirst({ where: { recipient: memberEmail } });
-    expect(outboxEvent?.status).toBe('succeeded');
 
     const updatedMember = await prisma.user.findUnique({ where: { id: member.id } });
     expect(updatedMember?.role).toBe('agency');

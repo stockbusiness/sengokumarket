@@ -190,4 +190,38 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
     expect(report.invalidFormatSettings).toEqual([]);
     expect(report.readyForActivation).toBe(true);
   });
+
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase5(7.4「Preflightで明確に表示」)。
+  describe('walletClaimFlagInconsistentRuleCount', () => {
+    const originalWalletClaimFlag = process.env.ENABLE_WALLET_CLAIM;
+
+    afterEach(() => {
+      process.env.ENABLE_WALLET_CLAIM = originalWalletClaimFlag;
+    });
+
+    it('ENABLE_WALLET_CLAIM=falseかつ有効なdigital_collectibleルールがあれば1件以上カウントしreadyForActivation=falseになる', async () => {
+      delete process.env.ENABLE_WALLET_CLAIM;
+      const product = await createProduct('flag-inconsistent');
+      createdProductIds.push(product.id);
+      await prisma.productIntegrationRule.create({
+        data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+      });
+
+      const report = await buildIntegrationPreflightReport();
+      expect(report.walletClaimFlagInconsistentRuleCount).toBeGreaterThanOrEqual(1);
+      expect(report.readyForActivation).toBe(false);
+    });
+
+    it('ENABLE_WALLET_CLAIM=trueなら同じルールでもカウントしない', async () => {
+      process.env.ENABLE_WALLET_CLAIM = 'true';
+      const product = await createProduct('flag-consistent');
+      createdProductIds.push(product.id);
+      await prisma.productIntegrationRule.create({
+        data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+      });
+
+      const report = await buildIntegrationPreflightReport();
+      expect(report.walletClaimFlagInconsistentRuleCount).toBe(0);
+    });
+  });
 });

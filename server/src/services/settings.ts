@@ -36,6 +36,15 @@ export const SETTING_KEYS = [
   'ove_wallet_base_url',
   'ove_wallet_api_key_id',
   'ove_wallet_hmac_secret',
+  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)7・8・14章: 既存のove_wallet_*
+  // (X-OVE-*方式・reward付与/取消専用)とは別に、Claim確認APIおよびdigital_collectible専用
+  // Common Event API向けの認証情報・URLを分離して保持する(用途混同による誤送信・不正な
+  // 権限昇格を避けるため)。
+  'wallet_claim_web_base_url',
+  'wallet_claim_inbound_key_id',
+  'wallet_claim_inbound_hmac_secret',
+  'ove_wallet_events_key_id',
+  'ove_wallet_events_hmac_secret',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

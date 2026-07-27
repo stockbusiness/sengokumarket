@@ -4,13 +4,11 @@ import bcrypt from 'bcryptjs';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { emailFilterInsensitive, isValidEmail, normalizeEmail } from '../../lib/validation';
-import { createPasswordResetToken } from '../../services/passwordReset';
-import { sendAdminAccountSetupEmail } from '../../services/mailTemplates';
 import { ADMIN_ROLES, type AdminRole } from '@sengoku/contracts';
+import { enqueueNotification } from '../../modules/notifications/infrastructure/notificationOutbox.repository';
+import { triggerImmediateNotificationDispatch } from '../../modules/notifications/application/dispatchNotificationOutbox.usecase';
 
 const router = Router();
-
-const ROLE_LABEL: Record<AdminRole, string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
 
 function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
@@ -56,8 +54,14 @@ router.post('/admin-users', async (req, res) => {
     },
   });
 
-  const token = await createPasswordResetToken(user.id);
-  await sendAdminAccountSetupEmail(user.email, user.name, token, ROLE_LABEL[role as AdminRole]);
+  // Wallet Claim本番前安定化指示書(2026-07-25)Phase11(13.3「Tokenを含む通知」): 生Tokenは
+  // Outbox payloadへ保存せず、Dispatcher実行時に発行する(agency_account_setupと同じ設計)。
+  await enqueueNotification(prisma, {
+    eventType: 'admin_account_setup',
+    recipient: user.email,
+    payload: { name: user.name, userId: user.id, role: user.role },
+  });
+  await triggerImmediateNotificationDispatch();
 
   res.status(201).json({ adminUser: { id: user.id, name: user.name, email: user.email, role: user.role, createdAt: user.createdAt } });
 });
@@ -108,8 +112,12 @@ router.post('/admin-users/:id/resend-setup-email', async (req, res) => {
     return sendError(res, 404, 'ADMIN_USER_NOT_FOUND', '管理者アカウントが見つかりません');
   }
 
-  const token = await createPasswordResetToken(target.id);
-  await sendAdminAccountSetupEmail(target.email, target.name, token, ROLE_LABEL[target.role as AdminRole]);
+  await enqueueNotification(prisma, {
+    eventType: 'admin_account_setup',
+    recipient: target.email,
+    payload: { name: target.name, userId: target.id, role: target.role },
+  });
+  await triggerImmediateNotificationDispatch();
 
   res.json({ success: true });
 });

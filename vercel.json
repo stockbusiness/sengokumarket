@@ -2,6 +2,7 @@
   "buildCommand": "npm run build --workspace=client",
   "outputDirectory": "client/dist",
   "installCommand": "npm install",
+  "regions": ["hnd1"],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
@@ -19,12 +20,13 @@
     }
   ],
   "crons": [
-    { "path": "/api/internal/cron/sync-agency-hierarchy", "schedule": "0 18 * * *" },
-    { "path": "/api/internal/cron/expire-bank-transfer-orders", "schedule": "0 19 * * *" },
-    { "path": "/api/internal/cron/process-nft-mints", "schedule": "0 20 * * *" },
-    { "path": "/api/internal/cron/process-integration-outbox", "schedule": "0 21 * * *" },
-    { "path": "/api/internal/cron/process-notification-outbox", "schedule": "0 22 * * *" },
-    { "path": "/api/internal/cron/process-order-linking-jobs", "schedule": "0 23 * * *" },
-    { "path": "/api/internal/cron/cleanup-rate-limit-buckets", "schedule": "30 17 * * *" }
+    { "path": "/api/internal/cron/sync-agency-hierarchy?source=vercel", "schedule": "0 18 * * *" },
+    { "path": "/api/internal/cron/expire-bank-transfer-orders?source=vercel", "schedule": "0 19 * * *" },
+    { "path": "/api/internal/cron/process-nft-mints?source=vercel", "schedule": "0 20 * * *" },
+    { "path": "/api/internal/cron/process-integration-outbox?source=vercel", "schedule": "*/5 * * * *" },
+    { "path": "/api/internal/cron/process-notification-outbox?source=vercel", "schedule": "*/5 * * * *" },
+    { "path": "/api/internal/cron/process-order-linking-jobs?source=vercel", "schedule": "0 23 * * *" },
+    { "path": "/api/internal/cron/cleanup-rate-limit-buckets?source=vercel", "schedule": "30 17 * * *" },
+    { "path": "/api/internal/cron/cleanup-wallet-claim-nonces?source=vercel", "schedule": "0 16 * * *" }
   ]
 }

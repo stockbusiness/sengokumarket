@@ -2,6 +2,11 @@ import { appConfig } from '../../../shared/config/appConfig';
 import { escapeHtml, renderHtmlLayout } from '../renderers/htmlRenderer';
 import { renderTextLayout } from '../renderers/textRenderer';
 import type { EmailMessage } from '../domain/notification.types';
+import type { AdminRole } from '@sengoku/contracts';
+
+// 仕様書外の拡張: 管理者アカウント種別の日本語表示名。adminUsers.ts(作成・再送API)と
+// dispatchNotificationOutbox.usecase.ts(通知Outbox実行時)の両方から参照する唯一の定義。
+export const ADMIN_ROLE_LABEL: Record<AdminRole, string> = { admin: '管理者', admin_viewer: '閲覧専用管理者', staff: 'スタッフ' };
 
 function buildSetupUrl(token: string): string {
   return `${appConfig.appUrl ?? ''}/password-reset/confirm?token=${token}`;

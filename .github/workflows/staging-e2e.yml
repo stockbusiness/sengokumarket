@@ -1,0 +1,35 @@
+name: Staging E2E
+
+# 本番安定化指示書Stage16(ステージングE2E接続テスト): 正式URL・正式path・HMAC test vector・
+# staging key・staging DBが揃った実在のステージング環境に対してのみ意味を持つため、
+# 通常のpush/pull_requestではなく手動実行(workflow_dispatch)のみのワークフローにする。
+# 実行にはこのリポジトリのSettings > Secrets and variables > Actionsで下記シークレットの
+# 設定が必要(未設定の場合、対象スクリプトが早期にメッセージを出して終了するだけで、他の
+# CI・アプリの動作には一切影響しない)。
+#
+#   STAGING_APP_BASE_URL / STAGING_ADMIN_EMAIL / STAGING_ADMIN_PASSWORD /
+#   STAGING_STRIPE_WEBHOOK_SECRET(必須)
+#   STAGING_REFERRAL_CODE / STAGING_OVE_VARIANT_ID / STAGING_CRON_SECRET(任意・シナリオ拡充用)
+on:
+  workflow_dispatch: {}
+
+jobs:
+  staging-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node scripts/staging-e2e.mjs
+        working-directory: server
+        env:
+          STAGING_APP_BASE_URL: ${{ secrets.STAGING_APP_BASE_URL }}
+          STAGING_ADMIN_EMAIL: ${{ secrets.STAGING_ADMIN_EMAIL }}
+          STAGING_ADMIN_PASSWORD: ${{ secrets.STAGING_ADMIN_PASSWORD }}
+          STAGING_STRIPE_WEBHOOK_SECRET: ${{ secrets.STAGING_STRIPE_WEBHOOK_SECRET }}
+          STAGING_REFERRAL_CODE: ${{ secrets.STAGING_REFERRAL_CODE }}
+          STAGING_OVE_VARIANT_ID: ${{ secrets.STAGING_OVE_VARIANT_ID }}
+          STAGING_CRON_SECRET: ${{ secrets.STAGING_CRON_SECRET }}
