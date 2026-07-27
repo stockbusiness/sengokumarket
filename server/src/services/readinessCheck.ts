@@ -25,6 +25,9 @@ export const REQUIRED_MIGRATIONS = [
   'integration_outbox_dedup_key',
   // 最終安定化指示書Phase7「Scheduler主系/予備系整理」。
   'job_scheduler_heartbeats',
+  // CI復旧・本番移行前最終指示書 Stage2: schema.prismaとmigration履歴のdrift解消
+  // (job_scheduler_heartbeatsのindex名の誤りを修正)。
+  'fix_schema_migration_drift',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
