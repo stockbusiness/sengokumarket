@@ -204,13 +204,22 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
 // ここで発行・送信・失敗時の挙動を検証する。
 describe('dispatchPendingNotifications: wallet_claim_reissued(Wallet Claim本番前安定化指示書Phase1)', () => {
   const ORDER_PREFIX = 'SG-NOTIFWCTEST-';
+  // CI復旧・本番移行前最終指示書Stage4でCIが常にNOTIFICATION_TOKEN_DERIVATION_SECRETを設定する
+  // ようになったため、このdescribe直下のテスト(決定論的発行が無効な場合の都度ランダム発行
+  // フォールバックを検証する意図)はCI環境変数の影響を受けないよう明示的に未設定にする
+  // (決定論的発行時の挙動は下のネストしたdescribe('NOTIFICATION_TOKEN_DERIVATION_SECRET設定時')
+  // 側で別途検証する)。
+  const originalTokenDerivationSecret = process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
 
   beforeEach(() => {
     sendViaResendOrThrow.mockReset();
     sendViaResendOrThrow.mockImplementation(async () => undefined);
+    delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
   });
 
   afterEach(async () => {
+    if (originalTokenDerivationSecret === undefined) delete process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET;
+    else process.env.NOTIFICATION_TOKEN_DERIVATION_SECRET = originalTokenDerivationSecret;
     await prisma.notificationOutboxEvent.deleteMany({ where: { recipient: { contains: 'notif-wc-test-' } } });
     await prisma.walletClaim.deleteMany({ where: { order: { orderNumber: { startsWith: ORDER_PREFIX } } } });
     await prisma.order.deleteMany({ where: { orderNumber: { startsWith: ORDER_PREFIX } } });
