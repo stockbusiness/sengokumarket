@@ -42,6 +42,9 @@ jobs:
           cache: npm
       - run: echo "SETTINGS_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: echo "RATE_LIMIT_HASH_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+      # CI復旧・本番移行前最終指示書 Stage4(7.3): 決定論的Notification Token発行の経路も
+      # CIで実際に通す(未設定時のランダム発行フォールバック任せにしない)。
+      - run: echo "NOTIFICATION_TOKEN_DERIVATION_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npx prisma migrate deploy
         working-directory: server

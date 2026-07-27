@@ -80,6 +80,37 @@ describe('assertRequiredEnv', () => {
     );
   });
 
+  // CI復旧・本番移行前最終指示書 Stage4「Notification Token本番必須化」。
+  it('production環境でNOTIFICATION_TOKEN_DERIVATION_SECRETが未設定だとエラーになる', () => {
+    expect(() => assertRequiredEnv({ ...COMPLETE_ENV, NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toThrowError(
+      /NOTIFICATION_TOKEN_DERIVATION_SECRET/,
+    );
+  });
+
+  it('production環境でNOTIFICATION_TOKEN_DERIVATION_SECRETが32byte未満だとエラーになる', () => {
+    expect(() =>
+      assertRequiredEnv({
+        ...COMPLETE_ENV,
+        NODE_ENV: 'production',
+        NOTIFICATION_TOKEN_DERIVATION_SECRET: 'too-short',
+      } as NodeJS.ProcessEnv),
+    ).toThrowError(/NOTIFICATION_TOKEN_DERIVATION_SECRET/);
+  });
+
+  it('production環境で32byte以上のNOTIFICATION_TOKEN_DERIVATION_SECRETが設定されていればエラーにならない', () => {
+    expect(() =>
+      assertRequiredEnv({
+        ...COMPLETE_ENV,
+        NODE_ENV: 'production',
+        NOTIFICATION_TOKEN_DERIVATION_SECRET: 'a-sufficiently-long-notification-token-secret-value',
+      } as NodeJS.ProcessEnv),
+    ).not.toThrow();
+  });
+
+  it('開発・test環境ではNOTIFICATION_TOKEN_DERIVATION_SECRETが未設定でもエラーにならない(既存フォールバックを許可)', () => {
+    expect(() => assertRequiredEnv(COMPLETE_ENV)).not.toThrow();
+  });
+
   it('エラーメッセージに実際の秘密値そのものを含まない', () => {
     const secretValue = 'super-secret-value-that-must-not-leak-anywhere-12345';
     try {
