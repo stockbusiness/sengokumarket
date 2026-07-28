@@ -28,6 +28,8 @@ export const REQUIRED_MIGRATIONS = [
   // CI復旧・本番移行前最終指示書 Stage2: schema.prismaとmigration履歴のdrift解消
   // (job_scheduler_heartbeatsのindex名の誤りを修正)。
   'fix_schema_migration_drift',
+  // 購入後代理店システム連携実装指示書 PR-M1: purchase_provisioning_jobs・agency_access_mode等。
+  'purchase_agency_provisioning',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
@@ -45,6 +47,9 @@ const SENTINEL_QUERIES: { label: string; run: () => Promise<unknown> }[] = [
   { label: 'integration_outbox_events.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM integration_outbox_events LIMIT 0` },
   // 最終安定化指示書Phase7「Scheduler主系/予備系整理」。
   { label: 'job_scheduler_heartbeats.scheduler_source', run: () => prisma.$queryRaw`SELECT scheduler_source FROM job_scheduler_heartbeats LIMIT 0` },
+  // 購入後代理店システム連携実装指示書 PR-M1。
+  { label: 'products.agency_access_mode', run: () => prisma.$queryRaw`SELECT agency_access_mode FROM products LIMIT 0` },
+  { label: 'purchase_provisioning_jobs.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM purchase_provisioning_jobs LIMIT 0` },
 ];
 
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; error?: string }> {

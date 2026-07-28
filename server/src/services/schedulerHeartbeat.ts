@@ -13,6 +13,7 @@ export const PRIMARY_SCHEDULER_BY_JOB: Record<string, string> = {
   'process-notification-outbox': 'vercel',
   'process-nft-mints': 'github-actions',
   'process-order-linking-jobs': 'github-actions',
+  'process-purchase-provisioning-jobs': 'github-actions',
 };
 
 const HEARTBEAT_FRESHNESS_MS = 10 * 60 * 1000;

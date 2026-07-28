@@ -45,6 +45,13 @@ export const SETTING_KEYS = [
   'wallet_claim_inbound_hmac_secret',
   'ove_wallet_events_key_id',
   'ove_wallet_events_hmac_secret',
+  // 購入後代理店システム連携実装指示書 5.5・7章: purchase-provisioning API専用の認証情報。
+  // 既存のexternal_agency_system_api_key(代理店候補の同期・階層取得、x-api-key方式)とは
+  // 別物(用途混同による誤送信・不正な権限昇格を避けるため、他の千ノ国連携と同じく
+  // 用途ごとに鍵を分離する)。この用途はHMAC共通仕様v1.1(X-SenNoKuni-*)を使う。
+  'purchase_provisioning_base_url',
+  'purchase_provisioning_hmac_key_id',
+  'purchase_provisioning_hmac_secret',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];

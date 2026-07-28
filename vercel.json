@@ -26,6 +26,7 @@
     { "path": "/api/internal/cron/process-integration-outbox?source=vercel", "schedule": "*/5 * * * *" },
     { "path": "/api/internal/cron/process-notification-outbox?source=vercel", "schedule": "*/5 * * * *" },
     { "path": "/api/internal/cron/process-order-linking-jobs?source=vercel", "schedule": "0 23 * * *" },
+    { "path": "/api/internal/cron/process-purchase-provisioning-jobs?source=vercel", "schedule": "0 23 * * *" },
     { "path": "/api/internal/cron/cleanup-rate-limit-buckets?source=vercel", "schedule": "30 17 * * *" },
     { "path": "/api/internal/cron/cleanup-wallet-claim-nonces?source=vercel", "schedule": "0 16 * * *" }
   ]
