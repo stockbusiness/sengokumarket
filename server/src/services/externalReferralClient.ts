@@ -155,24 +155,56 @@ export async function confirmReferral(input: ConfirmReferralInput): Promise<Conf
     return null;
   }
 
-  const json = (await res.json().catch(() => null)) as {
-    status?: unknown;
-    common_user_id?: unknown;
-    registration_referrer_agency_id?: unknown;
-    assigned_agency_id?: unknown;
-    sales_agent_id?: unknown;
-    closing_agent_id?: unknown;
-  } | null;
+  const json = (await res.json().catch(() => null)) as ConfirmReferralResponseBody | null;
 
-  if (!json || json.status !== 'confirmed' || typeof json.common_user_id !== 'string') {
+  // 購入後代理店システム連携実装指示書 6.8・8.2章「受理条件」: status='confirmed'を必須と
+  // しない(ok===trueを正とし、旧仕様のstatus='confirmed'のみの応答にも後方互換で対応する)。
+  const succeeded = json?.ok === true || json?.status === 'confirmed';
+  if (!json || !succeeded || typeof json.common_user_id !== 'string') {
     return null;
   }
 
   return {
     commonUserId: json.common_user_id,
-    registrationReferrerAgencyId: typeof json.registration_referrer_agency_id === 'string' ? json.registration_referrer_agency_id : null,
-    assignedAgencyId: typeof json.assigned_agency_id === 'string' ? json.assigned_agency_id : null,
-    salesAgentId: typeof json.sales_agent_id === 'string' ? json.sales_agent_id : null,
-    closingAgentId: typeof json.closing_agent_id === 'string' ? json.closing_agent_id : null,
+    ...extractAgencyRoleFields(json),
+  };
+}
+
+interface ConfirmReferralResponseBody {
+  ok?: unknown;
+  status?: unknown;
+  common_user_id?: unknown;
+  transaction?: unknown;
+  // 8.2章「互換期間はagency_id、relation、agency_relationsも返してよい」: 代理店4役は
+  // トップレベル(正式契約)・agency_assignment・relationのいずれかに入っている可能性がある。
+  agency_assignment?: Record<string, unknown>;
+  relation?: Record<string, unknown>;
+  registration_referrer_agency_id?: unknown;
+  assigned_agency_id?: unknown;
+  sales_agent_id?: unknown;
+  closing_agent_id?: unknown;
+}
+
+function extractAgencyRoleFields(json: ConfirmReferralResponseBody): {
+  registrationReferrerAgencyId: string | null;
+  assignedAgencyId: string | null;
+  salesAgentId: string | null;
+  closingAgentId: string | null;
+} {
+  const sources = [json, json.agency_assignment, json.relation].filter(
+    (s): s is Record<string, unknown> => typeof s === 'object' && s !== null,
+  );
+  function pick(key: string): string | null {
+    for (const source of sources) {
+      const value = source[key];
+      if (typeof value === 'string') return value;
+    }
+    return null;
+  }
+  return {
+    registrationReferrerAgencyId: pick('registration_referrer_agency_id'),
+    assignedAgencyId: pick('assigned_agency_id'),
+    salesAgentId: pick('sales_agent_id'),
+    closingAgentId: pick('closing_agent_id'),
   };
 }

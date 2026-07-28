@@ -9,8 +9,13 @@ const FETCH_TIMEOUT_MS = 8000;
 export interface ResolveCommonUserInput {
   // このシステム内のユーザーID(external_user_idとして送信する)。
   externalUserId: string;
-  verifiedEmail?: string | null;
-  verifiedPhone?: string | null;
+  name: string;
+  email: string;
+  // 購入後代理店システム連携実装指示書 6.7・8.1章: このシステムには現状メールアドレスの
+  // 所有確認(検証リンク等)フローが無いため、常にfalseを送る(未検証を偽って「検証済み」と
+  // 送ることはしない)。
+  emailVerified: boolean;
+  phone?: string | null;
 }
 
 export interface ResolveCommonUserResult {
@@ -28,11 +33,17 @@ export async function resolveCommonUserId(input: ResolveCommonUserInput): Promis
   if (!credentials) return null;
 
   const method = 'POST';
+  // 購入後代理店システム連携実装指示書 6.7・8.1章: 正式契約のキー名(system_key・
+  // external_user_id・name・email・email_verified・phone・create_if_missing)へ統一する。
+  // 旧キー(verified_email・verified_phone)は送らない(受信側の互換期間対応に依存しない)。
   const rawBody = JSON.stringify({
     system_key: SYSTEM_KEY,
     external_user_id: input.externalUserId,
-    verified_email: input.verifiedEmail ?? undefined,
-    verified_phone: input.verifiedPhone ?? undefined,
+    name: input.name,
+    email: input.email,
+    email_verified: input.emailVerified,
+    phone: input.phone ?? undefined,
+    create_if_missing: true,
   });
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomBytes(16).toString('hex');
