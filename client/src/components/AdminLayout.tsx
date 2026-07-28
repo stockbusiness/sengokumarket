@@ -76,6 +76,7 @@ const NAV_GROUPS: {
       { to: '/admin/integration-preflight', label: '連携Preflight・段階設定', icon: IconGear, staffHidden: true },
       { to: '/admin/integration-outbox', label: 'Integration Outbox', icon: IconChart, badgeKey: 'integrationAlerts', staffHidden: true },
       { to: '/admin/order-linking-jobs', label: 'Order Linking Jobs', icon: IconLink, staffHidden: true },
+      { to: '/admin/purchase-provisioning', label: '代理店ポータル連携ジョブ', icon: IconLink, staffHidden: true },
       {
         to: '/admin/external-identity-conflicts',
         label: '共通ID競合',

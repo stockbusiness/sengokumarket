@@ -1,9 +1,14 @@
 import crypto from 'crypto';
-import type { Prisma, PurchaseProvisioningJob } from '@prisma/client';
+import type { Order, Prisma, PurchaseProvisioningJob } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { appConfig } from '../shared/config/appConfig';
-import { isPurchaseProvisioningEnabled } from './purchaseProvisioningConfig';
-import { requestPurchaseProvisioning, revokePurchaseProvisioning } from './externalPurchaseProvisioningClient';
+import { isAgencyPortalLoginEnabled, isPurchaseProvisioningEnabled } from './purchaseProvisioningConfig';
+import {
+  requestPurchaseProvisioning,
+  revokePurchaseProvisioning,
+  type PurchaseProvisioningRequestInput,
+} from './externalPurchaseProvisioningClient';
+import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 // 購入後代理店システム連携実装指示書 6.4章: order_linking_jobs/integration_outbox_eventsと
 // 同じ「条件付きUPDATEによるアトミックなclaim + 指数バックオフ + 最大試行超過でdead」設計を
@@ -171,14 +176,14 @@ async function runJob(job: PurchaseProvisioningJob): Promise<void> {
   throw new Error(`unknown purchase provisioning job action: ${job.action}`);
 }
 
-async function runProvisionJob(job: PurchaseProvisioningJob): Promise<void> {
-  const order = await prisma.order.findUnique({ where: { id: job.orderId } });
-  if (!order) return;
-  // 決済確定前に打ち切られた(返金・キャンセル等で既にnot_applicable/revokedへ進んでいた)場合は
-  // 送信しない(fail-close。6.13章「保護条件: 決済・在庫を巻き戻さない」と対で、逆方向の
-  // 事故=返金済み注文へアカウントを新規発行してしまうことも防ぐ)。
-  if (order.paymentStatus !== 'paid') return;
-  if (!order.commonUserId) throw new ProvisioningDependencyNotReadyError();
+// runProvisionJob(cron経由)とreissueAgencyLoginUrl(マイページからの再発行API)の両方が
+// 同じリクエスト内容を組み立てられるよう共通化する。'not_applicable'(対象商品が無い)・
+// 'dependency_not_ready'(common_user_id未解決)は呼び出し元がそれぞれの文脈で処理する。
+async function buildProvisioningRequestInput(
+  order: Order,
+  eventId: string,
+): Promise<PurchaseProvisioningRequestInput | 'not_applicable' | 'dependency_not_ready'> {
+  if (!order.commonUserId) return 'dependency_not_ready';
 
   const orderItems = await prisma.orderItem.findMany({ where: { orderId: order.id } });
   const productIds = [...new Set(orderItems.map((item) => item.productId))];
@@ -189,14 +194,10 @@ async function runProvisionJob(job: PurchaseProvisioningJob): Promise<void> {
     const product = productById.get(item.productId);
     return product && product.agencyAccessMode !== 'none';
   });
-  // enqueue後に商品設定がnoneへ変更された等でno-opになるケース。
-  if (relevantItems.length === 0) {
-    await prisma.order.update({ where: { id: order.id }, data: { agencyProvisioningStatus: 'not_applicable' } });
-    return;
-  }
+  if (relevantItems.length === 0) return 'not_applicable';
 
-  const result = await requestPurchaseProvisioning({
-    eventId: `evt_ppj_${job.id}`,
+  return {
+    eventId,
     correlationId: order.correlationId ?? order.id,
     commonUserId: order.commonUserId,
     externalUserId: order.userId ?? order.id,
@@ -242,7 +243,26 @@ async function runProvisionJob(job: PurchaseProvisioningJob): Promise<void> {
       mode: 'sso',
       returnUrl: appConfig.appUrl ? `${appConfig.appUrl}/mypage` : null,
     },
-  });
+  };
+}
+
+async function runProvisionJob(job: PurchaseProvisioningJob): Promise<void> {
+  const order = await prisma.order.findUnique({ where: { id: job.orderId } });
+  if (!order) return;
+  // 決済確定前に打ち切られた(返金・キャンセル等で既にnot_applicable/revokedへ進んでいた)場合は
+  // 送信しない(fail-close。6.13章「保護条件: 決済・在庫を巻き戻さない」と対で、逆方向の
+  // 事故=返金済み注文へアカウントを新規発行してしまうことも防ぐ)。
+  if (order.paymentStatus !== 'paid') return;
+
+  const input = await buildProvisioningRequestInput(order, `evt_ppj_${job.id}`);
+  if (input === 'dependency_not_ready') throw new ProvisioningDependencyNotReadyError();
+  if (input === 'not_applicable') {
+    // enqueue後に商品設定がnoneへ変更された等でno-opになるケース。
+    await prisma.order.update({ where: { id: order.id }, data: { agencyProvisioningStatus: 'not_applicable' } });
+    return;
+  }
+
+  const result = await requestPurchaseProvisioning(input);
 
   if (!result) throw new Error('purchase provisioning request failed or returned no result');
   // 本番安定化指示書Stage9(12.3)のreferral confirm検証と同じ考え方: レスポンスの
@@ -273,6 +293,17 @@ async function runProvisionJob(job: PurchaseProvisioningJob): Promise<void> {
         agencyProvisioningLastError: null,
       },
     });
+    // 6.12章「購入完了メール」: ジョブ作成(決済確定)時点ではまだログインURLが存在しないため、
+    // 実際に発行できたこのタイミングで通知予定を作成する。AGENCY_PORTAL_LOGIN_ENABLEDは
+    // ジョブ自体の実行(PURCHASE_PROVISIONING_ENABLED)とは独立したUI公開スイッチのため、
+    // 無効の間は通知も送らない。
+    if (isAgencyPortalLoginEnabled()) {
+      await enqueueNotification(tx, {
+        eventType: 'agency_portal_access_ready',
+        recipient: order.customerEmail,
+        payload: { orderId: order.id },
+      });
+    }
   });
 }
 
@@ -338,4 +369,46 @@ export async function skipPurchaseProvisioningJob(id: string): Promise<{ ok: boo
     data: { status: 'skipped', blockedReason: null, processingToken: null, processingStartedAt: null },
   });
   return { ok: claim.count > 0 };
+}
+
+export type ReissueAgencyLoginUrlResult =
+  | { ok: true; loginUrl: string; loginUrlExpiresAt: string | null }
+  | { ok: false; reason: 'not_configured' | 'not_eligible' | 'request_failed' };
+
+// 6.9・6.11章「マイページからのURL再発行」: すでにprovisioned状態の注文についてのみ、
+// buildProvisioningRequestInputと同じ内容で改めてrequestPurchaseProvisioningを呼び、
+// 新しいログインURLを取得する。ジョブテーブル(purchase_provisioning_jobs)は増やさず、
+// orders側のキャッシュのみを更新する(履歴が必要な操作ではなく、期限切れURLの単純な
+// 差し替えのため)。
+export async function reissueAgencyLoginUrl(orderId: string, userId: string): Promise<ReissueAgencyLoginUrlResult> {
+  if (!isPurchaseProvisioningEnabled() || !isAgencyPortalLoginEnabled()) return { ok: false, reason: 'not_configured' };
+
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+  if (!order || order.userId !== userId || order.agencyProvisioningStatus !== 'provisioned') {
+    return { ok: false, reason: 'not_eligible' };
+  }
+
+  const input = await buildProvisioningRequestInput(order, `evt_reissue_${crypto.randomUUID()}`);
+  if (typeof input === 'string') return { ok: false, reason: 'not_eligible' };
+
+  const result = await requestPurchaseProvisioning(input);
+  if (!result || result.commonUserId !== order.commonUserId || !result.loginUrl) {
+    return { ok: false, reason: 'request_failed' };
+  }
+
+  await prisma.order.update({
+    where: { id: order.id },
+    data: {
+      agencyAccountType: result.accountType,
+      agencyAccountId: result.accountId,
+      agencyLoginEmail: result.loginEmail,
+      agencyLoginMode: result.accessMode,
+      agencyLoginUrl: result.loginUrl,
+      agencyLoginUrlExpiresAt: result.loginUrlExpiresAt ? new Date(result.loginUrlExpiresAt) : null,
+      agencyProvisionedAt: new Date(),
+      agencyProvisioningLastError: null,
+    },
+  });
+
+  return { ok: true, loginUrl: result.loginUrl, loginUrlExpiresAt: result.loginUrlExpiresAt };
 }

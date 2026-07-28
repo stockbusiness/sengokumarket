@@ -14,7 +14,10 @@ export type NotificationEventType =
   | 'password_reset'
   | 'cart_abandoned'
   | 'admin_account_setup'
-  | 'wallet_reminder';
+  | 'wallet_reminder'
+  // 購入後代理店システム連携実装指示書 6.12章: アカウント発行(ログインURL取得)が
+  // 成功した直後に送る通知。
+  | 'agency_portal_access_ready';
 
 export interface AgencyAccountSetupPayload {
   name: string;
@@ -69,6 +72,12 @@ export interface WalletReminderPayload {
   nftIssueId: string;
 }
 
+// 購入後代理店システム連携実装指示書 6.12章: ログインURL自体は短期間で失効するため、
+// payloadへは含めない(Dispatcher実行時にordersから最新のURLを再取得する)。
+export interface AgencyPortalAccessReadyPayload {
+  orderId: string;
+}
+
 export interface EnqueueNotificationInput {
   eventType: NotificationEventType;
   recipient: string;
@@ -82,5 +91,6 @@ export interface EnqueueNotificationInput {
     | PasswordResetPayload
     | CartAbandonedPayload
     | AdminAccountSetupPayload
-    | WalletReminderPayload;
+    | WalletReminderPayload
+    | AgencyPortalAccessReadyPayload;
 }
