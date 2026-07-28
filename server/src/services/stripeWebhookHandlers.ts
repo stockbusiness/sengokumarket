@@ -5,6 +5,7 @@ import { applyPaidOrderSideEffects } from './orderFulfillment';
 import { cancelCouponUsage, restoreCouponUsageOnFullRefund } from './coupon';
 import { enqueueEntitlementEvents } from './integrationOutbox';
 import { applyWalletClaimRefundEffects } from './walletClaimRefund';
+import { enqueueProvisioningRevokeJobIfApplicable } from './purchaseProvisioningJobs';
 import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 function eventTime(event: Stripe.Event): Date {
@@ -186,6 +187,11 @@ export async function handleChargeRefunded(event: Stripe.Event) {
     // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)16章: WalletClaim/
     // CollectibleDeliveryの進行段階に応じた取消処理(この注文にWalletClaimがなければno-op)。
     await applyWalletClaimRefundEffects(tx, refundedOrder);
+
+    // 購入後代理店システム連携実装指示書 10章: 全額返金と同一トランザクションでrevokeジョブを
+    // 記録する(provisioningジョブを一度も作っていない注文はno-op。実送信はcommit後に
+    // Dispatcherがcron経由で行う)。
+    await enqueueProvisioningRevokeJobIfApplicable(tx, refundedOrder);
 
     const commission = await tx.commission.findUnique({ where: { orderId: order.id } });
     if (commission) {
