@@ -1,0 +1,505 @@
+<title>ご利用ガイド | 戦国評議員デジタル会員証</title>
+<style>
+  :root {
+    --ink-900: #182330;
+    --ink-800: #1E2A38;
+    --ink-700: #2B3B4E;
+    --ink-600: #445569;
+    --paper-0: #F4F0E4;
+    --paper-50: #EEE8DA;
+    --paper-100: #E4DCC9;
+    --paper-200: #D8CDB4;
+    --line: #C9BC9F;
+    --ink-on-paper: #2A2620;
+    --muted-on-paper: #6B6250;
+    --accent: #A8442C;
+    --accent-strong: #8E3620;
+    --accent-tint: #F1DCD3;
+    --success: #3F7A56;
+    --success-tint: #DCEBE1;
+    --warning: #A97321;
+    --warning-tint: #F1E3C6;
+    --danger: #9B2C2C;
+    --danger-tint: #F2DADA;
+    --neutral: #6B6250;
+    --neutral-tint: #E4DCC9;
+    --card-bg: #FBF9F3;
+    --code-bg: #E9E1CD;
+    --shadow: 0 1px 2px rgba(24,35,48,0.06), 0 4px 14px rgba(24,35,48,0.05);
+    --font-body: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic Medium", "YuGothic", "Noto Sans JP", Meiryo, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink-900: #0D1319; --ink-800: #141D27; --ink-700: #1E2A38; --ink-600: #3A4C61;
+      --paper-0: #171410; --paper-50: #1C1915; --paper-100: #24201A; --paper-200: #2D2820;
+      --line: #3C362B; --ink-on-paper: #EAE3D3; --muted-on-paper: #A79C84;
+      --accent: #E08462; --accent-strong: #EFA286; --accent-tint: #3A241D;
+      --success: #6FBE93; --success-tint: #1E3328;
+      --warning: #E0AE5C; --warning-tint: #3A2E15;
+      --danger: #E27979; --danger-tint: #3A1E1E;
+      --neutral: #A79C84; --neutral-tint: #24201A;
+      --card-bg: #1E1A14; --code-bg: #24201A;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 18px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink-900: #0D1319; --ink-800: #141D27; --ink-700: #1E2A38; --ink-600: #3A4C61;
+    --paper-0: #171410; --paper-50: #1C1915; --paper-100: #24201A; --paper-200: #2D2820;
+    --line: #3C362B; --ink-on-paper: #EAE3D3; --muted-on-paper: #A79C84;
+    --accent: #E08462; --accent-strong: #EFA286; --accent-tint: #3A241D;
+    --success: #6FBE93; --success-tint: #1E3328;
+    --warning: #E0AE5C; --warning-tint: #3A2E15;
+    --danger: #E27979; --danger-tint: #3A1E1E;
+    --neutral: #A79C84; --neutral-tint: #24201A;
+    --card-bg: #1E1A14; --code-bg: #24201A;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 18px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --ink-900: #182330; --ink-800: #1E2A38; --ink-700: #2B3B4E; --ink-600: #445569;
+    --paper-0: #F4F0E4; --paper-50: #EEE8DA; --paper-100: #E4DCC9; --paper-200: #D8CDB4;
+    --line: #C9BC9F; --ink-on-paper: #2A2620; --muted-on-paper: #6B6250;
+    --accent: #A8442C; --accent-strong: #8E3620; --accent-tint: #F1DCD3;
+    --success: #3F7A56; --success-tint: #DCEBE1;
+    --warning: #A97321; --warning-tint: #F1E3C6;
+    --danger: #9B2C2C; --danger-tint: #F2DADA;
+    --neutral: #6B6250; --neutral-tint: #E4DCC9;
+    --card-bg: #FBF9F3; --code-bg: #E9E1CD;
+    --shadow: 0 1px 2px rgba(24,35,48,0.06), 0 4px 14px rgba(24,35,48,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper-0);
+    color: var(--ink-on-paper);
+    font-family: var(--font-body);
+    line-height: 1.8;
+    font-size: 16.5px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-strong); }
+  @media (prefers-color-scheme: dark) { a { color: var(--accent); } }
+  :root[data-theme="dark"] a { color: var(--accent); }
+  :root[data-theme="light"] a { color: var(--accent-strong); }
+
+  .shell { display: flex; min-height: 100vh; }
+
+  .toc {
+    width: 260px;
+    flex: 0 0 260px;
+    background: var(--ink-800);
+    color: #E9E4D6;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 40px;
+  }
+  .toc-brand { font-size: 13px; letter-spacing: 0.06em; color: #B9C2CC; margin: 0 0 2px; }
+  .toc-title { font-size: 19px; font-weight: 700; color: #fff; margin: 0 0 22px; line-height: 1.4; }
+  .toc nav { display: flex; flex-direction: column; gap: 18px; }
+  .toc-group-label {
+    font-size: 11.5px; font-weight: 700; letter-spacing: 0.09em; color: #8FA0AF;
+    text-transform: uppercase; margin: 0 0 6px 2px;
+  }
+  .toc-links { display: flex; flex-direction: column; }
+  .toc-links a {
+    display: block; padding: 6px 8px; border-radius: 6px; color: #D6DCE2;
+    text-decoration: none; font-size: 14px; line-height: 1.5;
+  }
+  .toc-links a:hover { background: rgba(255,255,255,0.07); color: #fff; }
+
+  .main { flex: 1; min-width: 0; padding: 48px 56px 120px; max-width: 860px; }
+  @media (max-width: 900px) {
+    .shell { display: block; }
+    .toc { position: static; width: auto; height: auto; }
+    .main { padding: 32px 20px 80px; max-width: none; }
+  }
+
+  .cover { margin-bottom: 44px; padding-bottom: 32px; border-bottom: 1px solid var(--line); }
+  .cover-eyebrow {
+    font-size: 12.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent-strong); margin: 0 0 10px;
+  }
+  .cover h1 { font-size: 30px; font-weight: 800; margin: 0 0 14px; line-height: 1.45; text-wrap: balance; color: var(--ink-800); }
+  @media (prefers-color-scheme: dark) { .cover h1 { color: var(--ink-on-paper); } }
+  :root[data-theme="dark"] .cover h1 { color: var(--ink-on-paper); }
+  .cover p.lead { font-size: 16.5px; color: var(--muted-on-paper); max-width: 60ch; margin: 0; }
+
+  section.group { margin-bottom: 56px; }
+  .group-heading { display: flex; align-items: baseline; gap: 12px; margin: 0 0 22px; padding-bottom: 10px; border-bottom: 2px solid var(--ink-800); }
+  .group-heading h2 { font-size: 21px; font-weight: 800; margin: 0; color: var(--ink-800); }
+  @media (prefers-color-scheme: dark) { .group-heading h2 { color: var(--ink-on-paper); } }
+  :root[data-theme="dark"] .group-heading h2 { color: var(--ink-on-paper); }
+  .group-heading .group-note { font-size: 13px; color: var(--muted-on-paper); }
+
+  article.page-card {
+    background: var(--card-bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 26px 28px 28px; margin-bottom: 20px; box-shadow: var(--shadow);
+  }
+  .page-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .page-card-head h3 { font-size: 18.5px; font-weight: 700; margin: 0; }
+  .page-path { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted-on-paper); margin: 0 0 14px; }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 700;
+    padding: 3px 10px; border-radius: 100px; letter-spacing: 0.02em; white-space: nowrap;
+  }
+  .chip-member { background: var(--accent-tint); color: var(--accent-strong); }
+  .chip-guest { background: var(--neutral-tint); color: var(--muted-on-paper); }
+
+  .page-card p { margin: 0 0 12px; }
+  .page-card h4 {
+    font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--muted-on-paper); margin: 20px 0 8px;
+  }
+  .page-card h4:first-of-type { margin-top: 18px; }
+
+  ol.steps { margin: 0; padding-left: 1.35em; display: flex; flex-direction: column; gap: 7px; }
+  ol.steps li::marker { color: var(--accent-strong); font-weight: 700; }
+  ul.plain { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+
+  table.fields { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0; }
+  table.fields th, table.fields td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  table.fields th { font-weight: 700; font-size: 12.5px; letter-spacing: 0.03em; color: var(--muted-on-paper); text-transform: uppercase; width: 32%; }
+  .table-wrap { overflow-x: auto; }
+
+  .callout {
+    display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border-radius: 8px;
+    font-size: 14.5px; margin: 14px 0; border: 1px solid transparent;
+  }
+  .callout-icon {
+    flex: 0 0 auto; width: 22px; height: 22px; border-radius: 50%; display: flex;
+    align-items: center; justify-content: center; font-weight: 800; font-size: 13px; color: #fff; margin-top: 1px;
+  }
+  .callout-warn { background: var(--warning-tint); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+  .callout-warn .callout-icon { background: var(--warning); }
+  .callout-danger { background: var(--danger-tint); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .callout-danger .callout-icon { background: var(--danger); }
+  .callout-info { background: var(--neutral-tint); border-color: var(--line); }
+  .callout-info .callout-icon { background: var(--ink-700); }
+  .callout p { margin: 0; }
+  .callout strong { display: block; margin-bottom: 2px; }
+
+  code, .mono { font-family: var(--font-mono); font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+
+  .status-pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 100px; }
+  .s-neutral { background: var(--neutral-tint); color: var(--muted-on-paper); }
+  .s-warn { background: var(--warning-tint); color: var(--warning); }
+  .s-success { background: var(--success-tint); color: var(--success); }
+  .status-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13.5px; margin: 6px 0 4px; }
+  .status-flow .arrow { color: var(--muted-on-paper); }
+
+  .faq-q { font-weight: 700; margin: 0 0 4px; }
+  .faq-item + .faq-item { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+
+  footer.manual-footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted-on-paper); }
+</style>
+
+<div class="shell">
+  <aside class="toc">
+    <p class="toc-brand">戦国楽市楽座</p>
+    <p class="toc-title">ご利用ガイド</p>
+    <nav>
+      <div>
+        <p class="toc-group-label">はじめに</p>
+        <div class="toc-links"><a href="#intro">ご案内URLについて</a></div>
+      </div>
+      <div>
+        <p class="toc-group-label">会員登録・ログイン</p>
+        <div class="toc-links">
+          <a href="#register">会員登録</a>
+          <a href="#login">ログイン</a>
+          <a href="#password-reset">パスワードを忘れた場合</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">ご購入</p>
+        <div class="toc-links">
+          <a href="#product">商品を選ぶ</a>
+          <a href="#cart">カート</a>
+          <a href="#checkout">購入手続き</a>
+          <a href="#checkout-result">購入完了・お振込みの場合</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">デジタル会員証の受け取り</p>
+        <div class="toc-links">
+          <a href="#wallet">受取用ウォレットの登録</a>
+          <a href="#mypage-nft">受け取り状況の確認</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">マイページ</p>
+        <div class="toc-links">
+          <a href="#mypage-orders">購入履歴・領収書</a>
+          <a href="#mypage-notices">お知らせ</a>
+          <a href="#mypage-profile">登録情報の編集</a>
+          <a href="#mypage-agency">代理店(インフルエンサー)申請</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">サポート</p>
+        <div class="toc-links"><a href="#faq">よくある質問</a></div>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="cover">
+      <p class="cover-eyebrow">User Guide · v1</p>
+      <h1>戦国評議員デジタル会員証<br>ご利用ガイド</h1>
+      <p class="lead">
+        会員登録から、お申し込み、デジタル会員証の受け取りまでの流れを、画面が表示される順番にそって説明します。
+        操作に迷ったときや困ったときは、まず「よくある質問」もご確認ください。
+      </p>
+    </div>
+
+    <section class="group" id="intro-group">
+      <div class="group-heading"><h2>はじめに</h2></div>
+      <article class="page-card" id="intro">
+        <div class="page-card-head">
+          <h3>ご案内URLについて</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p>
+          戦国楽市楽座の評議員デジタル会員証は、提携代理店(インフルエンサー)からご案内する専用URLを通じてのみお申し込みいただけます。
+          検索や直接のアクセスではお申し込み画面が開けず、代わりにご案内画面が表示されます。
+        </p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>URLが開けないとき</strong>お心当たりの代理店ご担当者様から届いたご案内URLから、もう一度アクセスしてください。既に会員登録がお済みの方は、ご案内画面からログイン画面に進むこともできます。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="account-group">
+      <div class="group-heading"><h2>会員登録・ログイン</h2></div>
+
+      <article class="page-card" id="register">
+        <div class="page-card-head">
+          <h3>会員登録</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/register</p>
+        <p>氏名・メールアドレス・パスワード(8文字以上)・電話番号を入力して登録します。登録が完了すると、そのまま商品一覧画面に進みます。</p>
+      </article>
+
+      <article class="page-card" id="login">
+        <div class="page-card-head">
+          <h3>ログイン</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/login</p>
+        <p>登録済みのメールアドレスとパスワードでログインします。ログイン画面はお申し込みURLの種類にかかわらず共通です。</p>
+      </article>
+
+      <article class="page-card" id="password-reset">
+        <div class="page-card-head">
+          <h3>パスワードを忘れた場合</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/password-reset</p>
+        <ol class="steps">
+          <li>ログイン画面の「パスワードをお忘れの方はこちら」から、登録済みのメールアドレスを入力して送信します。</li>
+          <li>入力したメールアドレスが登録されている場合、再設定用のリンクが記載されたメールが届きます(登録の有無にかかわらず同じ案内文が表示されます)。</li>
+          <li>メール内のリンクを開き、新しいパスワード(8文字以上)を設定します。</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="group" id="purchase-group">
+      <div class="group-heading"><h2>ご購入</h2></div>
+
+      <article class="page-card" id="product">
+        <div class="page-card-head">
+          <h3>商品を選ぶ</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/products/:商品</p>
+        <p>商品ページで種類(ランクなど)と数量を選び、「カートに追加」を押します。在庫が無い種類は「売り切れ」と表示され選べません。画像が複数ある商品は、サムネイルをクリックすると切り替わります。</p>
+      </article>
+
+      <article class="page-card" id="cart">
+        <div class="page-card-head">
+          <h3>カート</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/cart</p>
+        <p>カート内の数量変更・削除ができます。「購入手続きへ進む」を押すと、在庫・価格が最新の状態か自動で確認されます。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>内容が自動で変わることがあります</strong>確認の結果、売り切れていた商品はカートから自動的に取り除かれ、在庫が減っていた場合は数量が調整されます。価格が変わっていた場合は最新価格に更新されます。変更があった場合は購入手続きには進まず、変更内容がお知らせとして表示されますので、内容をご確認のうえもう一度お進みください。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="checkout">
+        <div class="page-card-head">
+          <h3>購入手続き</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p class="page-path mono">/checkout</p>
+        <p>ログイン中の方は、氏名・メールアドレス・電話番号があらかじめ入力された状態で表示されます(必要に応じて変更できます)。郵便番号・住所は毎回入力してください。</p>
+        <h4>入力する項目</h4>
+        <div class="table-wrap">
+          <table class="fields">
+            <tbody>
+              <tr><th>紹介コード</th><td>ご案内URLから自動的に入力されます。紹介元の名前が表示されれば正しく認識されています。</td></tr>
+              <tr><th>説明担当者のお名前</th><td>対面などで説明を受けた担当者がいる場合に任意で入力する欄です。</td></tr>
+              <tr><th>クーポンコード</th><td>お持ちの場合に入力し「適用する」を押します。ご案内URLの内容によっては自動的に適用され、その場合は入力欄自体が表示されません。</td></tr>
+              <tr><th>お支払い方法</th><td>クレジットカード決済、または(利用可能な場合のみ)銀行振込を選べます。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>利用規約・返金ポリシーへの同意が必要です</strong>チェックを入れないと「購入を確定する」に進めません。内容は事前にリンク先でご確認ください。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="checkout-result">
+        <div class="page-card-head">
+          <h3>購入完了・お振込みの場合</h3>
+          <span class="chip chip-guest">どなたでも</span>
+        </div>
+        <p>クレジットカード決済を選んだ場合は決済画面に移動します。決済完了後、購入完了画面に注文番号が表示されます。</p>
+        <div class="status-flow">
+          <span class="status-pill s-neutral">決済情報の反映を確認中</span><span class="arrow">→</span>
+          <span class="status-pill s-success">決済が完了しました</span>
+        </div>
+        <p style="font-size:13.5px;color:var(--muted-on-paper);margin-top:2px;">画面表示まで数分かかる場合がありますが、決済自体はカード会社側で既に処理されていますので、そのままお待ちください。決済を途中で中断した場合は「決済が完了していません」という画面になり、カートの内容はそのまま保持されます。</p>
+        <h4>銀行振込を選んだ場合</h4>
+        <p>注文番号と振込先が画面に表示されます(同じ内容のメールも届きます)。<strong>お振込みの際は、お振込人名の前に注文番号を入力してください。</strong>案内された期限内にお振込みが確認できない場合、ご注文は自動的にキャンセルとなります。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>デジタル会員証の受け取りには、もう1つ手続きが必要です</strong>決済(またはお振込み)が完了しても、それだけではデジタル会員証は届きません。次の「受取用ウォレットの登録」を行ってください。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="claim-group">
+      <div class="group-heading"><h2>デジタル会員証の受け取り</h2></div>
+
+      <article class="page-card" id="wallet">
+        <div class="page-card-head">
+          <h3>受取用ウォレットの登録</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage/wallet</p>
+        <p>デジタル会員証は「受取用ウォレット」というお手元の受け皿に届けられます。あらかじめお使いのブラウザに、対応する拡張機能(MetaMaskなど)を追加しておいてください。</p>
+        <ol class="steps">
+          <li>「ウォレットに接続する」を押します。ブラウザの拡張機能が起動するので、接続するアドレスを選びます。</li>
+          <li>接続したアドレスが表示されたら「署名して登録する」を押します。拡張機能に確認画面が表示されるので、内容を確認し署名します(この操作でお金が動くことはありません)。</li>
+          <li>「受取用ウォレットを確認・登録しました」と表示されれば完了です。</li>
+        </ol>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>署名(ご本人確認)は必ず必要です</strong>アドレスを入力するだけでは登録は完了しません。ご本人であることを確認するための署名が必須です。これは、間違ったアドレスへの誤送付を防ぐための仕組みです。</p>
+        </div>
+        <p>すでに登録済みのアドレスと異なるアドレスで登録し直そうとすると、確認画面が表示されます。「発行済みのデジタル会員証には影響しません」と案内される通り、これから発行されるものの送り先が切り替わるだけで、過去に届いたものが失われることはありません。</p>
+      </article>
+
+      <article class="page-card" id="mypage-nft">
+        <div class="page-card-head">
+          <h3>受け取り状況の確認</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage</p>
+        <p>マイページの「デジタル会員証の発行状況」で、購入した会員証ごとの状況を確認できます。</p>
+        <div class="status-flow">
+          <span class="status-pill s-neutral">ウォレット未登録</span><span class="arrow">→</span>
+          <span class="status-pill s-warn">発行準備中</span><span class="arrow">→</span>
+          <span class="status-pill s-warn">発行手続き中</span><span class="arrow">→</span>
+          <span class="status-pill s-success">発行済み</span>
+        </div>
+        <p>「ウォレット未登録」と表示されている場合は、上の「受取用ウォレットの登録」から手続きしてください。「発行エラー」と表示された場合は、お手数ですがサポートまでお問い合わせください。</p>
+        <h4>購入履歴からの受け取りボタンについて</h4>
+        <p>「購入履歴」欄にも、購入したNFTカードごとに受け取り用のボタンやリンクが表示されます。表示される文言は状況によって変わります。</p>
+        <div class="table-wrap">
+          <table class="fields">
+            <tbody>
+              <tr><th>NFTカードを受け取る</th><td>ボタンを押すと受け取り用のURLが発行されるので、そこから受け取り手続きを進めます。</td></tr>
+              <tr><th>受取手続き中 / 送付処理中</th><td>手続き中です。しばらくお待ちください。</td></tr>
+              <tr><th>千ノ国ウォレットで確認</th><td>お受け取りが完了しています。</td></tr>
+              <tr><th>受取URLを再発行 / 再試行</th><td>URLの期限切れ、または一時的なエラーが起きています。ボタンを押すと新しい受け取り用URLを再発行できます。</td></tr>
+              <tr><th>返金・取消済み</th><td>返金・キャンセルにともない、対象の受け取りは取り消されています。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="mypage-group">
+      <div class="group-heading"><h2>マイページ</h2></div>
+
+      <article class="page-card" id="mypage-orders">
+        <div class="page-card-head">
+          <h3>購入履歴・領収書</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage, /mypage/orders/:id/receipt</p>
+        <p>マイページの「購入履歴」から、お支払いが完了した注文について領収書を表示できます。領収書画面の「印刷 / PDFとして保存」から、そのまま印刷するかPDFとして保存できます。お支払いが完了していない注文の領収書は表示されません。</p>
+      </article>
+
+      <article class="page-card" id="mypage-notices">
+        <div class="page-card-head">
+          <h3>お知らせ</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage</p>
+        <p>運営からのお知らせがマイページに表示されます。未読のお知らせには「NEW」の表示が付き、マイページを開いた時点で既読になります。</p>
+      </article>
+
+      <article class="page-card" id="mypage-profile">
+        <div class="page-card-head">
+          <h3>登録情報の編集</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage/profile</p>
+        <p>氏名・電話番号を変更できます。メールアドレスの変更はこの画面からはできません。変更したい場合はご案内窓口までお問い合わせください。</p>
+      </article>
+
+      <article class="page-card" id="mypage-agency">
+        <div class="page-card-head">
+          <h3>代理店(インフルエンサー)申請</h3>
+          <span class="chip chip-member">要ログイン</span>
+        </div>
+        <p class="page-path mono">/mypage</p>
+        <p>紹介URLを発行して報酬を受け取る代理店(インフルエンサー)になりたい場合、マイページの下部から申請できます。申請後は運営の承認をお待ちください。承認されると、専用の代理店ポータル(<span class="mono">/agency</span>)から紹介URLを発行できるようになります。</p>
+      </article>
+    </section>
+
+    <section class="group" id="faq-group">
+      <div class="group-heading"><h2>よくある質問</h2></div>
+      <article class="page-card" id="faq">
+        <div class="faq-item">
+          <p class="faq-q">Q. 商品ページを開いたら別の画面に移動してしまいました。</p>
+          <p>A. 開こうとした商品がすでに削除・非公開になっている場合、自動的に商品一覧画面に案内されます。お手数ですが商品一覧から目的の商品を探してください。</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Q. 「ウォレットに接続する」を押しても反応しません。</p>
+          <p>A. ブラウザに対応する拡張機能(MetaMaskなど)がインストールされていない可能性があります。インストール後、ページを再読み込みしてお試しください。</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Q. 決済は完了したはずなのに、注文の状態が変わりません。</p>
+          <p>A. 決済会社からの通知の反映に数分ほどかかることがあります。しばらく時間をおいてマイページをご確認ください。それでも変わらない場合はサポートまでお問い合わせください。</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Q. 銀行振込の期限に間に合いませんでした。</p>
+          <p>A. 期限を過ぎたご注文は自動的にキャンセルされます。改めてご購入手続きをお願いいたします。</p>
+        </div>
+        <div class="faq-item">
+          <p class="faq-q">Q. 利用規約・特定商取引法表記・プライバシーポリシーはどこで見られますか。</p>
+          <p>A. 購入手続き画面のリンク、またはページ下部のフッターから、いつでも参照できます。</p>
+        </div>
+      </article>
+    </section>
+
+    <footer class="manual-footer">
+      戦国評議員デジタル会員証 — ご利用ガイド。画面の実際の表示と異なる箇所にお気づきの場合は、ご案内窓口までご連絡ください。
+    </footer>
+  </main>
+</div>
