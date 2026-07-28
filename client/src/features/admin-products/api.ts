@@ -46,6 +46,12 @@ export interface AdminProduct {
   variants: AdminProductVariant[];
   // 一覧取得(fetchAdminProducts)では含まれない(単体取得fetchAdminProductでのみ返る)。
   integrationRules?: AdminProductIntegrationRule[];
+  // 購入後代理店システム連携実装指示書 6.3章: 代理店ポータルアクセス権限。
+  agencyAccessMode: string;
+  agencyRole: string | null;
+  agencyProductCode: string | null;
+  agencyAccessExpiresDays: number | null;
+  agencyLoginRedirectPath: string | null;
 }
 
 export function fetchAdminProducts() {
@@ -83,6 +89,11 @@ export interface CreateProductRequest {
   status?: string;
   images?: string[];
   variants?: NewVariantRequest[];
+  agencyAccessMode?: string;
+  agencyRole?: string | null;
+  agencyProductCode?: string | null;
+  agencyAccessExpiresDays?: number | null;
+  agencyLoginRedirectPath?: string | null;
 }
 
 export interface UpdateProductRequest {
@@ -95,6 +106,11 @@ export interface UpdateProductRequest {
   basePrice?: number;
   images?: string[];
   variants?: (UpdateVariantRequest | NewVariantRequest)[];
+  agencyAccessMode?: string;
+  agencyRole?: string | null;
+  agencyProductCode?: string | null;
+  agencyAccessExpiresDays?: number | null;
+  agencyLoginRedirectPath?: string | null;
 }
 
 export function createAdminProduct(payload: CreateProductRequest) {

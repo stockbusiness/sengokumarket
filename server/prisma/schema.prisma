@@ -197,27 +197,36 @@ model WalletChangeLog {
 }
 
 model Product {
-  id               String   @id @default(uuid()) @db.Uuid
-  name             String
-  slug             String   @unique
-  description      String?
-  category         String
-  itemType         String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
+  id                      String   @id @default(uuid()) @db.Uuid
+  name                    String
+  slug                    String   @unique
+  description             String?
+  category                String
+  itemType                String   @default("nft") @map("item_type") // nft | physical | service | membership | fee
   // 仕様書外の拡張(千ノ国5システム共通方針書v3.0 15章): 商品ごとの販売方式。
   // direct_allowed = 代理店なしで購入可, agent_required = 販売担当代理店が確定していないと
   // 購入不可, hybrid = 両方可(既存商品はすべてこれで初期化。紹介コードは従来通り任意入力)。
-  salesModel       String   @default("hybrid") @map("sales_model")
-  basePrice        Int      @map("base_price")
-  status           String   @default("draft") // draft | published | archived
+  salesModel              String   @default("hybrid") @map("sales_model")
+  basePrice               Int      @map("base_price")
+  status                  String   @default("draft") // draft | published | archived
   // 仕様書外の拡張: 商品画像の複数枚対応。先頭(images[0])を一覧・OGP等のサムネイルとして扱う。
-  images           String[] @default([])
+  images                  String[] @default([])
   // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)12章: 不変のシリアル番号を
   // 商品単位で発番するための原子カウンタ。UPDATE...RETURNING形式の行ロック更新でのみ
   // インクリメントする(並行購入でも重複しないようにするため。nft_issues.serial_numberの
   // 採番元であり、この値自体を直接表示・参照することはない)。
-  nftSerialCounter Int      @default(0) @map("nft_serial_counter")
-  createdAt        DateTime @default(now()) @map("created_at")
-  updatedAt        DateTime @updatedAt @map("updated_at")
+  nftSerialCounter        Int      @default(0) @map("nft_serial_counter")
+  // 購入後代理店システム連携実装指示書 6.3章: 商品ごとの代理店ポータルアクセス権限設定。
+  // none = 連携なし(既定), customer_portal = 一般利用者としてログイン権限付与,
+  // agent_portal = 代理店・アドバイザーとしての業務ログイン権限付与(agencyRole・
+  // agencyProductCodeが必須。DB制約はmigration側のCHECK制約で強制する)。
+  agencyAccessMode        String   @default("none") @map("agency_access_mode")
+  agencyRole              String?  @map("agency_role")
+  agencyProductCode       String?  @map("agency_product_code")
+  agencyAccessExpiresDays Int?     @map("agency_access_expires_days")
+  agencyLoginRedirectPath String?  @map("agency_login_redirect_path")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
 
   variants         ProductVariant[]
   orderItems       OrderItem[]
@@ -361,16 +370,31 @@ model Order {
   closingAgentCode              String?   @map("closing_agent_id")
   referralSessionKey            String?   @map("referral_session_key")
   correlationId                 String?   @map("correlation_id")
+  // 購入後代理店システム連携実装指示書 6.9章: ログイン導線の状態キャッシュ。正の記録は
+  // purchase_provisioning_jobs(履歴・再試行状態)側にあり、ここは購入完了画面・マイページの
+  // 表示用に最新状態だけをスナップショットする(生SSO Tokenは長期保存しない。agencyLoginUrlは
+  // 短期URLであり期限切れ時は再発行APIを使う)。
+  // not_applicable(対象外) | pending | processing | provisioned | failed | blocked | revoked
+  agencyProvisioningStatus      String    @default("not_applicable") @map("agency_provisioning_status")
+  agencyAccountType             String?   @map("agency_account_type")
+  agencyAccountId               String?   @map("agency_account_id")
+  agencyLoginEmail              String?   @map("agency_login_email")
+  agencyLoginMode               String?   @map("agency_login_mode")
+  agencyLoginUrl                String?   @map("agency_login_url")
+  agencyLoginUrlExpiresAt       DateTime? @map("agency_login_url_expires_at")
+  agencyProvisionedAt           DateTime? @map("agency_provisioned_at")
+  agencyProvisioningLastError   String?   @map("agency_provisioning_last_error")
   createdAt                     DateTime  @default(now()) @map("created_at")
   updatedAt                     DateTime  @updatedAt @map("updated_at")
 
-  user               User?                    @relation(fields: [userId], references: [id])
-  orderItems         OrderItem[]
-  nftIssues          NftIssue[]
-  commission         Commission?
-  couponUsage        CouponUsage?
-  walletTransactions OrderWalletTransaction[]
-  walletClaim        WalletClaim?
+  user                     User?                     @relation(fields: [userId], references: [id])
+  orderItems               OrderItem[]
+  nftIssues                NftIssue[]
+  commission               Commission?
+  couponUsage              CouponUsage?
+  walletTransactions       OrderWalletTransaction[]
+  walletClaim              WalletClaim?
+  purchaseProvisioningJobs PurchaseProvisioningJob[]
 
   @@index([paymentStatus])
   @@index([paidAt])
@@ -745,6 +769,38 @@ model OrderLinkingJob {
 
   @@index([status, nextAttemptAt])
   @@map("order_linking_jobs")
+}
+
+// 購入後代理店システム連携実装指示書 6.4章: 決済完了と同一トランザクションで作成する、
+// 代理店ポータルへの購入者アカウント発行(POST /api/purchase-provisioning)専用のOutbox。
+// order_linking_jobsと同じ「条件付きUPDATEによるアトミックなclaim + 指数バックオフ +
+// 最大試行超過でdead」設計を踏襲するが、対象・タイミングが異なる別系統の連携のため
+// 専用テーブルとして分離する(order_linking_jobsを流用しない)。
+// action='revoke'は全額返金時に別途enqueueする取消リクエスト(6.4のjob作成タイミングとは別)。
+model PurchaseProvisioningJob {
+  id                  String    @id @default(uuid()) @db.Uuid
+  orderId             String    @map("order_id") @db.Uuid
+  commonUserId        String?   @map("common_user_id")
+  action              String    @default("provision") @map("action") // provision | revoke
+  // 例: purchase-provisioning:<order_id> / purchase-provisioning-revoke:<order_id>
+  deduplicationKey    String    @unique @map("deduplication_key")
+  status              String    @default("pending") // pending | processing | blocked | succeeded | failed | dead | skipped
+  attemptCount        Int       @default(0) @map("attempt_count")
+  processingToken     String?   @map("processing_token")
+  processingStartedAt DateTime? @map("processing_started_at")
+  nextAttemptAt       DateTime? @map("next_attempt_at")
+  lastError           String?   @map("last_error")
+  blockedReason       String?   @map("blocked_reason")
+  responseJson        Json?     @map("response_json")
+  processedAt         DateTime? @map("processed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@index([status, nextAttemptAt])
+  @@index([orderId])
+  @@map("purchase_provisioning_jobs")
 }
 
 // 仕様書外の拡張(残課題指示書Stage3): 代理店アカウント作成等に伴う通知メールを、

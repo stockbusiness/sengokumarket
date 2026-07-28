@@ -4,7 +4,7 @@ import multer from 'multer';
 import { put } from '@vercel/blob';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
-import { ITEM_TYPES, PRODUCT_STATUSES as STATUSES, SALES_MODELS } from '@sengoku/contracts';
+import { AGENCY_ACCESS_MODES, ITEM_TYPES, PRODUCT_STATUSES as STATUSES, SALES_MODELS } from '@sengoku/contracts';
 
 const router = Router();
 
@@ -28,6 +28,36 @@ function normalizeImages(images: unknown): string[] | undefined {
   return images.filter((v): v is string => isNonEmptyString(v));
 }
 
+interface AgencyAccessFields {
+  agencyAccessMode?: string;
+  agencyRole?: string | null;
+  agencyProductCode?: string | null;
+  agencyAccessExpiresDays?: number | null;
+  agencyLoginRedirectPath?: string | null;
+}
+
+// 購入後代理店システム連携実装指示書 6.3章: agency_access_mode=agent_portalの場合は
+// agencyRole・agencyProductCodeを必須にする(DB側もCHECK制約で二重に強制する)。
+function validateAgencyAccessFields(input: AgencyAccessFields): string | null {
+  if (input.agencyAccessMode !== undefined && !(AGENCY_ACCESS_MODES as readonly string[]).includes(input.agencyAccessMode)) {
+    return '代理店ポータルアクセス権限が不正です';
+  }
+  if (
+    input.agencyAccessMode === 'agent_portal' &&
+    (!isNonEmptyString(input.agencyRole) || !isNonEmptyString(input.agencyProductCode))
+  ) {
+    return '代理店アカウント権限を付与する場合、agencyRoleとagencyProductCodeは必須です';
+  }
+  if (
+    input.agencyAccessExpiresDays !== undefined &&
+    input.agencyAccessExpiresDays !== null &&
+    (!Number.isInteger(input.agencyAccessExpiresDays) || input.agencyAccessExpiresDays <= 0)
+  ) {
+    return 'アクセス有効日数は1以上の整数で入力してください';
+  }
+  return null;
+}
+
 router.get('/products', async (_req, res) => {
   const products = await prisma.product.findMany({
     include: { variants: true },
@@ -49,7 +79,23 @@ router.get('/products/:id', async (req, res) => {
 });
 
 router.post('/products', async (req, res) => {
-  const { name, slug, description, category, itemType, salesModel, basePrice, status, images, variants } = req.body ?? {};
+  const {
+    name,
+    slug,
+    description,
+    category,
+    itemType,
+    salesModel,
+    basePrice,
+    status,
+    images,
+    variants,
+    agencyAccessMode,
+    agencyRole,
+    agencyProductCode,
+    agencyAccessExpiresDays,
+    agencyLoginRedirectPath,
+  } = req.body ?? {};
 
   if (!isNonEmptyString(name)) return sendError(res, 400, 'VALIDATION_ERROR', '商品名を入力してください');
   if (!isNonEmptyString(slug) || !/^[a-z0-9-]+$/.test(slug)) {
@@ -63,6 +109,13 @@ router.post('/products', async (req, res) => {
   if (!Number.isInteger(basePrice) || basePrice < 0) {
     return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
   }
+  const agencyAccessError = validateAgencyAccessFields({
+    agencyAccessMode,
+    agencyRole,
+    agencyProductCode,
+    agencyAccessExpiresDays,
+  });
+  if (agencyAccessError) return sendError(res, 400, 'VALIDATION_ERROR', agencyAccessError);
   const resolvedStatus = STATUSES.includes(status) ? status : 'draft';
 
   const existing = await prisma.product.findUnique({ where: { slug } });
@@ -79,6 +132,11 @@ router.post('/products', async (req, res) => {
       basePrice,
       status: resolvedStatus,
       images: normalizeImages(images) ?? [],
+      agencyAccessMode: (AGENCY_ACCESS_MODES as readonly string[]).includes(agencyAccessMode) ? agencyAccessMode : 'none',
+      agencyRole: isNonEmptyString(agencyRole) ? agencyRole : null,
+      agencyProductCode: isNonEmptyString(agencyProductCode) ? agencyProductCode : null,
+      agencyAccessExpiresDays: typeof agencyAccessExpiresDays === 'number' ? agencyAccessExpiresDays : null,
+      agencyLoginRedirectPath: isNonEmptyString(agencyLoginRedirectPath) ? agencyLoginRedirectPath : null,
       variants: Array.isArray(variants)
         ? {
             create: variants.map((v: { name: string; sku?: string; price: number; stock?: number }) => ({
@@ -101,7 +159,22 @@ type VariantCreateEntry = { name: string; sku?: string | null; price: number; st
 
 router.put('/products/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, description, category, itemType, salesModel, basePrice, status, images, variants } = req.body ?? {};
+  const {
+    name,
+    description,
+    category,
+    itemType,
+    salesModel,
+    basePrice,
+    status,
+    images,
+    variants,
+    agencyAccessMode,
+    agencyRole,
+    agencyProductCode,
+    agencyAccessExpiresDays,
+    agencyLoginRedirectPath,
+  } = req.body ?? {};
 
   const existing = await prisma.product.findUnique({ where: { id } });
   if (!existing) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
@@ -118,6 +191,15 @@ router.put('/products/:id', async (req, res) => {
   if (basePrice !== undefined && (!Number.isInteger(basePrice) || basePrice < 0)) {
     return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
   }
+  // PUTは部分更新のため、agencyAccessModeが省略された場合は既存値を基準に検証する
+  // (例: 既にagent_portalの商品でagencyRoleだけをnullへ更新しようとする事故を防ぐ)。
+  const agencyAccessError = validateAgencyAccessFields({
+    agencyAccessMode: agencyAccessMode ?? existing.agencyAccessMode,
+    agencyRole: agencyRole !== undefined ? agencyRole : existing.agencyRole,
+    agencyProductCode: agencyProductCode !== undefined ? agencyProductCode : existing.agencyProductCode,
+    agencyAccessExpiresDays: agencyAccessExpiresDays !== undefined ? agencyAccessExpiresDays : existing.agencyAccessExpiresDays,
+  });
+  if (agencyAccessError) return sendError(res, 400, 'VALIDATION_ERROR', agencyAccessError);
 
   // 仕様書外の拡張(2026-07-22指示書Stage3): variantsはPATCH相当の部分更新として扱う。
   // フロント側の在庫だけ編集する画面(AdminProductEditPage)は{ id, stock }のみを送るため、
@@ -173,6 +255,12 @@ router.put('/products/:id', async (req, res) => {
         basePrice: basePrice ?? undefined,
         status: status ?? undefined,
         images: normalizeImages(images),
+        agencyAccessMode: agencyAccessMode ?? undefined,
+        // sku同様、未指定(undefined)は既存値を維持し、明示的なnullでのみ解除できるようにする。
+        agencyRole: agencyRole === undefined ? undefined : agencyRole,
+        agencyProductCode: agencyProductCode === undefined ? undefined : agencyProductCode,
+        agencyAccessExpiresDays: agencyAccessExpiresDays === undefined ? undefined : agencyAccessExpiresDays,
+        agencyLoginRedirectPath: agencyLoginRedirectPath === undefined ? undefined : agencyLoginRedirectPath,
       },
     });
 
