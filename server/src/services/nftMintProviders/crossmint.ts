@@ -60,16 +60,19 @@ export const crossmintMintProvider: MintProvider = {
     const collectionId = getCollectionId();
     const baseUrl = getBaseUrl(apiKey);
 
-    const res = await fetchWithTimeout(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${input.idempotencyKey}`, {
-      method: 'PUT',
-      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: `${input.chain}:${input.toAddress}`,
-        // 既存のVercel BlobのURLをそのまま使い、Crossmint側での再ホスト(IPFS化等)は行わせない。
-        metadata: input.metadataUri,
-        reuploadLinkedFiles: false,
-      }),
-    });
+    const res = await fetchWithTimeout(
+      `${baseUrl}/api/${API_VERSION}/collections/${encodeURIComponent(collectionId)}/nfts/${encodeURIComponent(input.idempotencyKey)}`,
+      {
+        method: 'PUT',
+        headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient: `${input.chain}:${input.toAddress}`,
+          // 既存のVercel BlobのURLをそのまま使い、Crossmint側での再ホスト(IPFS化等)は行わせない。
+          metadata: input.metadataUri,
+          reuploadLinkedFiles: false,
+        }),
+      },
+    );
 
     if (!res.ok) {
       throw new Error(`Crossmint mint request failed (HTTP ${res.status}): ${await readErrorBody(res)}`);
@@ -83,9 +86,10 @@ export const crossmintMintProvider: MintProvider = {
     const collectionId = getCollectionId();
     const baseUrl = getBaseUrl(apiKey);
 
-    const res = await fetchWithTimeout(`${baseUrl}/api/${API_VERSION}/collections/${collectionId}/nfts/${providerRequestId}`, {
-      headers: { 'X-API-KEY': apiKey },
-    });
+    const res = await fetchWithTimeout(
+      `${baseUrl}/api/${API_VERSION}/collections/${encodeURIComponent(collectionId)}/nfts/${encodeURIComponent(providerRequestId)}`,
+      { headers: { 'X-API-KEY': apiKey } },
+    );
 
     if (!res.ok) {
       throw new Error(`Crossmint mint status request failed (HTTP ${res.status}): ${await readErrorBody(res)}`);

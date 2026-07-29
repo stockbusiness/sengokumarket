@@ -55,6 +55,19 @@ describe('crossmintMintProvider(仕様書外の拡張)', () => {
     });
   });
 
+  it('collectionId・idempotencyKeyはURLエンコードされる(特殊文字を含む値による事故防止)', async () => {
+    process.env.CROSSMINT_COLLECTION_ID = 'collection/with space';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await crossmintMintProvider.submitMint({ ...BASE_INPUT, idempotencyKey: 'issue/with space' });
+
+    const [url] = fetchMock.mock.calls[0];
+    expect(url).toBe(
+      'https://staging.crossmint.com/api/2022-06-09/collections/collection%2Fwith%20space/nfts/issue%2Fwith%20space',
+    );
+  });
+
   it('APIキーがsk_production_で始まる場合は本番ベースURLを使う', async () => {
     process.env.CROSSMINT_COLLECTION_ID = 'collection-1';
     getSetting.mockResolvedValueOnce('sk_production_test_key');
@@ -108,5 +121,27 @@ describe('crossmintMintProvider(仕様書外の拡張)', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, text: () => Promise.resolve('not found') }));
 
     await expect(crossmintMintProvider.getMintStatus('issue-1')).rejects.toThrow(/HTTP 404/);
+  });
+
+  // 200応答でも本文が不正なJSON(ゲートウェイのエラーページ等)の場合、呼び出し元
+  // (nftMintProcessing.tsのpollAndMaybeConfirm)がtry/catchで再試行に回せるよう、
+  // ここでも例外がそのまま伝播することを確認する。
+  it('getMintStatusのレスポンス本文が不正なJSONの場合は例外を投げる', async () => {
+    process.env.CROSSMINT_COLLECTION_ID = 'collection-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.reject(new SyntaxError('invalid json')) }));
+
+    await expect(crossmintMintProvider.getMintStatus('issue-1')).rejects.toThrow('invalid json');
+  });
+
+  it('getMintStatusはproviderRequestIdもURLエンコードする', async () => {
+    process.env.CROSSMINT_COLLECTION_ID = 'collection-1';
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await crossmintMintProvider.getMintStatus('issue/with space');
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://staging.crossmint.com/api/2022-06-09/collections/collection-1/nfts/issue%2Fwith%20space',
+    );
   });
 });
