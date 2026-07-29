@@ -7,6 +7,7 @@ import {
   fetchMyOrders,
   fetchMyWallet,
   markMyNoticeRead,
+  reissueAgencyPortalAccessUrl,
   reissueWalletClaimUrl,
   submitAgencyApplication,
   type MyNftIssue,
@@ -35,6 +36,16 @@ const WALLET_CLAIM_STATUS_LABEL: Record<string, string> = {
 };
 const WALLET_CLAIM_REISSUABLE = new Set(['PENDING', 'EXPIRED', 'ERROR']);
 
+// 購入後代理店システム連携実装指示書 6.11章「マイページ」。
+const AGENCY_PORTAL_STATUS_LABEL: Record<string, string> = {
+  pending: '準備中',
+  processing: '準備中',
+  provisioned: '利用可能',
+  failed: '現在準備できていません',
+  blocked: '確認中です',
+  revoked: '利用停止済み',
+};
+
 export default function MyPage() {
   const { user, refresh } = useAuth();
   const [orders, setOrders] = useState<MyOrder[]>([]);
@@ -45,6 +56,9 @@ export default function MyPage() {
   const [applicationError, setApplicationError] = useState<string | null>(null);
   const [claimUrlByOrderId, setClaimUrlByOrderId] = useState<Record<string, string>>({});
   const [claimError, setClaimError] = useState<string | null>(null);
+  const [agencyLoginUrlByOrderId, setAgencyLoginUrlByOrderId] = useState<Record<string, string>>({});
+  const [agencyPortalError, setAgencyPortalError] = useState<string | null>(null);
+  const [reissuingAgencyPortalOrderId, setReissuingAgencyPortalOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMyOrders().then((d) => setOrders(d.orders));
@@ -64,6 +78,19 @@ export default function MyPage() {
       setClaimUrlByOrderId((prev) => ({ ...prev, [orderId]: url }));
     } catch (e) {
       setClaimError(e instanceof Error ? e.message : '受取URLの発行に失敗しました');
+    }
+  }
+
+  async function handleReissueAgencyPortalAccess(orderId: string) {
+    setAgencyPortalError(null);
+    setReissuingAgencyPortalOrderId(orderId);
+    try {
+      const { loginUrl } = await reissueAgencyPortalAccessUrl(orderId);
+      setAgencyLoginUrlByOrderId((prev) => ({ ...prev, [orderId]: loginUrl }));
+    } catch (e) {
+      setAgencyPortalError(e instanceof Error ? e.message : 'ログインURLの再発行に失敗しました');
+    } finally {
+      setReissuingAgencyPortalOrderId(null);
     }
   }
 
@@ -124,6 +151,7 @@ export default function MyPage() {
         <h2>購入履歴</h2>
         {orders.length === 0 && <p>購入履歴はありません。</p>}
         {claimError && <p className="mypage-error">{claimError}</p>}
+        {agencyPortalError && <p className="mypage-error">{agencyPortalError}</p>}
         <ul className="order-history-list">
           {orders.map((order) => (
             <li key={order.id}>
@@ -143,6 +171,31 @@ export default function MyPage() {
                     </button>
                   ) : (
                     WALLET_CLAIM_STATUS_LABEL[order.walletClaim.status] ?? order.walletClaim.status
+                  )}
+                </span>
+              )}
+              {order.agencyPortalAccess && (
+                <span className={`agency-portal-access-status agency-portal-access-status--${order.agencyPortalAccess.status}`}>
+                  {order.agencyPortalAccess.status === 'provisioned' ? (
+                    <>
+                      <a
+                        href={agencyLoginUrlByOrderId[order.id] ?? order.agencyPortalAccess.loginUrl ?? undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        代理店システムへログイン
+                      </a>
+                      <button
+                        type="button"
+                        className="btn-small"
+                        disabled={reissuingAgencyPortalOrderId === order.id}
+                        onClick={() => handleReissueAgencyPortalAccess(order.id)}
+                      >
+                        {reissuingAgencyPortalOrderId === order.id ? '再発行中...' : 'URLを再発行する'}
+                      </button>
+                    </>
+                  ) : (
+                    AGENCY_PORTAL_STATUS_LABEL[order.agencyPortalAccess.status] ?? order.agencyPortalAccess.status
                   )}
                 </span>
               )}

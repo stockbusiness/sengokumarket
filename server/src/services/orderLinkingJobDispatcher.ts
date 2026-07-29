@@ -209,7 +209,13 @@ async function runCommonUserResolveJob(job: OrderLinkingJob): Promise<void> {
 
   let commonUserId = user.commonUserId;
   if (!commonUserId) {
-    const resolved = await resolveCommonUserId({ externalUserId: user.id, verifiedEmail: user.email });
+    const resolved = await resolveCommonUserId({
+      externalUserId: user.id,
+      name: user.name,
+      email: user.email,
+      emailVerified: false,
+      phone: user.phone,
+    });
     if (!resolved) throw new Error('common_user_id resolve failed or returned no result');
 
     // 本番安定化指示書Stage9(12.2「common user merge」): 既にexternal_identitiesへ記録済みの

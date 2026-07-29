@@ -65,6 +65,74 @@ describe('管理API: 商品管理', () => {
     await prisma.product.delete({ where: { slug: agentRequiredSlug } });
   });
 
+  // 購入後代理店システム連携実装指示書 6.3章。
+  it('agencyAccessMode=agent_portalの場合agencyRole・agencyProductCodeが無いと400を返す', async () => {
+    const res = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: '代理店ポータルテスト(役割未入力)',
+        slug: `admin-test-agent-portal-invalid-${Date.now()}`,
+        category: 'テスト',
+        itemType: 'membership',
+        basePrice: 30000,
+        agencyAccessMode: 'agent_portal',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('agencyAccessMode=agent_portalをagencyRole・agencyProductCode付きで作成できる', async () => {
+    const agentPortalSlug = `admin-test-agent-portal-valid-${Date.now()}`;
+    const res = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: '代理店ポータルテスト',
+        slug: agentPortalSlug,
+        category: 'テスト',
+        itemType: 'membership',
+        basePrice: 30000,
+        agencyAccessMode: 'agent_portal',
+        agencyRole: 'participant',
+        agencyProductCode: 'agency_entry_plan',
+        agencyAccessExpiresDays: 30,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.product.agencyAccessMode).toBe('agent_portal');
+    expect(res.body.product.agencyRole).toBe('participant');
+    expect(res.body.product.agencyProductCode).toBe('agency_entry_plan');
+    expect(res.body.product.agencyAccessExpiresDays).toBe(30);
+
+    await prisma.product.delete({ where: { slug: agentPortalSlug } });
+  });
+
+  it('既にagent_portalの商品からagencyRoleだけをnullへ更新しようとすると400を返す', async () => {
+    const agentPortalSlug = `admin-test-agent-portal-update-${Date.now()}`;
+    const created = await agent.post('/api/admin/products').set('Origin', TEST_ORIGIN).send({
+      name: '代理店ポータル更新テスト',
+      slug: agentPortalSlug,
+      category: 'テスト',
+      itemType: 'membership',
+      basePrice: 30000,
+      agencyAccessMode: 'agent_portal',
+      agencyRole: 'participant',
+      agencyProductCode: 'agency_entry_plan',
+    });
+
+    const res = await agent
+      .put(`/api/admin/products/${created.body.product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ agencyRole: null });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+
+    await prisma.product.delete({ where: { slug: agentPortalSlug } });
+  });
+
   it('不正なsales_modelは400を返す', async () => {
     const res = await agent
       .post('/api/admin/products')

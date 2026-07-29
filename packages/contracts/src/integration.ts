@@ -23,3 +23,19 @@ export type EntitlementTargetSystemKey = (typeof ENTITLEMENT_TARGET_SYSTEM_KEYS)
 // 備えて意味を分けている。
 export const REWARD_CALCULATION_MODES = ['fixed_per_order', 'per_quantity', 'fixed_total'] as const;
 export type RewardCalculationMode = (typeof REWARD_CALCULATION_MODES)[number];
+
+// 購入後代理店システム連携実装指示書 6.4章: purchase_provisioning_jobs.status。
+// order_linking_jobsと同じ状態機械(pending/processing/blocked/succeeded/failed/dead/skipped)を
+// そのまま踏襲する。
+export const PURCHASE_PROVISIONING_JOB_STATUSES = ['pending', 'processing', 'blocked', 'succeeded', 'failed', 'dead', 'skipped'] as const;
+export type PurchaseProvisioningJobStatus = (typeof PURCHASE_PROVISIONING_JOB_STATUSES)[number];
+
+// 同6章: 1つのジョブ行が「アカウント発行(provision)」と「全額返金時の取消(revoke)」の
+// どちらを表すかを区別する。
+export const PURCHASE_PROVISIONING_ACTIONS = ['provision', 'revoke'] as const;
+export type PurchaseProvisioningAction = (typeof PURCHASE_PROVISIONING_ACTIONS)[number];
+
+// 同6.9章: orders.agency_provisioning_status(表示用キャッシュ)。not_applicable=対象外
+// (agencyAccessMode=noneの商品のみの注文), blocked=依存待ちで一時停止中。
+export const AGENCY_PROVISIONING_STATUSES = ['not_applicable', 'pending', 'processing', 'provisioned', 'failed', 'blocked', 'revoked'] as const;
+export type AgencyProvisioningStatus = (typeof AGENCY_PROVISIONING_STATUSES)[number];

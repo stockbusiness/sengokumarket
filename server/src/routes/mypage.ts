@@ -7,6 +7,8 @@ import { pushAgencyCandidateToExternalSystem } from '../services/externalAgencyS
 import { createWalletVerificationChallenge, verifyAndRegisterWallet } from '../services/walletVerification';
 import { isWalletClaimReissuable, reissueWalletClaimToken } from '../services/walletClaim';
 import { getWalletClaimWebBaseUrl } from '../services/walletClaimConfig';
+import { isAgencyPortalLoginEnabled } from '../services/purchaseProvisioningConfig';
+import { reissueAgencyLoginUrl } from '../services/purchaseProvisioningDispatcher';
 
 const router = Router();
 
@@ -38,6 +40,7 @@ router.get('/orders', async (req, res) => {
         const c = walletClaimByOrderId.get(order.id);
         return c ? { status: c.status, expiresAt: c.expiresAt } : null;
       })(),
+      agencyPortalAccess: buildAgencyPortalAccessView(order),
       items: order.orderItems.map((item) => ({
         productName: item.productName,
         variantName: item.variantName,
@@ -48,6 +51,27 @@ router.get('/orders', async (req, res) => {
     })),
   });
 });
+
+// 購入後代理店システム連携実装指示書 6.11章「マイページ」: 連携状態・アカウント種別・
+// ログインメール・ログインボタンの表示に必要な情報。AGENCY_PORTAL_LOGIN_ENABLEDが無効の間は
+// ジョブ自体が動いていてもUIには一切公開しない(checkout.tsの/checkout/session/:id/statusと
+// 同じ方針)。
+function buildAgencyPortalAccessView(order: {
+  agencyProvisioningStatus: string;
+  agencyAccountType: string | null;
+  agencyLoginEmail: string | null;
+  agencyLoginUrl: string | null;
+  agencyLoginUrlExpiresAt: Date | null;
+}): { status: string; accountType: string | null; loginEmail: string | null; loginUrl: string | null; loginUrlExpiresAt: Date | null } | null {
+  if (!isAgencyPortalLoginEnabled() || order.agencyProvisioningStatus === 'not_applicable') return null;
+  return {
+    status: order.agencyProvisioningStatus,
+    accountType: order.agencyAccountType,
+    loginEmail: order.agencyLoginEmail,
+    loginUrl: order.agencyProvisioningStatus === 'provisioned' ? order.agencyLoginUrl : null,
+    loginUrlExpiresAt: order.agencyProvisioningStatus === 'provisioned' ? order.agencyLoginUrlExpiresAt : null,
+  };
+}
 
 // 仕様書外の拡張: 領収書表示用に自分の注文を1件だけ取得する。
 router.get('/orders/:id', async (req, res) => {
@@ -82,8 +106,31 @@ router.get('/orders/:id', async (req, res) => {
         subtotal: item.subtotal,
       })),
       walletClaim: walletClaim ? { status: walletClaim.status, expiresAt: walletClaim.expiresAt } : null,
+      agencyPortalAccess: buildAgencyPortalAccessView(order),
     },
   });
+});
+
+// 6.11章「URL再発行」: すでにprovisioned状態の注文について、期限切れ・紛失等の理由で
+// ログインURLを再取得する。
+router.post('/orders/:id/agency-portal-access/reissue', async (req, res) => {
+  const order = await prisma.order.findUnique({ where: { id: req.params.id } });
+  if (!order || order.userId !== req.authUser!.id) {
+    return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
+  }
+
+  const result = await reissueAgencyLoginUrl(order.id, req.authUser!.id);
+  if (!result.ok) {
+    if (result.reason === 'not_configured') {
+      return sendError(res, 503, 'AGENCY_PORTAL_LOGIN_NOT_CONFIGURED', '代理店システムへのログイン機能は現在利用できません');
+    }
+    if (result.reason === 'not_eligible') {
+      return sendError(res, 400, 'AGENCY_PORTAL_ACCESS_NOT_ELIGIBLE', 'ログインURLを再発行できる状態ではありません');
+    }
+    return sendError(res, 502, 'AGENCY_PORTAL_ACCESS_REQUEST_FAILED', 'ログインURLの再発行に失敗しました。しばらくしてから再度お試しください');
+  }
+
+  res.json({ loginUrl: result.loginUrl, loginUrlExpiresAt: result.loginUrlExpiresAt });
 });
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)6・7章: マイページの

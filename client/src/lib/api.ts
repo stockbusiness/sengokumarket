@@ -141,8 +141,13 @@ export function fetchCheckoutConfig() {
   );
 }
 
+export interface CheckoutAgencyPortalAccess {
+  status: string;
+  loginUrl: string | null;
+}
+
 export function fetchCheckoutSessionStatus(sessionId: string) {
-  return apiFetch<{ orderNumber: string; paymentStatus: string }>(
+  return apiFetch<{ orderNumber: string; paymentStatus: string; agencyPortalAccess: CheckoutAgencyPortalAccess }>(
     `/checkout/session/${encodeURIComponent(sessionId)}/status`,
   );
 }
@@ -160,6 +165,16 @@ export interface MyWalletClaim {
   expiresAt: string;
 }
 
+// 購入後代理店システム連携実装指示書 6.11章「マイページ」。AGENCY_PORTAL_LOGIN_ENABLEDが
+// 無効、または対象外(agencyAccessMode='none'の商品のみ)の注文ではnullになる。
+export interface MyOrderAgencyPortalAccess {
+  status: string;
+  accountType: string | null;
+  loginEmail: string | null;
+  loginUrl: string | null;
+  loginUrlExpiresAt: string | null;
+}
+
 export interface MyOrder {
   id: string;
   orderNumber: string;
@@ -169,6 +184,7 @@ export interface MyOrder {
   paidAt: string | null;
   createdAt: string;
   walletClaim: MyWalletClaim | null;
+  agencyPortalAccess: MyOrderAgencyPortalAccess | null;
   items: { productName: string; variantName: string | null; quantity: number; unitPrice: number; subtotal: number }[];
 }
 
@@ -213,6 +229,14 @@ export function fetchMyOrder(id: string) {
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)6・7章: 受取URLの発行・再発行。
 export function reissueWalletClaimUrl(orderId: string) {
   return apiPost<{ url: string }>(`/mypage/orders/${encodeURIComponent(orderId)}/wallet-claim/reissue`, {});
+}
+
+// 購入後代理店システム連携実装指示書 6.11章: 代理店システムへのログインURL再発行。
+export function reissueAgencyPortalAccessUrl(orderId: string) {
+  return apiPost<{ loginUrl: string; loginUrlExpiresAt: string | null }>(
+    `/mypage/orders/${encodeURIComponent(orderId)}/agency-portal-access/reissue`,
+    {},
+  );
 }
 
 export function fetchMyNftIssues() {

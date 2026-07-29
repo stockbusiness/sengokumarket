@@ -21,6 +21,7 @@ import { buildBankTransferInstructionsEmail } from '../templates/bankTransfer';
 import { buildPasswordResetEmail } from '../templates/passwordReset';
 import { buildCartAbandonedEmail } from '../templates/cartAbandoned';
 import { buildWalletReminderEmail } from '../templates/walletReminder';
+import { buildAgencyPortalAccessReadyEmail } from '../templates/agencyPortalAccessReady';
 import { reissueWalletClaimToken } from '../../../services/walletClaim';
 import { getWalletClaimWebBaseUrl } from '../../../services/walletClaimConfig';
 import * as repo from '../infrastructure/notificationOutbox.repository';
@@ -28,6 +29,7 @@ import type {
   AdminAccountSetupPayload,
   AgencyAccessGrantedPayload,
   AgencyAccountSetupPayload,
+  AgencyPortalAccessReadyPayload,
   BankTransferInstructionsPayload,
   CartAbandonedPayload,
   GuestPasswordSetupPayload,
@@ -192,6 +194,20 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!nftIssue) throw new Error('nft issue not found for wallet_reminder notification');
     await sendNotificationOrThrow(
       buildWalletReminderEmail(event.recipient, nftIssue.order.customerName, nftIssue.order.orderNumber),
+    );
+    return;
+  }
+  if (event.eventType === 'agency_portal_access_ready') {
+    // 購入後代理店システム連携実装指示書 6.12章: ログインURLは短期間で失効するため、
+    // payloadへ保存された値ではなく、送信時点のordersの最新値を使う(既にマイページから
+    // 再発行されている可能性があるため)。再発行等でURLが失効・削除済みの場合は送信を諦める
+    // (エラーとして扱いretryさせても、URLが復活するわけではないため無限retryを避ける)。
+    const payload = event.payload as unknown as AgencyPortalAccessReadyPayload;
+    const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
+    if (!order) throw new Error('order not found for agency_portal_access_ready notification');
+    if (!order.agencyLoginUrl) return;
+    await sendNotificationOrThrow(
+      buildAgencyPortalAccessReadyEmail(event.recipient, order.customerName, order.orderNumber, order.agencyLoginUrl, order.agencyLoginUrlExpiresAt),
     );
     return;
   }

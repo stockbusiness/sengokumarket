@@ -151,4 +151,49 @@ describe('orderFulfillment: applyPaidOrderSideEffects (digital_collectible: seri
     await prisma.productIntegrationRule.deleteMany({ where: { productId: product.id } });
     await prisma.product.deleteMany({ where: { id: product.id } });
   });
+
+  // 購入後代理店システム連携実装指示書 6.5章: 決済確定(applyPaidOrderSideEffects)と
+  // 同一トランザクションでpurchase_provisioning_jobsを作成する。
+  it('agencyAccessMode=agent_portalの商品を含む注文はpurchase_provisioning_jobsを作成する', async () => {
+    const product = await prisma.product.create({
+      data: {
+        name: `${PRODUCT_PREFIX}agency-portal`,
+        slug: `${PRODUCT_PREFIX}agency-portal`,
+        category: 'テスト',
+        itemType: 'membership',
+        basePrice: 30000,
+        agencyAccessMode: 'agent_portal',
+        agencyRole: 'participant',
+        agencyProductCode: 'agency_entry_plan',
+      },
+    });
+    const { order } = await createOrderWithItem(product.id, 'agency-portal', 1);
+
+    await prisma.$transaction((tx) => applyPaidOrderSideEffects(tx, order));
+
+    const job = await prisma.purchaseProvisioningJob.findUnique({
+      where: { deduplicationKey: `purchase-provisioning:${order.id}` },
+    });
+    expect(job).not.toBeNull();
+    expect(job?.action).toBe('provision');
+    const updatedOrder = await prisma.order.findUniqueOrThrow({ where: { id: order.id } });
+    expect(updatedOrder.agencyProvisioningStatus).toBe('pending');
+
+    await prisma.purchaseProvisioningJob.deleteMany({ where: { orderId: order.id } });
+    await cleanup(order.id, product.id);
+  });
+
+  it('agencyAccessMode=noneの商品のみの注文はpurchase_provisioning_jobsを作成しない', async () => {
+    const product = await createDigitalCollectibleProduct('no-agency');
+    const { order } = await createOrderWithItem(product.id, 'no-agency', 1);
+
+    await prisma.$transaction((tx) => applyPaidOrderSideEffects(tx, order));
+
+    const job = await prisma.purchaseProvisioningJob.findUnique({
+      where: { deduplicationKey: `purchase-provisioning:${order.id}` },
+    });
+    expect(job).toBeNull();
+
+    await cleanup(order.id, product.id);
+  });
 });

@@ -14,6 +14,7 @@ import { verifyAuthToken } from '../services/jwt';
 import { resolveReferral } from '../services/referral';
 import { validateCoupon } from '../services/coupon';
 import { hashRateLimitIdentifier } from '../services/rateLimiter';
+import { isAgencyPortalLoginEnabled } from '../services/purchaseProvisioningConfig';
 
 const router = Router();
 
@@ -201,14 +202,28 @@ router.post('/checkout/coupons/validate', requireReferralOrAuth, couponValidateL
 router.get('/checkout/session/:sessionId/status', async (req, res) => {
   const order = await prisma.order.findFirst({
     where: { stripeSessionId: req.params.sessionId },
-    select: { orderNumber: true, paymentStatus: true },
+    select: {
+      orderNumber: true,
+      paymentStatus: true,
+      agencyProvisioningStatus: true,
+      agencyLoginUrl: true,
+    },
   });
 
   if (!order) {
     return sendError(res, 404, 'ORDER_NOT_FOUND', '注文が見つかりません');
   }
 
-  res.json({ orderNumber: order.orderNumber, paymentStatus: order.paymentStatus });
+  // 購入後代理店システム連携実装指示書 6.10章「購入完了画面」: Provisioning成功時のみ
+  // ログインURLを返す(処理中・失敗時はステータスのみ)。AGENCY_PORTAL_LOGIN_ENABLEDが
+  // 無効の間は、ジョブ自体は動いていてもUIには一切公開しない(not_applicable扱いにする)。
+  res.json({
+    orderNumber: order.orderNumber,
+    paymentStatus: order.paymentStatus,
+    agencyPortalAccess: isAgencyPortalLoginEnabled()
+      ? { status: order.agencyProvisioningStatus, loginUrl: order.agencyProvisioningStatus === 'provisioned' ? order.agencyLoginUrl : null }
+      : { status: 'not_applicable', loginUrl: null },
+  });
 });
 
 export default router;

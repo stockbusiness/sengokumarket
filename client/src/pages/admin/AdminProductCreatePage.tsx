@@ -10,6 +10,13 @@ import {
   type PriceMode,
   type VariantRow,
 } from '../../lib/productPricing';
+import { AGENCY_ACCESS_MODES } from '@sengoku/contracts';
+
+const AGENCY_ACCESS_MODE_LABEL: Record<string, string> = {
+  none: '連携なし',
+  customer_portal: '一般利用者としてログイン権限を付与',
+  agent_portal: '代理店・アドバイザーとしてログイン権限を付与',
+};
 
 export default function AdminProductCreatePage() {
   const navigate = useNavigate();
@@ -24,6 +31,11 @@ export default function AdminProductCreatePage() {
   const [priceMode, setPriceMode] = useState<PriceMode>('included');
   const [variantRows, setVariantRows] = useState<VariantRow[]>(DEFAULT_VARIANT_ROWS);
   const [imagesText, setImagesText] = useState('');
+  const [agencyAccessMode, setAgencyAccessMode] = useState('none');
+  const [agencyRole, setAgencyRole] = useState('');
+  const [agencyProductCode, setAgencyProductCode] = useState('');
+  const [agencyAccessExpiresDays, setAgencyAccessExpiresDays] = useState('');
+  const [agencyLoginRedirectPath, setAgencyLoginRedirectPath] = useState('');
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -71,6 +83,10 @@ export default function AdminProductCreatePage() {
       setError('バリエーションを1つ以上入力してください(在庫が無いと購入できません)');
       return;
     }
+    if (agencyAccessMode === 'agent_portal' && (!agencyRole.trim() || !agencyProductCode.trim())) {
+      setError('代理店アカウント権限を付与する場合、役割コードと商品コードは必須です');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -86,6 +102,11 @@ export default function AdminProductCreatePage() {
         status: 'draft',
         images: parseImagesText(imagesText),
         variants: validVariants.map((v) => ({ name: v.name.trim(), price: toTaxIncluded(v.price, priceMode), stock: v.stock })),
+        agencyAccessMode,
+        agencyRole: agencyRole.trim() || null,
+        agencyProductCode: agencyProductCode.trim() || null,
+        agencyAccessExpiresDays: agencyAccessExpiresDays.trim() ? Number(agencyAccessExpiresDays) : null,
+        agencyLoginRedirectPath: agencyLoginRedirectPath.trim() || null,
       });
       navigate('/admin/products', { state: { message: `「${name}」を作成しました` } });
     } catch (e) {
@@ -254,6 +275,63 @@ export default function AdminProductCreatePage() {
               placeholder={'https://example.com/image1.jpg\nhttps://example.com/image2.jpg'}
             />
           </label>
+        </div>
+
+        <div className="admin-form-section">
+          <h2 className="admin-form-section__title">代理店ポータル連携</h2>
+          <p className="admin-form-section__hint">
+            この商品を購入した方に、代理店システムへのログイン権限を付与するかどうかの設定です。
+            「代理店・アドバイザーとしてのログイン権限」を選んだ場合のみ、役割コードと商品コードの入力が必須になります。
+          </p>
+          <label>
+            アクセス権限
+            <select value={agencyAccessMode} onChange={(e) => setAgencyAccessMode(e.target.value)}>
+              {AGENCY_ACCESS_MODES.map((mode) => (
+                <option key={mode} value={mode}>
+                  {AGENCY_ACCESS_MODE_LABEL[mode]}
+                </option>
+              ))}
+            </select>
+          </label>
+          {agencyAccessMode === 'agent_portal' && (
+            <>
+              <label>
+                役割コード(agencyRole・必須)
+                <input type="text" value={agencyRole} onChange={(e) => setAgencyRole(e.target.value)} placeholder="例: participant" />
+              </label>
+              <label>
+                代理店側の商品コード(agencyProductCode・必須)
+                <input
+                  type="text"
+                  value={agencyProductCode}
+                  onChange={(e) => setAgencyProductCode(e.target.value)}
+                  placeholder="例: agency_entry_plan"
+                />
+              </label>
+            </>
+          )}
+          {agencyAccessMode !== 'none' && (
+            <>
+              <label>
+                アクセス有効日数(未入力の場合は無期限)
+                <input
+                  type="number"
+                  min={1}
+                  value={agencyAccessExpiresDays}
+                  onChange={(e) => setAgencyAccessExpiresDays(e.target.value)}
+                />
+              </label>
+              <label>
+                ログイン後のリダイレクト先パス(任意)
+                <input
+                  type="text"
+                  value={agencyLoginRedirectPath}
+                  onChange={(e) => setAgencyLoginRedirectPath(e.target.value)}
+                  placeholder="例: /dashboard"
+                />
+              </label>
+            </>
+          )}
         </div>
 
         {error && <p className="checkout-error">{error}</p>}

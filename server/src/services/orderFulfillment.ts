@@ -6,6 +6,7 @@ import { enqueueReferralConfirmPurchaseJob } from './orderLinkingJobs';
 import { isWalletClaimEnabled } from './walletClaimConfig';
 import { getDigitalCollectibleRulesByProductIds, reserveProductSerialNumbers } from './digitalCollectible';
 import { createWalletClaimIfEligible } from './walletClaim';
+import { enqueueProvisioningJobIfEligible } from './purchaseProvisioningJobs';
 import { enqueueNotification } from '../modules/notifications/infrastructure/notificationOutbox.repository';
 
 type Tx = Prisma.TransactionClient;
@@ -120,6 +121,10 @@ export async function applyPaidOrderSideEffects(tx: Tx, order: Order) {
   if (order.referralCode) {
     await enqueueReferralConfirmPurchaseJob(tx, order.id);
   }
+
+  // 購入後代理店システム連携実装指示書 6.5章: 紹介コードの有無に関係なく、注文に含まれる
+  // 商品のいずれかがagencyAccessMode!='none'であれば決済確定と同一トランザクションで作成する。
+  await enqueueProvisioningJobIfEligible(tx, order, orderItems);
 
   // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)4章: `paymentStatus=paid`確定と
   // 同一トランザクションでWalletClaimを作成する。生Tokenは通知Outbox実行時に発行する

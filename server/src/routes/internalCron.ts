@@ -8,6 +8,7 @@ import { processNftMints } from '../services/nftMintProcessing';
 import { dispatchPendingOutboxEvents } from '../services/integrationOutboxDispatcher';
 import { dispatchPendingNotifications } from '../modules/notifications/application/dispatchNotificationOutbox.usecase';
 import { processOrderLinkingJobs } from '../services/orderLinkingJobDispatcher';
+import { processPurchaseProvisioningJobs } from '../services/purchaseProvisioningDispatcher';
 import { cleanupStaleRateLimitBuckets } from '../services/rateLimiter';
 import { cleanupWalletClaimApiNonces } from '../middleware/walletClaimHmac';
 import { withSchedulerHeartbeat } from '../services/schedulerHeartbeat';
@@ -104,6 +105,21 @@ router.get('/process-order-linking-jobs', async (req, res) => {
   try {
     const result = await withSchedulerHeartbeat('process-order-linking-jobs', getSchedulerSource(req), () =>
       processOrderLinkingJobs(),
+    );
+    res.json(result);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+});
+
+// 購入後代理店システム連携実装指示書 6.4章: purchase_provisioning_jobsのディスパッチャ。
+// order_linking_jobs等と同様、Stripe Webhook・注文確定処理からの即時実行は行わず
+// (最終安定化指示書Stage1「HTTP経路から同期Dispatcherを除去」)、cronのみが実送信を担う。
+router.get('/process-purchase-provisioning-jobs', async (req, res) => {
+  try {
+    const result = await withSchedulerHeartbeat('process-purchase-provisioning-jobs', getSchedulerSource(req), () =>
+      processPurchaseProvisioningJobs(),
     );
     res.json(result);
   } catch (e) {

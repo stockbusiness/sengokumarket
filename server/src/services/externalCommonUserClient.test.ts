@@ -29,7 +29,12 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await resolveCommonUserId({ externalUserId: 'user-1', verifiedEmail: 'a@example.com' });
+    const result = await resolveCommonUserId({
+      externalUserId: 'user-1',
+      name: '山田太郎',
+      email: 'a@example.com',
+      emailVerified: false,
+    });
 
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -40,7 +45,7 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await resolveCommonUserId({ externalUserId: 'user-1' });
+    const result = await resolveCommonUserId({ externalUserId: 'user-1', name: '山田太郎', email: 'a@example.com', emailVerified: false });
 
     expect(result).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
@@ -58,7 +63,12 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await resolveCommonUserId({ externalUserId: 'user-1', verifiedEmail: 'a@example.com' });
+    const result = await resolveCommonUserId({
+      externalUserId: 'user-1',
+      name: '山田太郎',
+      email: 'a@example.com',
+      emailVerified: false,
+    });
 
     expect(result).toEqual({ commonUserId: 'cu_test_00000001' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -75,7 +85,10 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
     expect(JSON.parse(options.body)).toMatchObject({
       system_key: 'sengoku-market',
       external_user_id: 'user-1',
-      verified_email: 'a@example.com',
+      name: '山田太郎',
+      email: 'a@example.com',
+      email_verified: false,
+      create_if_missing: true,
     });
   });
 
@@ -87,7 +100,7 @@ describe('externalCommonUserClient(仕様書外の拡張・2026-07-22指示書�
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, json: () => Promise.resolve({}) }));
 
-    const result = await resolveCommonUserId({ externalUserId: 'user-1' });
+    const result = await resolveCommonUserId({ externalUserId: 'user-1', name: '山田太郎', email: 'a@example.com', emailVerified: false });
     expect(result).toBeNull();
   });
 });

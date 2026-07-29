@@ -14,6 +14,8 @@ export default function CheckoutSuccessPage() {
 
   const [orderNumber, setOrderNumber] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
+  const [agencyPortalStatus, setAgencyPortalStatus] = useState<string | null>(null);
+  const [agencyPortalLoginUrl, setAgencyPortalLoginUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -31,6 +33,8 @@ export default function CheckoutSuccessPage() {
         if (cancelled) return;
         setOrderNumber(data.orderNumber);
         setPaymentStatus(data.paymentStatus);
+        setAgencyPortalStatus(data.agencyPortalAccess.status);
+        setAgencyPortalLoginUrl(data.agencyPortalAccess.loginUrl);
 
         if (data.paymentStatus === 'paid' && !clearedRef.current) {
           clearedRef.current = true;
@@ -64,6 +68,20 @@ export default function CheckoutSuccessPage() {
         </>
       )}
       {paymentStatus === 'pending' && <p>決済情報の反映まで数分かかる場合があります。しばらくお待ちください。</p>}
+
+      {paymentStatus === 'paid' && agencyPortalStatus === 'provisioned' && agencyPortalLoginUrl && (
+        <p>
+          <a href={agencyPortalLoginUrl} target="_blank" rel="noreferrer" className="btn-primary">
+            代理店システムへログイン
+          </a>
+        </p>
+      )}
+      {paymentStatus === 'paid' && (agencyPortalStatus === 'pending' || agencyPortalStatus === 'processing') && (
+        <p>代理店システムの準備中です。準備が整い次第、ご案内メールとマイページからログインできるようになります。</p>
+      )}
+      {paymentStatus === 'paid' && agencyPortalStatus === 'failed' && (
+        <p>代理店システムのログイン準備が現在できていません。しばらくしてから再度お試しください。</p>
+      )}
       {error && <p className="checkout-error">{error}</p>}
 
       <p>

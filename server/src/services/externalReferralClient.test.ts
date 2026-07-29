@@ -129,5 +129,88 @@ describe('externalReferralClient(仕様書外の拡張・2026-07-22指示書対�
       // 固定のIdempotency-Keyを送る。
       expect(options.headers['Idempotency-Key']).toBe('referral-confirm-purchase:order-test-1');
     });
+
+    // 購入後代理店システム連携実装指示書 6.8・8.2章「受理条件」: status='confirmed'を必須と
+    // しない(ok===trueであれば受理する)。
+    it('status無し・ok=trueの新契約レスポンスも受理する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              common_user_id: 'cu_test_001',
+              transaction: { transaction_id: 'txn_1' },
+              registration_referrer_agency_id: 'AGENT-CODE-001',
+              assigned_agency_id: 'AGENT-CODE-002',
+            }),
+        }),
+      );
+
+      const result = await confirmReferral({ orderId: 'order-test-1', referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
+
+      expect(result).toEqual({
+        commonUserId: 'cu_test_001',
+        registrationReferrerAgencyId: 'AGENT-CODE-001',
+        assignedAgencyId: 'AGENT-CODE-002',
+        salesAgentId: null,
+        closingAgentId: null,
+      });
+    });
+
+    // 8.2章「互換期間はagency_id、relation、agency_relationsも返してよい」: 代理店4役が
+    // agency_assignmentへネストされた応答も受理する。
+    it('代理店4役がagency_assignmentにネストされた応答も受理する', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              ok: true,
+              common_user_id: 'cu_test_001',
+              agency_assignment: {
+                registration_referrer_agency_id: 'AGENT-CODE-001',
+                assigned_agency_id: 'AGENT-CODE-002',
+                sales_agent_id: 'AGENT-CODE-003',
+                closing_agent_id: 'AGENT-CODE-004',
+              },
+            }),
+        }),
+      );
+
+      const result = await confirmReferral({ orderId: 'order-test-1', referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
+
+      expect(result).toEqual({
+        commonUserId: 'cu_test_001',
+        registrationReferrerAgencyId: 'AGENT-CODE-001',
+        assignedAgencyId: 'AGENT-CODE-002',
+        salesAgentId: 'AGENT-CODE-003',
+        closingAgentId: 'AGENT-CODE-004',
+      });
+    });
+
+    it('ok=false・status=confirmed以外の応答はnullを返す', async () => {
+      process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      await setSetting('sennokuni_hmac_key_id', 'key-123');
+      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ ok: false, status: 'error' }) }));
+
+      const result = await confirmReferral({ orderId: 'order-test-1', referralSessionKey: 'rs_test_001', commonUserId: 'cu_test_001', event: 'purchase' });
+      expect(result).toBeNull();
+    });
   });
 });

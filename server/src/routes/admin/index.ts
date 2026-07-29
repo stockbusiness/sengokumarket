@@ -27,6 +27,7 @@ import integrationPreflightRouter from './integrationPreflight';
 import orderWalletTransactionsRouter from './orderWalletTransactions';
 import walletClaimsRouter from './walletClaims';
 import collectibleDeliveriesRouter from './collectibleDeliveries';
+import purchaseProvisioningRouter from './purchaseProvisioning';
 
 const router = Router();
 
@@ -67,6 +68,8 @@ router.use(orderWalletTransactionsRouter);
 // Collectible Deliveriesは外部連携の運用・監視系のため、他の千ノ国連携画面と同様staffには公開しない。
 router.use(walletClaimsRouter);
 router.use(collectibleDeliveriesRouter);
+// 購入後代理店システム連携実装指示書 6.13章: 他の千ノ国連携画面と同様staffには公開しない。
+router.use(purchaseProvisioningRouter);
 // 本番安定化指示書Stage6: 商品ごとの権利付与ルーティング・OVEポイント計算設定は、日次業務
 // (在庫・注文対応等)ではなく代理店設定等と同様の高度な設定操作のため、staffには公開しない。
 router.use(productIntegrationRulesRouter);

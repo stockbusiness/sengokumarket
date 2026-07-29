@@ -24,6 +24,7 @@ const AdminAuditLogsPage = lazyWithReload(() => import('../../pages/admin/AdminA
 const AdminUsersPage = lazyWithReload(() => import('../../pages/admin/AdminUsersPage'));
 const AdminNotificationOutboxPage = lazyWithReload(() => import('../../pages/admin/AdminNotificationOutboxPage'));
 const AdminOrderLinkingJobsPage = lazyWithReload(() => import('../../pages/admin/AdminOrderLinkingJobsPage'));
+const AdminPurchaseProvisioningPage = lazyWithReload(() => import('../../pages/admin/AdminPurchaseProvisioningPage'));
 const AdminIntegrationOutboxPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationOutboxPage'));
 const AdminIntegrationRulesOverviewPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationRulesOverviewPage'));
 const AdminExternalIdentityConflictsPage = lazyWithReload(() => import('../../pages/admin/AdminExternalIdentityConflictsPage'));
@@ -136,6 +137,14 @@ export function adminRoutes() {
         element={
           <RequireFullAdmin>
             <AdminOrderLinkingJobsPage />
+          </RequireFullAdmin>
+        }
+      />
+      <Route
+        path="purchase-provisioning"
+        element={
+          <RequireFullAdmin>
+            <AdminPurchaseProvisioningPage />
           </RequireFullAdmin>
         }
       />

@@ -1,0 +1,769 @@
+<title>管理者マニュアル | 戦国評議員デジタル会員証 販売カート</title>
+<style>
+  :root {
+    --ink-900: #182330;
+    --ink-800: #1E2A38;
+    --ink-700: #2B3B4E;
+    --ink-600: #445569;
+    --paper-0: #F4F0E4;
+    --paper-50: #EEE8DA;
+    --paper-100: #E4DCC9;
+    --paper-200: #D8CDB4;
+    --line: #C9BC9F;
+    --ink-on-paper: #2A2620;
+    --muted-on-paper: #6B6250;
+    --accent: #A8442C;
+    --accent-strong: #8E3620;
+    --accent-tint: #F1DCD3;
+    --success: #3F7A56;
+    --success-tint: #DCEBE1;
+    --warning: #A97321;
+    --warning-tint: #F1E3C6;
+    --danger: #9B2C2C;
+    --danger-tint: #F2DADA;
+    --neutral: #6B6250;
+    --neutral-tint: #E4DCC9;
+    --card-bg: #FBF9F3;
+    --code-bg: #E9E1CD;
+    --shadow: 0 1px 2px rgba(24,35,48,0.06), 0 4px 14px rgba(24,35,48,0.05);
+    --font-body: -apple-system, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic Medium", "YuGothic", "Noto Sans JP", Meiryo, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink-900: #0D1319;
+      --ink-800: #141D27;
+      --ink-700: #1E2A38;
+      --ink-600: #3A4C61;
+      --paper-0: #171410;
+      --paper-50: #1C1915;
+      --paper-100: #24201A;
+      --paper-200: #2D2820;
+      --line: #3C362B;
+      --ink-on-paper: #EAE3D3;
+      --muted-on-paper: #A79C84;
+      --accent: #E08462;
+      --accent-strong: #EFA286;
+      --accent-tint: #3A241D;
+      --success: #6FBE93;
+      --success-tint: #1E3328;
+      --warning: #E0AE5C;
+      --warning-tint: #3A2E15;
+      --danger: #E27979;
+      --danger-tint: #3A1E1E;
+      --neutral: #A79C84;
+      --neutral-tint: #24201A;
+      --card-bg: #1E1A14;
+      --code-bg: #24201A;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 18px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink-900: #0D1319; --ink-800: #141D27; --ink-700: #1E2A38; --ink-600: #3A4C61;
+    --paper-0: #171410; --paper-50: #1C1915; --paper-100: #24201A; --paper-200: #2D2820;
+    --line: #3C362B; --ink-on-paper: #EAE3D3; --muted-on-paper: #A79C84;
+    --accent: #E08462; --accent-strong: #EFA286; --accent-tint: #3A241D;
+    --success: #6FBE93; --success-tint: #1E3328;
+    --warning: #E0AE5C; --warning-tint: #3A2E15;
+    --danger: #E27979; --danger-tint: #3A1E1E;
+    --neutral: #A79C84; --neutral-tint: #24201A;
+    --card-bg: #1E1A14; --code-bg: #24201A;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 4px 18px rgba(0,0,0,0.35);
+  }
+  :root[data-theme="light"] {
+    --ink-900: #182330; --ink-800: #1E2A38; --ink-700: #2B3B4E; --ink-600: #445569;
+    --paper-0: #F4F0E4; --paper-50: #EEE8DA; --paper-100: #E4DCC9; --paper-200: #D8CDB4;
+    --line: #C9BC9F; --ink-on-paper: #2A2620; --muted-on-paper: #6B6250;
+    --accent: #A8442C; --accent-strong: #8E3620; --accent-tint: #F1DCD3;
+    --success: #3F7A56; --success-tint: #DCEBE1;
+    --warning: #A97321; --warning-tint: #F1E3C6;
+    --danger: #9B2C2C; --danger-tint: #F2DADA;
+    --neutral: #6B6250; --neutral-tint: #E4DCC9;
+    --card-bg: #FBF9F3; --code-bg: #E9E1CD;
+    --shadow: 0 1px 2px rgba(24,35,48,0.06), 0 4px 14px rgba(24,35,48,0.05);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--paper-0);
+    color: var(--ink-on-paper);
+    font-family: var(--font-body);
+    line-height: 1.75;
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-strong); }
+  @media (prefers-color-scheme: dark) { a { color: var(--accent); } }
+  :root[data-theme="dark"] a { color: var(--accent); }
+  :root[data-theme="light"] a { color: var(--accent-strong); }
+
+  .shell { display: flex; min-height: 100vh; }
+
+  /* ---------- Sidebar ---------- */
+  .toc {
+    width: 280px;
+    flex: 0 0 280px;
+    background: var(--ink-800);
+    color: #E9E4D6;
+    position: sticky;
+    top: 0;
+    align-self: flex-start;
+    height: 100vh;
+    overflow-y: auto;
+    padding: 28px 20px 40px;
+  }
+  .toc-brand {
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: #B9C2CC;
+    margin: 0 0 2px;
+  }
+  .toc-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: #fff;
+    margin: 0 0 22px;
+    line-height: 1.4;
+  }
+  .toc nav { display: flex; flex-direction: column; gap: 18px; }
+  .toc-group-label {
+    font-size: 11.5px;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    color: #8FA0AF;
+    text-transform: uppercase;
+    margin: 0 0 6px 2px;
+  }
+  .toc-links { display: flex; flex-direction: column; }
+  .toc-links a {
+    display: block;
+    padding: 6px 8px;
+    border-radius: 6px;
+    color: #D6DCE2;
+    text-decoration: none;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .toc-links a:hover { background: rgba(255,255,255,0.07); color: #fff; }
+
+  /* ---------- Main ---------- */
+  .main { flex: 1; min-width: 0; padding: 48px 56px 120px; max-width: 900px; }
+  @media (max-width: 900px) {
+    .shell { display: block; }
+    .toc { position: static; width: auto; height: auto; }
+    .main { padding: 32px 20px 80px; max-width: none; }
+  }
+
+  .cover {
+    margin-bottom: 44px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--line);
+  }
+  .cover-eyebrow {
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 10px;
+  }
+  .cover h1 {
+    font-size: 32px;
+    font-weight: 800;
+    margin: 0 0 14px;
+    line-height: 1.4;
+    text-wrap: balance;
+    color: var(--ink-800);
+  }
+  :root[data-theme="dark"] .cover h1, @media (prefers-color-scheme: dark) { .cover h1 { color: var(--ink-on-paper); } }
+  .cover p.lead { font-size: 16.5px; color: var(--muted-on-paper); max-width: 62ch; margin: 0; }
+
+  section.group { margin-bottom: 56px; }
+  .group-heading {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin: 0 0 22px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid var(--ink-800);
+  }
+  .group-heading h2 {
+    font-size: 22px;
+    font-weight: 800;
+    margin: 0;
+    color: var(--ink-800);
+  }
+  :root[data-theme="dark"] .group-heading h2 { color: var(--ink-on-paper); }
+  @media (prefers-color-scheme: dark) { .group-heading h2 { color: var(--ink-on-paper); } }
+  .group-heading .group-note { font-size: 13px; color: var(--muted-on-paper); }
+
+  article.page-card {
+    background: var(--card-bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 26px 28px 28px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .page-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+  .page-card-head h3 { font-size: 18.5px; font-weight: 700; margin: 0; }
+  .page-path {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    color: var(--muted-on-paper);
+    margin: 0 0 14px;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 100px;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .chip-admin { background: var(--accent-tint); color: var(--accent-strong); }
+  .chip-staff { background: var(--success-tint); color: var(--success); }
+  .chip-viewer { background: var(--neutral-tint); color: var(--muted-on-paper); }
+  .chip-caution { background: var(--warning-tint); color: var(--warning); }
+
+  .page-card p { margin: 0 0 12px; }
+  .page-card h4 {
+    font-size: 13px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted-on-paper);
+    margin: 20px 0 8px;
+  }
+  .page-card h4:first-of-type { margin-top: 18px; }
+
+  ol.steps { margin: 0; padding-left: 1.35em; display: flex; flex-direction: column; gap: 7px; }
+  ol.steps li::marker { color: var(--accent-strong); font-weight: 700; }
+
+  ul.plain { margin: 0; padding-left: 1.2em; display: flex; flex-direction: column; gap: 6px; }
+
+  table.fields {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+    margin: 4px 0 4px;
+  }
+  table.fields th, table.fields td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  table.fields th {
+    font-weight: 700;
+    font-size: 12.5px;
+    letter-spacing: 0.03em;
+    color: var(--muted-on-paper);
+    text-transform: uppercase;
+    width: 30%;
+  }
+  .table-wrap { overflow-x: auto; }
+
+  .callout {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 16px;
+    border-radius: 8px;
+    font-size: 14.5px;
+    margin: 14px 0;
+    border: 1px solid transparent;
+  }
+  .callout-icon {
+    flex: 0 0 auto;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 13px;
+    color: #fff;
+    margin-top: 1px;
+  }
+  .callout-warn { background: var(--warning-tint); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
+  .callout-warn .callout-icon { background: var(--warning); }
+  .callout-danger { background: var(--danger-tint); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .callout-danger .callout-icon { background: var(--danger); }
+  .callout-info { background: var(--neutral-tint); border-color: var(--line); }
+  .callout-info .callout-icon { background: var(--ink-700); }
+  .callout p { margin: 0; }
+  .callout strong { display: block; margin-bottom: 2px; }
+
+  code, .mono { font-family: var(--font-mono); font-size: 0.92em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+  pre.mono-block {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--code-bg);
+    padding: 12px 14px;
+    border-radius: 8px;
+    overflow-x: auto;
+    line-height: 1.6;
+    margin: 8px 0;
+  }
+
+  .status-pill {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 700;
+    padding: 2px 9px;
+    border-radius: 100px;
+  }
+  .s-neutral { background: var(--neutral-tint); color: var(--muted-on-paper); }
+  .s-warn { background: var(--warning-tint); color: var(--warning); }
+  .s-success { background: var(--success-tint); color: var(--success); }
+  .s-danger { background: var(--danger-tint); color: var(--danger); }
+  .status-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13.5px; margin: 6px 0 4px; }
+  .status-flow .arrow { color: var(--muted-on-paper); }
+
+  .role-table td, .role-table th { font-size: 14px; }
+
+  footer.manual-footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--muted-on-paper);
+  }
+</style>
+
+<div class="shell">
+  <aside class="toc">
+    <p class="toc-brand">戦国楽市楽座</p>
+    <p class="toc-title">管理者マニュアル</p>
+    <nav>
+      <div>
+        <p class="toc-group-label">はじめに</p>
+        <div class="toc-links">
+          <a href="#intro-roles">アカウントと権限</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">概要</p>
+        <div class="toc-links"><a href="#dashboard">ダッシュボード</a></div>
+      </div>
+      <div>
+        <p class="toc-group-label">商品・注文</p>
+        <div class="toc-links">
+          <a href="#products-list">商品一覧</a>
+          <a href="#products-new">商品の新規登録</a>
+          <a href="#products-edit">商品の編集</a>
+          <a href="#import">CSV一括登録</a>
+          <a href="#orders">注文管理</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">NFT(デジタル会員証)</p>
+        <div class="toc-links">
+          <a href="#external-orders">外部注文の登録</a>
+          <a href="#nft-issues">発行状況の管理</a>
+          <a href="#wallet-missing">受取用ウォレット未登録者</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">紹介・代理店</p>
+        <div class="toc-links">
+          <a href="#referral-links">紹介リンク発行</a>
+          <a href="#coupons">クーポン</a>
+          <a href="#referrals">紹介実績・報酬</a>
+          <a href="#agencies">代理店</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">その他</p>
+        <div class="toc-links">
+          <a href="#notices">お知らせ</a>
+          <a href="#legal">法務ページ</a>
+          <a href="#admin-users">管理者アカウント</a>
+          <a href="#audit-logs">操作履歴</a>
+          <a href="#settings">設定</a>
+        </div>
+      </div>
+      <div>
+        <p class="toc-group-label">外部連携・監視</p>
+        <div class="toc-links">
+          <a href="#wallet-claims">Wallet Claims</a>
+          <a href="#collectible-deliveries">Collectible Deliveries</a>
+          <a href="#integration-misc">連携監視画面(その他)</a>
+        </div>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="main">
+    <div class="cover">
+      <p class="cover-eyebrow">Admin Manual · v1</p>
+      <h1>戦国評議員デジタル会員証 販売カート<br>管理者マニュアル</h1>
+      <p class="lead">
+        管理画面(<span class="mono">/admin</span>)の各ページで「何ができるか」「どう使うか」を、画面の並び順にそって説明します。
+        迷ったときは左のメニューからページ名をクリックしてください。
+      </p>
+    </div>
+
+    <section class="group" id="intro-roles">
+      <div class="group-heading"><h2>アカウントと権限</h2></div>
+      <article class="page-card">
+        <p>
+          管理画面へのログインはすべて同じ画面(<span class="mono">/login</span>)から行います。ログイン後に表示される内容は、そのアカウントに割り当てられた「役割」によって自動的に変わります。役割は4種類あります。
+        </p>
+        <div class="table-wrap">
+          <table class="fields role-table">
+            <tbody>
+              <tr><th>管理者(admin)</th><td>すべての画面を利用でき、登録・変更・削除などの操作もすべて行えます。他の管理者アカウントの追加・停止もこの役割だけが行えます。</td></tr>
+              <tr><th>閲覧管理者(admin_viewer)</th><td>管理者と同じ画面がすべて見えますが、登録・変更・削除といった操作はサーバー側で拒否されます。画面上部に閲覧専用であることを示す帯が表示されます。会計監査や研修などで「見せるだけ」にしたい場合に使います。</td></tr>
+              <tr><th>スタッフ(staff)</th><td>日々の運用に必要な画面だけに限定されています。具体的には ダッシュボード・商品一覧・CSV一括登録・注文管理・外部注文の登録・発行状況の管理・受取用ウォレット未登録者・お知らせ です。それ以外のメニュー項目(紹介・代理店まわり、法務、設定、操作履歴、管理者アカウント、外部連携・監視のすべて)は画面に表示されず、URLを直接入力してもダッシュボードへ戻されます。</td></tr>
+              <tr><th>代理店(agency)</th><td>専用のログイン画面(<span class="mono">/agency</span>)からログインする別ポータルです。本マニュアルの対象外です。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>本マニュアル内の役割表示について</strong>各ページの見出し横に、そのページを利用できる役割を色分けチップで示しています。「スタッフも利用可」の表示がないページは、管理者・閲覧管理者専用です。</p>
+        </div>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>新しい管理者アカウントの作り方</strong>管理者がその場で仮パスワードを設定してあげることはできません。<a href="#admin-users">管理者アカウント</a>ページから招待すると、本人宛にパスワード設定用のメールが送られ、本人がリンクから自分でパスワードを設定する流れになります。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="dashboard-group">
+      <div class="group-heading"><h2>概要</h2><span class="group-note">最初に開かれる画面</span></div>
+      <article class="page-card" id="dashboard">
+        <div class="page-card-head">
+          <h3>ダッシュボード</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin</p>
+        <p>ログイン後に最初に表示される画面です。売上のサマリー、直近の注文件数、発行待ちのデジタル会員証件数などがグラフとカードで一覧表示されます。この画面自体には操作ボタンはなく、状況を一目で把握するための画面です。気になる数字があれば、対応する各ページ(注文管理・発行状況の管理など)に移動して詳細を確認してください。</p>
+      </article>
+    </section>
+
+    <section class="group" id="products-group">
+      <div class="group-heading"><h2>商品・注文</h2></div>
+
+      <article class="page-card" id="products-list">
+        <div class="page-card-head">
+          <h3>商品一覧</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/products</p>
+        <p>登録済みの商品を一覧で確認できます。ここから新規登録・編集ページへ進みます。</p>
+      </article>
+
+      <article class="page-card" id="products-new">
+        <div class="page-card-head">
+          <h3>商品の新規登録</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/products/new</p>
+        <h4>入力する項目</h4>
+        <div class="table-wrap">
+          <table class="fields">
+            <tbody>
+              <tr><th>商品名・説明文</th><td>購入者に表示される名前と紹介文です。</td></tr>
+              <tr><th>URL用の識別子(スラッグ)</th><td>商品ページのURLに使う英数字です。<strong>登録後は変更できません。</strong>公開前に確認してください。</td></tr>
+              <tr><th>カテゴリー・種別・販売方式</th><td>商品の分類と、通常販売か予約販売かなどの販売方式を選びます。</td></tr>
+              <tr><th>価格</th><td>税込・税抜どちらで入力するかを切り替えられます。表示時は必ず「税込」表記になります。</td></tr>
+              <tr><th>バリエーション(種類・在庫)</th><td>色・ランクなどの種類ごとに、在庫数を必ず設定します。在庫が0になると購入できなくなります。</td></tr>
+              <tr><th>画像</th><td>商品ページに表示される画像をアップロードします。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="page-card" id="products-edit">
+        <div class="page-card-head">
+          <h3>商品の編集</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/products/:id/edit</p>
+        <p>公開状態は「下書き・公開中・アーカイブ済み」の3段階です。バリエーションの在庫数などは入力欄からフォーカスを外す(クリックして別の場所を押す)と自動的に保存されます。保存ボタンを押し忘れても反映されるため、入力後は数秒待ってから画面を離れてください。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>「連携ルール(千ノ国連携)」欄について</strong>編集画面の下部に外部システム連携用の設定欄がありますが、画面上に「現在は無効」である旨が明記されている通り、現時点では動作していません。将来の連携機能のための準備欄です。触らなくて構いません。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="import">
+        <div class="page-card-head">
+          <h3>CSV一括登録</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/import-products</p>
+        <p>多数の商品をまとめて登録・更新したいときに使います。</p>
+        <ol class="steps">
+          <li>「サンプルCSVをダウンロード」から雛形を取得します(必須の列がすべて入っています)。</li>
+          <li>雛形に沿って表計算ソフトで内容を入力し、CSV形式で保存します。</li>
+          <li>ファイルを選択すると、登録前に内容の「プレビュー」が表示されます。</li>
+          <li>プレビューの内容に間違いがないことを確認してから「実行」します。プレビューの段階ではまだ何も登録されません。</li>
+        </ol>
+      </article>
+
+      <article class="page-card" id="orders">
+        <div class="page-card-head">
+          <h3>注文管理</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/orders</p>
+        <p>すべての注文を確認できます。「CSVエクスポート」で一覧を書き出せます。</p>
+        <h4>銀行振込の入金確認</h4>
+        <p>銀行振込を選んだ注文には「入金確認」ボタンが表示されます。実際に入金を確認できてから押してください。このボタンを押した時点で決済完了として扱われ、デジタル会員証の発行手続きが始まります。</p>
+        <div class="callout callout-danger">
+          <span class="callout-icon">!</span>
+          <p><strong>クレジットカード決済は自動で確定します</strong>クレジットカード決済の完了は、購入者が「完了しました」という画面を見た時点ではなく、Stripe(決済代行会社)からの通知を受け取った時点で確定します。この画面上の操作で決済状態を手動で「完了」に変えることはできません(銀行振込を除く)。</p>
+        </div>
+        <h4>注文ステータスの変更</h4>
+        <p>ステータスの選択肢は現在の状態から遷移できる範囲だけが表示されます(すでに完了した注文を「未決済」に戻す、といった操作はできません)。「説明責任者」欄は自由記入で、対応した担当者名などを控えるためのメモ欄です。</p>
+      </article>
+    </section>
+
+    <section class="group" id="nft-group">
+      <div class="group-heading"><h2>NFT(デジタル会員証)</h2><span class="group-note">画面上の表記は「NFT」のままの箇所があります</span></div>
+
+      <article class="page-card" id="external-orders">
+        <div class="page-card-head">
+          <h3>外部注文の登録</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/external-orders</p>
+        <p>イベント会場での手売りなど、このカートを通さずに代金を受け取った購入者について、デジタル会員証の発行対象として登録するための画面です。1件ずつの手入力フォームと、CSVによるまとめ登録の両方に対応しています。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>登録後も購入者本人の操作が必要です</strong>ここで登録しても、受取用ウォレットの接続と本人確認(署名)は購入者自身に行ってもらう必要があります。登録が済んだ購入者は<a href="#wallet-missing">受取用ウォレット未登録者</a>の一覧に現れます。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="nft-issues">
+        <div class="page-card-head">
+          <h3>発行状況の管理</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/nft-issues</p>
+        <p>デジタル会員証1枚ごとの発行状況を確認・操作します。ステータスで絞り込みできます。</p>
+        <div class="status-flow">
+          <span class="status-pill s-neutral">ウォレット待ち</span><span class="arrow">→</span>
+          <span class="status-pill s-warn">発行準備完了</span><span class="arrow">→</span>
+          <span class="status-pill s-warn">発行処理中</span><span class="arrow">→</span>
+          <span class="status-pill s-success">発行済み</span>
+        </div>
+        <p style="font-size:13.5px;color:var(--muted-on-paper);margin-top:2px;">※処理中に失敗すると「発行準備完了」に自動で戻り再試行されます。既定の再試行回数を超えると「発行失敗」になります。返金・キャンセル時は「発行取消」になります。</p>
+        <p>「発行失敗」または「発行準備完了」の行には再試行ボタンが表示されます。外部の発行サービス側で先に手動発行した場合などは、トークンIDと取引ハッシュ(txハッシュ)を手入力して「発行済み」に直接変更することもできます。</p>
+      </article>
+
+      <article class="page-card" id="wallet-missing">
+        <div class="page-card-head">
+          <h3>受取用ウォレット未登録者</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/wallet-missing</p>
+        <p>デジタル会員証の対象商品を購入したものの、まだ受取用ウォレット(Web3用語でいうWallet)を登録していない購入者の一覧です。一覧から登録案内メールの送信・再送信ができます。すでに送信済みの記録を消して送信履歴をリセットする操作も可能です。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>ここから直接ウォレットを登録することはできません</strong>受取用ウォレットの登録には、本人による署名(本人確認)が必須です。誤入力や成りすましによる誤発行を防ぐため、管理者が代わりにアドレスを入力する機能は用意していません。必ず購入者本人にメール等の案内から登録してもらってください。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="referral-group">
+      <div class="group-heading"><h2>紹介・代理店</h2><span class="group-note">スタッフのメニューには表示されません</span></div>
+
+      <article class="page-card" id="referral-links">
+        <div class="page-card-head">
+          <h3>紹介リンク発行</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/referral-links</p>
+        <p>インフルエンサーが使う紹介リンクを発行します。<strong>この画面はスマートフォンでの操作を前提にレイアウトされています。</strong></p>
+        <ol class="steps">
+          <li>代理店を選びます。まだ登録がない場合はその場で新規作成できます。</li>
+          <li>インフルエンサーを選びます。こちらもその場で新規作成できます。</li>
+          <li>必要であれば紹介報酬率を個別に上書きします(未入力ならインフルエンサー・代理店の既定値が使われます)。</li>
+          <li>「発行」を押すとリンクが作成され、URLをコピーできます。</li>
+        </ol>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>発行後の編集・削除はできません</strong>リンクの紹介コードや条件を後から書き換えることはできません。条件を変えたい場合は、既存のリンクを「無効化」してから新しく発行し直してください。紹介コードは自動採番(SGI+連番)で、任意の文字列を指定することもできません。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="coupons">
+        <div class="page-card-head">
+          <h3>クーポン</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+          <span class="chip chip-viewer">閲覧管理者は閲覧のみ</span>
+        </div>
+        <p class="page-path mono">/admin/coupons</p>
+        <p>定額または割合(%)割引のクーポンを作成します。割引上限額・最低購入金額・有効期限・利用回数上限を設定できます。</p>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>クーポンは店舗全体に適用されます</strong>特定の商品だけ・特定の代理店経由の注文だけ・特定の顧客だけ、といった対象の絞り込みは現状できません。発行するクーポンは常に全商品・全購入者が対象になる前提で設計してください。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="referrals">
+        <div class="page-card-head">
+          <h3>紹介実績・報酬</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/referrals</p>
+        <p>紹介経由の売上・報酬額を集計表で確認します。CSVエクスポートに対応し、支払い待ちの報酬を選んでまとめて「承認済み」にするチェックボックスもあります。行ごとのステータスは現在の状態から遷移できる範囲だけが選択できます。</p>
+      </article>
+
+      <article class="page-card" id="agencies">
+        <div class="page-card-head">
+          <h3>代理店</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/agencies</p>
+        <p>代理店の一覧を確認します。外部の代理店管理システムと同期する読み取り専用ボタンのみで、この画面から直接新規作成・編集することはできません(代理店の新規作成は<a href="#referral-links">紹介リンク発行</a>画面のインライン作成から行います)。</p>
+      </article>
+    </section>
+
+    <section class="group" id="other-group">
+      <div class="group-heading"><h2>その他</h2></div>
+
+      <article class="page-card" id="notices">
+        <div class="page-card-head">
+          <h3>お知らせ</h3>
+          <span class="chip chip-staff">スタッフも利用可</span>
+        </div>
+        <p class="page-path mono">/admin/notices</p>
+        <p>購入者向けのお知らせを下書き作成し、公開・非公開を切り替えます。不要になったものは削除できます。</p>
+      </article>
+
+      <article class="page-card" id="legal">
+        <div class="page-card-head">
+          <h3>法務ページ</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/legal</p>
+        <p>4つのタブ(特定商取引法表記・利用規約・プライバシーポリシー・その他)を編集します。「特定商取引法」タブだけは項目ごとの入力フォームです。残り3つのタブは簡易的な記法を使ったフリーテキストで、以下のルールで書きます。</p>
+        <div class="table-wrap">
+          <table class="fields">
+            <tbody>
+              <tr><th><span class="mono">## 見出し</span></th><td>行頭に半角の <span class="mono">##</span> と半角スペースを付けると見出しになります。</td></tr>
+              <tr><th><span class="mono">!注意文</span></th><td>行頭に半角の <span class="mono">!</span> を付けると、目立つ注意書きボックスになります。</td></tr>
+              <tr><th><span class="mono">項目名|内容</span></th><td>半角の <span class="mono">|</span>(縦棒)で区切ると、表の1行になります。連続する行は自動的にまとめて1つの表になります。</td></tr>
+              <tr><th>それ以外の行</th><td>通常の段落として表示されます。</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout callout-warn">
+          <span class="callout-icon">!</span>
+          <p><strong>記法を1文字でも間違えると見た目が崩れます</strong>特に <span class="mono">##</span> の後ろの半角スペースや、<span class="mono">|</span> の全角・半角の違いに注意してください。保存後は必ずプレビュー(公開ページ)で見た目を確認してください。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="admin-users">
+        <div class="page-card-head">
+          <h3>管理者アカウント</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/admin-users</p>
+        <p>管理者・閲覧管理者・スタッフのアカウントを作成・編集・停止します。新規作成すると本人宛に仮パスワード設定用のメールが自動送信されます。管理者が代理でパスワードを設定して伝える方法は用意されていません(セキュリティ上の理由により、仮パスワードを平文でメール送信することもありません)。</p>
+      </article>
+
+      <article class="page-card" id="audit-logs">
+        <div class="page-card-head">
+          <h3>操作履歴</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/audit-logs</p>
+        <p>管理画面・代理店ポータルで行われたすべての変更操作(登録・編集・削除など)の記録です。閲覧専用で、誰が・いつ・何を行ったかを追跡する用途です。</p>
+      </article>
+
+      <article class="page-card" id="settings">
+        <div class="page-card-head">
+          <h3>設定</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+          <span class="chip chip-viewer">閲覧管理者は閲覧のみ</span>
+          <span class="chip chip-caution">初期設定・障害対応向け</span>
+        </div>
+        <p class="page-path mono">/admin/settings</p>
+        <p>決済(Stripe)・メール送信(Resend)・代理店連携・デジタル会員証の自動発行サービスなど、外部サービスとの接続情報(APIキー)をまとめて管理する画面です。項目ごとに「接続テスト」ボタンがあります。日常的に使う画面ではなく、初期設定時やトラブル発生時に確認・変更する画面と考えてください。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>空欄のまま保存すると、既存の値は消えません</strong>キーを入力し直さずに保存しても、既に登録済みの値は上書きされず保持されます。銀行振込の受付可否と振込先案内文もこの画面の別セクションで設定しますが、<strong>入金の確認・確定は<a href="#orders">注文管理</a>画面で行います</strong>(この画面では行いません)。</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="group" id="integration-group">
+      <div class="group-heading"><h2>外部連携・監視</h2><span class="group-note">スタッフのメニューには表示されません</span></div>
+
+      <div class="callout callout-warn">
+        <span class="callout-icon">!</span>
+        <p><strong>このグループの中でも「Wallet Claims」「Collectible Deliveries」の2つだけは今すぐ使う画面です</strong>残りの画面(下記「連携監視画面(その他)」)は千ノ国という外部システムとの連携機能に関するもので、現時点ではその連携自体が無効化されているため使用しません。しかし同じメニューグループに並んでいるだけで、Wallet ClaimsとCollectible Deliveriesはこの連携の有効・無効に関係なく現在も稼働している、購入者サポート用の画面です。</p>
+      </div>
+
+      <article class="page-card" id="wallet-claims">
+        <div class="page-card-head">
+          <h3>Wallet Claims</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/wallet-claims, /admin/wallet-claims/:id</p>
+        <p>注文単位で、受取用ウォレットの登録・受け取りURLの状態を確認する画面です。詳細画面では、注文に含まれるデジタル会員証1枚ごとの送付状況と操作履歴が確認できます。「受け取りが届いていない」という問い合わせがあったとき、まずこの画面で状況を確認してください。</p>
+        <p>状態が「保留中・期限切れ・エラー」のときだけ「受け取り用URLを再発行する」ボタンが使えます。</p>
+        <div class="callout callout-info">
+          <span class="callout-icon">i</span>
+          <p><strong>できないこと</strong>元のトークン文字列の確認、権利情報(entitlement)の付け替え、「受け取り完了」になった記録を手動で取り消すことは、いずれもできません。</p>
+        </div>
+      </article>
+
+      <article class="page-card" id="collectible-deliveries">
+        <div class="page-card-head">
+          <h3>Collectible Deliveries</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+        </div>
+        <p class="page-path mono">/admin/collectible-deliveries, /admin/collectible-deliveries/:id</p>
+        <p>上の「Wallet Claims」が注文単位の一覧なのに対し、こちらはデジタル会員証1枚ずつの送付状況を確認する画面です。「注文全体は受け取り済みなのに、カードが1枚だけ届いていない」といった、より細かい単位のトラブル対応に使います。</p>
+        <p>状態が「送付失敗・送付不能」のときだけ「今すぐ再送信」ボタンが使えます。こちらも「受け取り済み」の記録を手動で取り消す機能はありません。</p>
+      </article>
+
+      <article class="page-card" id="integration-misc">
+        <div class="page-card-head">
+          <h3>連携監視画面(その他)</h3>
+          <span class="chip chip-admin">管理者のみ利用可</span>
+          <span class="chip chip-caution">現在は未使用</span>
+        </div>
+        <p>以下はすべて、千ノ国という外部システムとの将来的な連携機能のための画面です。連携機能自体が現時点で無効化されているため、通常の運用では使いません。</p>
+        <div class="table-wrap">
+          <table class="fields">
+            <tbody>
+              <tr><th>Integration Preflight</th><td>連携を有効化する前の事前チェック結果を表示します。</td></tr>
+              <tr><th>Integration Outbox</th><td>外部システムへ送信予定・送信済みのイベントの一覧です。</td></tr>
+              <tr><th>Order Linking Jobs</th><td>外部システムの注文とこのカートの注文を紐付ける処理の状況です。</td></tr>
+              <tr><th>External Identity Conflicts</th><td>外部システムのユーザーIDが重複・矛盾した場合の一覧です。</td></tr>
+              <tr><th>Wallet Transactions</th><td>ウォレット関連の取引記録の一覧です。</td></tr>
+              <tr><th>Integration Rules Overview</th><td>商品ごとの外部連携ルール設定の一覧です。</td></tr>
+              <tr><th>Notification Outbox</th><td>購入者宛のメール等の通知送信キューの一覧です。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <footer class="manual-footer">
+      戦国評議員デジタル会員証 販売カート — 管理者マニュアル。画面の実際の挙動と食い違う箇所に気づいた場合は、開発担当までご連絡ください。
+    </footer>
+  </main>
+</div>
