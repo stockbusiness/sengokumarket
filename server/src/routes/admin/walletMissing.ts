@@ -3,6 +3,11 @@ import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { enqueueNotification } from '../../modules/notifications/infrastructure/notificationOutbox.repository';
 import { triggerImmediateNotificationDispatch } from '../../modules/notifications/application/dispatchNotificationOutbox.usecase';
+import {
+  createWalletRegistrationLink,
+  revokeWalletRegistrationLink,
+  getWalletRegistrationLinkStatus,
+} from '../../services/walletRegistrationLink';
 
 const router = Router();
 
@@ -13,16 +18,27 @@ router.get('/wallet-missing', async (_req, res) => {
     orderBy: { createdAt: 'desc' },
   });
 
+  // 仕様書外の拡張: 登録用リンクのステータスはuserId単位(1ユーザー1リンク)なので、
+  // このページに出てくる対象者ぶんだけまとめて取得する(N+1を避ける)。
+  const userIds = [...new Set(nftIssues.map((i) => i.userId).filter((id): id is string => !!id))];
+  const linkStatuses = new Map(await Promise.all(userIds.map(async (userId) => [userId, await getWalletRegistrationLinkStatus(userId)] as const)));
+
   res.json({
-    walletMissing: nftIssues.map((issue) => ({
-      id: issue.id,
-      customerName: issue.order.customerName,
-      customerEmail: issue.order.customerEmail,
-      orderNumber: issue.order.orderNumber,
-      productName: issue.product.name,
-      purchasedAt: issue.order.paidAt ?? issue.order.createdAt,
-      lastReminderSentAt: issue.walletReminderEmails[0]?.sentAt ?? null,
-    })),
+    walletMissing: nftIssues.map((issue) => {
+      const linkStatus = issue.userId ? linkStatuses.get(issue.userId) : undefined;
+      return {
+        id: issue.id,
+        userId: issue.userId,
+        customerName: issue.order.customerName,
+        customerEmail: issue.order.customerEmail,
+        orderNumber: issue.order.orderNumber,
+        productName: issue.product.name,
+        purchasedAt: issue.order.paidAt ?? issue.order.createdAt,
+        lastReminderSentAt: issue.walletReminderEmails[0]?.sentAt ?? null,
+        linkStatus: linkStatus?.status ?? 'none',
+        linkExpiresAt: linkStatus?.expiresAt ?? null,
+      };
+    }),
   });
 });
 
@@ -53,6 +69,26 @@ router.post('/wallet-missing/:nftIssueId/reminder', async (req, res) => {
   await triggerImmediateNotificationDispatch();
 
   res.status(201).json({ lastReminderSentAt: log.sentAt });
+});
+
+// 仕様書外の拡張: 本人専用の「ウォレット登録用URL」を発行する(初回発行・再発行を兼ねる)。
+// ウォレットアドレス自体の入力はさせず、本人が実際に接続・署名するための入り口のみを発行する。
+router.post('/wallet-missing/:userId/registration-link', async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!user) return sendError(res, 404, 'USER_NOT_FOUND', '対象の会員が見つかりません');
+
+  const token = await createWalletRegistrationLink(req.params.userId, req.authUser!.id);
+  const appUrl = (process.env.APP_URL ?? '').replace(/\/+$/, '');
+  res.status(201).json({ url: `${appUrl}/wallet-register?token=${token}` });
+});
+
+// 新規発行は行わず、現在activeなリンクのみを失効させる(「削除」操作)。
+router.delete('/wallet-missing/:userId/registration-link', async (req, res) => {
+  const user = await prisma.user.findUnique({ where: { id: req.params.userId } });
+  if (!user) return sendError(res, 404, 'USER_NOT_FOUND', '対象の会員が見つかりません');
+
+  await revokeWalletRegistrationLink(req.params.userId, req.authUser!.id);
+  res.status(204).end();
 });
 
 // 案内メールの送信記録を削除する(誤送信の記録整理用。メール自体の取り消しはできない)。

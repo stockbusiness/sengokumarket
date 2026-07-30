@@ -1,8 +1,9 @@
 import type { NftIssue } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { HttpError } from '../lib/httpError';
 import { getMintProvider, type MintProvider, type MintStatusResult } from './nftMint';
 import { buildNftMetadata, uploadNftMetadata } from './nftMetadata';
-import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from './digitalCollectible';
 
 const BATCH_LIMIT = 50;
 const MAX_ATTEMPTS = 5;
@@ -28,68 +29,36 @@ export interface ProcessNftMintsResult {
   skipped: number;
 }
 
-// 仕様書外の拡張: NFT自動発行のメイン処理。Vercelには永続ワーカーが無いため、
-// cron(internalCron.ts)からの定期実行と、決済完了直後のベストエフォート即時実行の
-// 両方から呼ばれる(全件を1回の呼び出し内でループ処理する既存cronジョブと同じ設計)。
+// 仕様書外の拡張: NFT発行の確定処理。運営の意向により、ready_to_issueの行を新規に
+// 外部Mint APIへ送信する部分は運営の手動操作(server/src/routes/admin/nftIssues.tsの
+// POST /:id/mint、submitAndMaybeConfirmを直接呼ぶ)のみとし、cronでは自動送信しない
+// (決済手段がカード・銀行振込の2経路あることと、シリアル番号を運営が目視確認してから
+// 刻みたいという要望による)。cronはあくまで「送信済み(processing)の行の成否確認」という
+// 判断を伴わない後始末のみを担う。
 export async function processNftMints(): Promise<ProcessNftMintsResult> {
   const provider = getMintProvider();
   const result: ProcessNftMintsResult = { claimed: 0, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
   const startedAt = Date.now();
   const timeBudgetMs = getTimeBudgetMs();
 
-  // 1) 前回までにprocessingへ送信済みで未確定の行から先に確定を試みる。
+  // 前回までにprocessingへ送信済みで未確定の行の成否確認のみ行う。
   const processingRows = await prisma.nftIssue.findMany({ where: { status: 'processing' }, take: BATCH_LIMIT });
   for (const issue of processingRows) {
     if (Date.now() - startedAt >= timeBudgetMs) return result;
     await pollAndMaybeConfirm(issue, provider, result);
   }
 
-  // 2) 新規claim対象(nextAttemptAtが過去/未設定のready_to_issue行)。
-  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
-  // digital_collectible対象商品はready_to_issueへ遷移しない設計だが(orderFulfillment.ts・
-  // walletVerification.ts)、二重の安全策としてここでも明示的に除外する。
-  const readyRows = await prisma.nftIssue.findMany({
-    where: {
-      status: 'ready_to_issue',
-      OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }],
-      product: {
-        integrationRules: {
-          none: {
-            enabled: true,
-            entitlementTargetSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
-            entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
-          },
-        },
-      },
-    },
-    take: BATCH_LIMIT,
-  });
-
-  for (const issue of readyRows) {
-    if (Date.now() - startedAt >= timeBudgetMs) {
-      // Functionの残り時間に余裕がないため、これ以上は新規claimしない
-      // (claim済みでない行はready_to_issueのまま残り、次回の呼び出しで再評価される)。
-      break;
-    }
-
-    // checkout.tsの行ロック(FOR UPDATE)に相当する、条件付きUPDATEによるアトミックなclaim。
-    // 他プロセス(同時実行のcron・管理者操作)に先を越されていた場合はclaimedCount=0になる。
-    const claimedCount = await prisma.$executeRaw`
-      UPDATE nft_issues SET status = 'processing', updated_at = now()
-      WHERE id = ${issue.id}::uuid AND status = 'ready_to_issue'
-    `;
-    if (claimedCount === 0) {
-      result.skipped++;
-      continue;
-    }
-    result.claimed++;
-    await submitAndMaybeConfirm(issue.id, provider, result);
-  }
-
   return result;
 }
 
-async function submitAndMaybeConfirm(issueId: string, provider: MintProvider, result: ProcessNftMintsResult) {
+// 仕様書外の拡張(運営手動Mint): 管理画面のPOST /nft-issues/:id/mintから呼ばれる。
+// 呼び出し元で対象行をready_to_issue→processingへアトミックにclaim済みであることが前提。
+export async function submitAndMaybeConfirm(
+  issueId: string,
+  provider: MintProvider,
+  result: ProcessNftMintsResult,
+  serialNumber: number,
+) {
   const issue = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issueId }, include: { product: true } });
 
   if (!issue.walletAddress) {
@@ -100,9 +69,6 @@ async function submitAndMaybeConfirm(issueId: string, provider: MintProvider, re
   }
 
   try {
-    // シリアル番号は商品ごとのissued済み件数+1のベストエフォート採番(cron実行が重複しない前提)。
-    // 同時実行下での完全な一意性はこの範囲では保証しない(Phase 1時点では実利用者数が少ないため許容)。
-    const serialNumber = (await prisma.nftIssue.count({ where: { productId: issue.productId, status: 'issued' } })) + 1;
     const metadata = buildNftMetadata({
       productName: issue.product.name,
       serialNumber,
@@ -119,12 +85,18 @@ async function submitAndMaybeConfirm(issueId: string, provider: MintProvider, re
 
     await prisma.nftIssue.update({
       where: { id: issueId },
-      data: { providerRequestId, metadataUri, submittedAt: new Date() },
+      data: { providerRequestId, metadataUri, submittedAt: new Date(), serialNumber },
     });
 
     const status = await provider.getMintStatus(providerRequestId);
     await applyMintStatus(issueId, status, result);
   } catch (e) {
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      // serialNumberの重複(@@unique([productId, serialNumber]))。processingへclaim済みの行を
+      // ready_to_issueへ戻し、運営が別のシリアル番号で再試行できるようにする(バックオフはかけない)。
+      await prisma.nftIssue.update({ where: { id: issueId }, data: { status: 'ready_to_issue' } });
+      throw new HttpError(400, 'SERIAL_NUMBER_DUPLICATE', 'このシリアル番号は既に使用されています');
+    }
     await handleFailure(issueId, e instanceof Error ? e.message : String(e), result);
   }
 }

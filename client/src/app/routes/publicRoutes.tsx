@@ -14,6 +14,7 @@ const LoginPage = lazyWithReload(() => import('../../pages/LoginPage'));
 const RegisterPage = lazyWithReload(() => import('../../pages/RegisterPage'));
 const PasswordResetRequestPage = lazyWithReload(() => import('../../pages/PasswordResetRequestPage'));
 const PasswordResetConfirmPage = lazyWithReload(() => import('../../pages/PasswordResetConfirmPage'));
+const WalletRegistrationPage = lazyWithReload(() => import('../../pages/WalletRegistrationPage'));
 const TokushohoPage = lazyWithReload(() => import('../../pages/legal/TokushohoPage'));
 const TermsPage = lazyWithReload(() => import('../../pages/legal/TermsPage'));
 const RefundPolicyPage = lazyWithReload(() => import('../../pages/legal/RefundPolicyPage'));
@@ -71,6 +72,7 @@ export function publicRoutes() {
       />
       <Route path="/password-reset" element={<PasswordResetRequestPage />} />
       <Route path="/password-reset/confirm" element={<PasswordResetConfirmPage />} />
+      <Route path="/wallet-register" element={<WalletRegistrationPage />} />
       <Route path="/legal/tokushoho" element={<TokushohoPage />} />
       <Route path="/legal/terms" element={<TermsPage />} />
       <Route path="/legal/refund" element={<RefundPolicyPage />} />

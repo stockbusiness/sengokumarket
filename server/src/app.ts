@@ -12,6 +12,7 @@ import cartRouter from './routes/cart';
 import checkoutRouter from './routes/checkout';
 import referralsRouter from './routes/referrals';
 import authRouter from './routes/auth';
+import walletRegistrationRouter from './routes/walletRegistration';
 import mypageRouter from './routes/mypage';
 import adminRouter from './routes/admin';
 import agencyRouter from './routes/agency';
@@ -136,6 +137,7 @@ export function createApp(): Express {
   app.use('/api', checkoutRouter);
   app.use('/api', referralsRouter);
   app.use('/api', authRouter);
+  app.use('/api', walletRegistrationRouter);
   app.use('/api/mypage', mypageRouter);
   app.use('/api/admin', adminRouter);
   app.use('/api/agency', agencyRouter);

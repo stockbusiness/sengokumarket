@@ -83,6 +83,7 @@ describe('管理API: ウォレット未登録者への案内メール送信(仕�
 
   afterAll(async () => {
     await prisma.walletReminderEmail.deleteMany({ where: { nftIssue: { productId } } });
+    await prisma.walletRegistrationLink.deleteMany({ where: { userId: customerUserId } });
     await prisma.nftIssue.deleteMany({ where: { productId } });
     await prisma.orderItem.deleteMany({ where: { productId } });
     await prisma.order.deleteMany({ where: { customerEmail: 'wallet-missing-test@example.com' } });
@@ -182,5 +183,79 @@ describe('管理API: ウォレット未登録者への案内メール送信(仕�
 
     const deleteRes = await agent.delete(`/api/admin/wallet-missing/${issue.id}/reminder`).set('Origin', TEST_ORIGIN);
     expect(deleteRes.status).toBe(403);
+  });
+
+  describe('ウォレット登録用リンクの発行・再発行・失効(仕様書外の拡張)', () => {
+    it('一覧にはuserIdとlinkStatus=noneが含まれる(未発行時)', async () => {
+      const issue = await createNftIssue({ withUser: true });
+      const { agent } = await createAdminAgent(app);
+
+      const res = await agent.get('/api/admin/wallet-missing');
+      const row = res.body.walletMissing.find((r: { id: string }) => r.id === issue.id);
+      expect(row.userId).toBe(customerUserId);
+      expect(row.linkStatus).toBe('none');
+    });
+
+    it('発行するとactiveなURLが返り、一覧のlinkStatusがactiveになる', async () => {
+      const { agent } = await createAdminAgent(app);
+
+      const res = await agent.post(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      expect(res.status).toBe(201);
+      expect(res.body.url).toContain('/wallet-register?token=');
+
+      const listRes = await agent.get('/api/admin/wallet-missing');
+      const row = listRes.body.walletMissing.find((r: { userId: string }) => r.userId === customerUserId);
+      expect(row.linkStatus).toBe('active');
+      expect(row.linkExpiresAt).not.toBeNull();
+    });
+
+    it('再発行すると旧リンクが自動失効し、新しいトークンのみ有効になる', async () => {
+      const { agent } = await createAdminAgent(app);
+
+      const firstRes = await agent.post(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      const firstToken = new URL(firstRes.body.url, 'https://example.com').searchParams.get('token')!;
+
+      const secondRes = await agent.post(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      expect(secondRes.status).toBe(201);
+      expect(secondRes.body.url).not.toBe(firstRes.body.url);
+
+      const firstStatusRes = await request(app).get('/api/wallet-registration/status').query({ token: firstToken });
+      expect(firstStatusRes.body.status).toBe('revoked');
+    });
+
+    it('失効させると新規発行なしでlinkStatusがrevokedになる', async () => {
+      const { agent } = await createAdminAgent(app);
+      await agent.post(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+
+      const revokeRes = await agent.delete(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      expect(revokeRes.status).toBe(204);
+
+      const listRes = await agent.get('/api/admin/wallet-missing');
+      const row = listRes.body.walletMissing.find((r: { userId: string }) => r.userId === customerUserId);
+      expect(row.linkStatus).toBe('revoked');
+    });
+
+    it('存在しないuserIdへの発行・失効は404を返す', async () => {
+      const { agent } = await createAdminAgent(app);
+      const issueRes = await agent
+        .post('/api/admin/wallet-missing/00000000-0000-0000-0000-000000000000/registration-link')
+        .set('Origin', TEST_ORIGIN);
+      expect(issueRes.status).toBe(404);
+
+      const revokeRes = await agent
+        .delete('/api/admin/wallet-missing/00000000-0000-0000-0000-000000000000/registration-link')
+        .set('Origin', TEST_ORIGIN);
+      expect(revokeRes.status).toBe(404);
+    });
+
+    it('閲覧専用管理者(admin_viewer)は発行・失効ができず403を返す', async () => {
+      const { agent } = await createViewerAgent();
+
+      const issueRes = await agent.post(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      expect(issueRes.status).toBe(403);
+
+      const revokeRes = await agent.delete(`/api/admin/wallet-missing/${customerUserId}/registration-link`).set('Origin', TEST_ORIGIN);
+      expect(revokeRes.status).toBe(403);
+    });
   });
 });
