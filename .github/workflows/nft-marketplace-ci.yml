@@ -1,0 +1,99 @@
+# 千ノ国NFTマーケット（sengoku-nft-marketplace/）の CI
+#
+# このリポジトリは既存の Sengoku Market と新規の NFT マーケットを同居させている。
+# 既存 CI（.github/workflows/ci.yml）には一切手を触れず、
+# 新規サブツリー配下の変更のみを対象とする独立したワークフローとして追加している。
+#
+# 検査の中身は sengoku-nft-marketplace/package.json の `verify` に集約してある。
+# ここに手順を書き写さないのは、サブツリーが単独リポジトリへ移送されたあとも
+# 同じコマンドで再現できるようにするため。
+
+name: NFT Marketplace CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sengoku-nft-marketplace/**'
+      - '.github/workflows/nft-marketplace-ci.yml'
+  pull_request:
+    paths:
+      - 'sengoku-nft-marketplace/**'
+      - '.github/workflows/nft-marketplace-ci.yml'
+
+concurrency:
+  group: nft-marketplace-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: sengoku-nft-marketplace
+
+env:
+  # ✅ 本番サービスへ接続しない。実行環境を明示的にテスト用に固定する。
+  APP_ENV: test
+  NODE_ENV: test
+
+jobs:
+  verify:
+    name: lint / typecheck / test / build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sengoku-nft-marketplace/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: sengoku-nft-marketplace/.nvmrc
+          cache: pnpm
+          cache-dependency-path: sengoku-nft-marketplace/pnpm-lock.yaml
+
+      # クリーン環境で導入できることを検証する。
+      # --frozen-lockfile により、lockfile と package.json の不一致を失敗にする。
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      # 秘密情報の混入 → 依存グラフ → lint → typecheck → test → build
+      # 秘密の検査を最初に置くのは、混入時にできるだけ早く止めるため。
+      - name: verify
+        run: pnpm verify
+
+      - name: format check
+        run: pnpm format:check
+
+      # Prisma Client が単体で生成できることを確認する（DB 接続は不要）。
+      - name: prisma generate
+        run: pnpm db:generate
+
+  e2e:
+    name: e2e (smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: sengoku-nft-marketplace/package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: sengoku-nft-marketplace/.nvmrc
+          cache: pnpm
+          cache-dependency-path: sengoku-nft-marketplace/pnpm-lock.yaml
+
+      - name: install
+        run: pnpm install --frozen-lockfile
+
+      - name: build
+        run: pnpm build
+
+      - name: install browser
+        run: pnpm --filter @sengoku/web run e2e:install
+
+      - name: e2e
+        run: pnpm e2e
