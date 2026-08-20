@@ -13,7 +13,7 @@ const ACTION_LABEL: Record<string, string> = {
 const SAMPLE_CSV_ROWS = [
   ['商品名', 'slug', '商品説明', 'カテゴリ', '商品タイプ', 'バリエーション名', 'SKU', '価格', '在庫数', '公開ステータス'],
   [
-    '戦国評議員デジタル会員証(見本)',
+    '千ノ国評議員デジタル会員証(見本)',
     'sample-council-nft',
     '評議員デジタル会員証の見本商品です',
     'NFT',
@@ -25,7 +25,7 @@ const SAMPLE_CSV_ROWS = [
     'draft',
   ],
   [
-    '戦国評議員デジタル会員証(見本)',
+    '千ノ国評議員デジタル会員証(見本)',
     'sample-council-nft',
     '評議員デジタル会員証の見本商品です',
     'NFT',
