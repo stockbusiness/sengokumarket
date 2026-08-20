@@ -30,6 +30,8 @@ export const REQUIRED_MIGRATIONS = [
   'fix_schema_migration_drift',
   // 購入後代理店システム連携実装指示書 PR-M1: purchase_provisioning_jobs・agency_access_mode等。
   'purchase_agency_provisioning',
+  // 仕様書外の拡張(NFT自動発行→運営手動発行への移行): WalletRegistrationLink。
+  'wallet_registration_links',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
@@ -50,6 +52,8 @@ const SENTINEL_QUERIES: { label: string; run: () => Promise<unknown> }[] = [
   // 購入後代理店システム連携実装指示書 PR-M1。
   { label: 'products.agency_access_mode', run: () => prisma.$queryRaw`SELECT agency_access_mode FROM products LIMIT 0` },
   { label: 'purchase_provisioning_jobs.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM purchase_provisioning_jobs LIMIT 0` },
+  // 仕様書外の拡張(NFT自動発行→運営手動発行への移行): WalletRegistrationLink。
+  { label: 'wallet_registration_links.token_hash', run: () => prisma.$queryRaw`SELECT token_hash FROM wallet_registration_links LIMIT 0` },
 ];
 
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; error?: string }> {

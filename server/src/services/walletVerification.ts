@@ -13,7 +13,7 @@ const NONCE_TTL_MS = 10 * 60 * 1000;
 // 保存済みのnonce/expiresAtのみから決定的に組み立てる(Web3用語を避けた日本語文言)。
 export function buildVerificationMessage(params: { walletAddress: string; nonce: string; expiresAt: Date }): string {
   return [
-    '戦国楽市楽座 受取用ウォレットの確認',
+    '千ノ国 受取用ウォレットの確認',
     `アドレス: ${params.walletAddress}`,
     `確認コード: ${params.nonce}`,
     `このコードは ${params.expiresAt.toISOString()} まで有効です。第三者に教えないでください。`,

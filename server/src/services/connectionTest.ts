@@ -41,7 +41,7 @@ export async function testResendConnection(
     const result = await resend.emails.send({
       from: mailFrom,
       to,
-      subject: '【テスト送信】戦国楽市楽座 メール設定確認',
+      subject: '【テスト送信】千ノ国 メール設定確認',
       html: '<p>このメールは管理画面の接続テストから送信されたテストメールです。このメールが届いていれば設定は正常です。</p>',
     });
     if (result.error) {

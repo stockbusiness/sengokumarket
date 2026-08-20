@@ -501,7 +501,7 @@ export default function AdminProductEditPage() {
       </div>
 
       <div className="admin-form-card admin-form-card--wide">
-        <h2 className="admin-form-section__title">連携ルール(千ノ国連携)</h2>
+        <h2 className="admin-form-section__title">連携ルール(代理店システム連携)</h2>
         <p className="admin-form-section__hint">
           この商品を購入した際に、外部システムへ権利(パスポート・AIアート教室受講権・OVEポイント等)を送信する設定です。
           1商品につき複数の送信先を設定できます。まだ連携は本番で有効化されていません(設定しても実際には送信されません)。

@@ -1,7 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { prisma } from '../lib/prisma';
-import { processNftMints } from './nftMintProcessing';
-import { resetFakeMintProvider, setFakeMintBehavior } from './nftMintProviders/fake';
+import { processNftMints, submitAndMaybeConfirm } from './nftMintProcessing';
+import { fakeMintProvider, resetFakeMintProvider, setFakeMintBehavior } from './nftMintProviders/fake';
+
+async function claimToProcessing(issueId: string) {
+  await prisma.$executeRaw`UPDATE nft_issues SET status = 'processing', updated_at = now() WHERE id = ${issueId}::uuid`;
+}
 
 const uploadNftMetadata = vi.fn(async (nftIssueId: string, _metadata: Record<string, unknown>) => `https://blob.example.com/nft-metadata/${nftIssueId}.json`);
 
@@ -99,57 +103,48 @@ describe('processNftMints(仕様書外の拡張)', () => {
     return nftIssue;
   }
 
-  it('ready_to_issueの行をfakeプロバイダーへ送信し、issuedまで到達する', async () => {
+  // 仕様書外の拡張(運営手動Mint): cronはready_to_issueの行を自動claimしなくなったため、
+  // submitAndMaybeConfirmは呼び出し元(管理画面API)がprocessingへclaimした後に直接呼ぶ想定。
+  it('claim後にsubmitAndMaybeConfirmを呼ぶと、fakeプロバイダーへ送信されissuedまで到達しserialNumberが保存される', async () => {
     const issue = await createOrderAndIssue('ready_to_issue');
+    await claimToProcessing(issue.id);
 
-    const result = await processNftMints();
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issue.id, fakeMintProvider, result, 7);
 
-    expect(result.issued).toBeGreaterThanOrEqual(1);
+    expect(result.issued).toBe(1);
     const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(after.status).toBe('issued');
     expect(after.tokenId).toBeTruthy();
     expect(after.transactionHash).toMatch(/^0x[a-f0-9]{64}$/);
     expect(after.metadataUri).toBe(`https://blob.example.com/nft-metadata/${issue.id}.json`);
     expect(after.issuedAt).not.toBeNull();
+    expect(after.serialNumber).toBe(7);
   });
 
-  // 本番安定化指示書Stage2・5.4「1回の処理時間上限」: Functionの残り時間に余裕がない場合は
-  // 新規claimを停止する(integration_outbox_eventsと同じ方針)。
-  it('時間予算(NFT_MINT_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
-    process.env.NFT_MINT_TIME_BUDGET_MS = '0';
-    const issue = await createOrderAndIssue('ready_to_issue');
+  it('serialNumberが同一商品内で重複する場合はready_to_issueへ差し戻され、SERIAL_NUMBER_DUPLICATEエラーになる', async () => {
+    const issueA = await createOrderAndIssue('ready_to_issue');
+    await claimToProcessing(issueA.id);
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issueA.id, fakeMintProvider, result, 42);
 
-    try {
-      const result = await processNftMints();
-      expect(result.claimed).toBe(0);
-      expect(result.issued).toBe(0);
+    const issueB = await createOrderAndIssue('ready_to_issue');
+    await claimToProcessing(issueB.id);
 
-      const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
-      expect(after.status).toBe('ready_to_issue');
-    } finally {
-      delete process.env.NFT_MINT_TIME_BUDGET_MS;
-    }
-  });
-
-  it('並行してclaimを試みても1件のみが処理される(アトミックなclaim)', async () => {
-    const issue = await createOrderAndIssue('ready_to_issue');
-
-    const [resultA, resultB] = await Promise.all([processNftMints(), processNftMints()]);
-
-    expect(resultA.claimed + resultB.claimed).toBeGreaterThanOrEqual(1);
-
-    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
-    expect(after.status).toBe('issued');
-    // アップロードが2回呼ばれていれば二重処理された証拠になるため、少なくともこの行1つ分は
-    // 1回しかclaimされていないことをattemptCountの非増加(失敗していない)で確認する。
-    expect(after.attemptCount).toBe(0);
+    await expect(submitAndMaybeConfirm(issueB.id, fakeMintProvider, result, 42)).rejects.toMatchObject({
+      code: 'SERIAL_NUMBER_DUPLICATE',
+    });
+    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issueB.id } });
+    expect(after.status).toBe('ready_to_issue');
   });
 
   it('Mintが失敗すると指数バックオフでnextAttemptAtが延び、ready_to_issueへ差し戻される', async () => {
     setFakeMintBehavior(() => ({ status: 'failure', error: 'テスト用の意図的な失敗' }));
     const issue = await createOrderAndIssue('ready_to_issue');
+    await claimToProcessing(issue.id);
 
-    await processNftMints();
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issue.id, fakeMintProvider, result, 501);
 
     const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(after.status).toBe('ready_to_issue');
@@ -162,32 +157,36 @@ describe('processNftMints(仕様書外の拡張)', () => {
   it('最大試行回数に達するとfailedになる', async () => {
     setFakeMintBehavior(() => ({ status: 'failure', error: 'テスト用の意図的な失敗' }));
     const issue = await createOrderAndIssue('ready_to_issue', { attemptCount: 4 });
+    await claimToProcessing(issue.id);
 
-    await processNftMints();
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issue.id, fakeMintProvider, result, 502);
 
     const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(after.status).toBe('failed');
     expect(after.attemptCount).toBe(5);
   });
 
-  it('nextAttemptAtが未来の行はスキップされ、状態が変わらない', async () => {
-    const future = new Date(Date.now() + 60 * 60 * 1000);
-    const issue = await createOrderAndIssue('ready_to_issue', { nextAttemptAt: future });
-
-    await processNftMints();
-
-    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
-    expect(after.status).toBe('ready_to_issue');
-    expect(after.attemptCount).toBe(0);
-  });
-
   it('walletAddressが無い行はwallet_requiredへ差し戻される(理論上到達しないが防御的挙動)', async () => {
     const issue = await createOrderAndIssue('ready_to_issue', { walletAddress: null });
+    await claimToProcessing(issue.id);
 
-    await processNftMints();
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issue.id, fakeMintProvider, result, 503);
 
     const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(after.status).toBe('wallet_required');
+  });
+
+  it('processNftMintsはready_to_issueの行を自動claimしない(運営手動Mintへの移行)', async () => {
+    const issue = await createOrderAndIssue('ready_to_issue');
+
+    const result = await processNftMints();
+
+    expect(result.claimed).toBe(0);
+    expect(result.issued).toBe(0);
+    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
+    expect(after.status).toBe('ready_to_issue');
   });
 
   it('claim直後でproviderRequestId未設定のprocessing行は、同時実行中とみなしすぐには失敗にしない', async () => {
@@ -216,9 +215,11 @@ describe('processNftMints(仕様書外の拡張)', () => {
   it('pending応答の場合はprocessingのまま残り、次回success応答で確定する', async () => {
     setFakeMintBehavior(() => ({ status: 'pending' }));
     const issue = await createOrderAndIssue('ready_to_issue');
+    await claimToProcessing(issue.id);
 
-    const first = await processNftMints();
-    expect(first.stillProcessing).toBeGreaterThanOrEqual(1);
+    const submitResult = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(issue.id, fakeMintProvider, submitResult, 504);
+    expect(submitResult.stillProcessing).toBe(1);
 
     const afterFirst = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(afterFirst.status).toBe('processing');
@@ -229,64 +230,5 @@ describe('processNftMints(仕様書外の拡張)', () => {
 
     const afterSecond = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(afterSecond.status).toBe('issued');
-  });
-
-  // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)17章「自動Mint対象外」:
-  // 正規の経路(orderFulfillment.ts・walletVerification.ts)ではdigital_collectible対象商品の
-  // 行はready_to_issueにならない設計だが、万一到達してしまった場合の二重の安全策を確認する。
-  it('digital_collectible対象商品のready_to_issue行はclaim対象から除外される(二重の安全策)', async () => {
-    const dcProduct = await prisma.product.create({
-      data: {
-        name: `NFT自動発行テスト_digital-collectible_${Date.now()}`,
-        slug: `nftmint-processing-dc-test-${Date.now()}`,
-        category: 'テスト',
-        itemType: 'nft',
-        basePrice: 10000,
-        status: 'published',
-      },
-    });
-    await prisma.productIntegrationRule.create({
-      data: { productId: dcProduct.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
-    });
-    const order = await prisma.order.create({
-      data: {
-        orderNumber: `SG-NFTMINTTEST-DC-${Math.random().toString(36).slice(2)}`,
-        userId,
-        totalAmount: 10000,
-        originalAmount: 10000,
-        paymentStatus: 'paid',
-        orderStatus: 'paid',
-        customerName: 'テスト',
-        customerEmail: 'nftmint-processing-test@example.com',
-        termsAgreedAt: new Date(),
-        termsVersion: '2026-07-01',
-      },
-    });
-    const orderItem = await prisma.orderItem.create({
-      data: { orderId: order.id, productId: dcProduct.id, productName: dcProduct.name, itemType: 'nft', quantity: 1, unitPrice: 10000, subtotal: 10000 },
-    });
-    // 本来到達しないはずの状態(ready_to_issue)を直接作り、二重の安全策が機能することを確認する。
-    const issue = await prisma.nftIssue.create({
-      data: {
-        orderId: order.id,
-        orderItemId: orderItem.id,
-        userId,
-        productId: dcProduct.id,
-        status: 'ready_to_issue',
-        walletAddress: '0x2222222222222222222222222222222222222222',
-      },
-    });
-
-    const result = await processNftMints();
-
-    const after = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
-    expect(after.status).toBe('ready_to_issue'); // claimされず、変更されない
-    expect(result.claimed).toBe(0);
-
-    await prisma.nftIssue.deleteMany({ where: { productId: dcProduct.id } });
-    await prisma.orderItem.deleteMany({ where: { productId: dcProduct.id } });
-    await prisma.order.deleteMany({ where: { id: order.id } });
-    await prisma.productIntegrationRule.deleteMany({ where: { productId: dcProduct.id } });
-    await prisma.product.delete({ where: { id: dcProduct.id } });
   });
 });

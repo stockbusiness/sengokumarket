@@ -18,6 +18,9 @@ export interface AdminNftIssue {
   submittedAt: string | null;
   providerRequestId: string | null;
   nextAttemptAt: string | null;
+  // 仕様書外の拡張(運営手動Mint): マーケット側で刻むシリアル番号。
+  serialNumber: number | null;
+  suggestedSerialNumber: number | null;
 }
 
 export function fetchAdminNftIssues(page: number, status?: string) {
@@ -43,4 +46,8 @@ export function retryAdminNftIssue(id: string) {
 
 export function holdAdminNftIssue(id: string) {
   return adminSend<{ nftIssue: AdminNftIssue }>('POST', `/nft-issues/${id}/hold`, undefined);
+}
+
+export function mintAdminNftIssue(id: string, serialNumber: number) {
+  return adminSend<{ nftIssue: AdminNftIssue }>('POST', `/nft-issues/${id}/mint`, { serialNumber });
 }

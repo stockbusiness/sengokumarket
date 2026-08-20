@@ -4,6 +4,7 @@ import {
   updateAdminNftIssue,
   retryAdminNftIssue,
   holdAdminNftIssue,
+  mintAdminNftIssue,
   type AdminNftIssue,
 } from '../../lib/adminApi';
 import StatusSelect from '../../components/StatusSelect';
@@ -15,6 +16,8 @@ export default function AdminNftIssuesPage() {
   const [nftIssues, setNftIssues] = useState<AdminNftIssue[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [drafts, setDrafts] = useState<Record<string, { tokenId: string; transactionHash: string }>>({});
+  const [serialDrafts, setSerialDrafts] = useState<Record<string, string>>({});
+  const [minting, setMinting] = useState<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -39,6 +42,38 @@ export default function AdminNftIssuesPage() {
     return drafts[issue.id] ?? { tokenId: issue.tokenId ?? '', transactionHash: issue.transactionHash ?? '' };
   }
 
+  function serialDraftFor(issue: AdminNftIssue) {
+    return serialDrafts[issue.id] ?? String(issue.suggestedSerialNumber ?? issue.serialNumber ?? '');
+  }
+
+  // 仕様書外の拡張(運営手動Mint): シリアル番号を運営が確認してから、この操作でのみ外部Mint APIへ送信する
+  // (cronによる自動送信は廃止。決済手段がカード・銀行振込の2経路あることと、シリアル番号を目視確認
+  // してから刻みたいという運営の要望による)。
+  async function mint(issue: AdminNftIssue) {
+    const raw = serialDraftFor(issue);
+    const serialNumber = Number(raw);
+    if (!Number.isInteger(serialNumber) || serialNumber <= 0) {
+      setError('シリアル番号は正の整数で入力してください');
+      return;
+    }
+    setError(null);
+    setMessage(null);
+    setMinting((m) => ({ ...m, [issue.id]: true }));
+    try {
+      const { nftIssue } = await mintAdminNftIssue(issue.id, serialNumber);
+      if (nftIssue.status === 'issued') {
+        setMessage(`${issue.customerName}様(シリアル番号${serialNumber})の発行が完了しました`);
+      } else {
+        setMessage(`${issue.customerName}様への送信を行いました(現在のステータス: ${nftIssue.status}。詳細はエラー内容欄を確認してください)`);
+      }
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '発行に失敗しました');
+    } finally {
+      setMinting((m) => ({ ...m, [issue.id]: false }));
+    }
+  }
+
   async function markIssued(issue: AdminNftIssue) {
     const draft = draftFor(issue);
     setError(null);
@@ -60,13 +95,13 @@ export default function AdminNftIssuesPage() {
     }
   }
 
-  // 仕様書外の拡張(NFT自動発行): 外部Mint APIへの自動送信を今すぐ再試行/一時的に止める。
+  // 仕様書外の拡張(運営手動Mint): 失敗・バックオフ待ちの行を、再度「発行する」操作が行える状態に戻す。
   async function retry(issue: AdminNftIssue) {
     setError(null);
     setMessage(null);
     try {
       await retryAdminNftIssue(issue.id);
-      setMessage(`${issue.customerName}様の発行を再試行対象にしました(次回の自動処理で再送信されます)`);
+      setMessage(`${issue.customerName}様の発行を再試行可能な状態に戻しました(改めて「発行する」を押してください)`);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : '再試行の設定に失敗しました');
@@ -78,7 +113,7 @@ export default function AdminNftIssuesPage() {
     setMessage(null);
     try {
       await holdAdminNftIssue(issue.id);
-      setMessage(`${issue.customerName}様の発行を保留にしました(自動処理の対象から外れます)`);
+      setMessage(`${issue.customerName}様の発行を保留にしました(保留を解除するまで「発行する」操作ができなくなります)`);
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : '保留の設定に失敗しました');
@@ -121,7 +156,8 @@ export default function AdminNftIssuesPage() {
                 <th>ステータス</th>
                 <th>token ID</th>
                 <th>transaction hash</th>
-                <th>自動発行状況(仕様書外の拡張)</th>
+                <th>シリアル番号(仕様書外の拡張)</th>
+                <th>発行状況(仕様書外の拡張)</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -160,16 +196,40 @@ export default function AdminNftIssuesPage() {
                     />
                   </td>
                   <td>
+                    {issue.status === 'ready_to_issue' ? (
+                      <input
+                        type="number"
+                        min={1}
+                        className="admin-inline-input"
+                        style={{ width: '6em' }}
+                        value={serialDraftFor(issue)}
+                        onChange={(e) => setSerialDrafts((d) => ({ ...d, [issue.id]: e.target.value }))}
+                      />
+                    ) : (
+                      (issue.serialNumber ?? '-')
+                    )}
+                  </td>
+                  <td>
                     {issue.attemptCount > 0 && <p>試行回数: {issue.attemptCount}</p>}
                     {issue.submittedAt && <p>送信日時: {new Date(issue.submittedAt).toLocaleString('ja-JP')}</p>}
                     {issue.lastError && <p className="checkout-error">最終エラー: {issue.lastError}</p>}
                     {issue.nextAttemptAt && new Date(issue.nextAttemptAt).getTime() > Date.now() && (
-                      <p>次回再試行: {new Date(issue.nextAttemptAt).toLocaleString('ja-JP')}</p>
+                      <p>保留・待機中(解除するまで発行不可): {new Date(issue.nextAttemptAt).toLocaleString('ja-JP')}まで</p>
                     )}
                   </td>
                   <td>
-                    <button type="button" className="btn-primary btn-small" onClick={() => markIssued(issue)}>
-                      発行済みにする
+                    {issue.status === 'ready_to_issue' && (!issue.nextAttemptAt || new Date(issue.nextAttemptAt).getTime() <= Date.now()) && (
+                      <button
+                        type="button"
+                        className="btn-primary btn-small"
+                        disabled={minting[issue.id]}
+                        onClick={() => mint(issue)}
+                      >
+                        発行する
+                      </button>
+                    )}
+                    <button type="button" className="btn-secondary btn-small" onClick={() => markIssued(issue)}>
+                      発行済みにする(手動修正)
                     </button>
                     {(issue.status === 'failed' || issue.status === 'ready_to_issue') && (
                       <>

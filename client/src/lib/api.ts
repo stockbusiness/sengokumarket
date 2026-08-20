@@ -160,6 +160,23 @@ export function confirmPasswordReset(token: string, newPassword: string) {
   return apiPost<{ ok: boolean }>('/auth/password-reset/confirm', { token, newPassword });
 }
 
+// 仕様書外の拡張: 既に決済済みだがウォレット未登録の購入者向け、管理者発行の登録用URL専用の
+// 公開エンドポイント(ログイン不要)。
+export function fetchWalletRegistrationStatus(token: string) {
+  return apiFetch<{ status: string }>(`/wallet-registration/status?token=${encodeURIComponent(token)}`);
+}
+
+export function requestWalletRegistrationNonce(token: string, walletAddress: string) {
+  return apiPost<{ message: string; expiresAt: string }>('/wallet-registration/nonce', { token, walletAddress });
+}
+
+export function confirmWalletRegistration(token: string, walletAddress: string, signature: string) {
+  return apiPost<{ wallet: { walletAddress: string; chain: string; verified: boolean; verifiedAt: string | null } }>(
+    '/wallet-registration/confirm',
+    { token, walletAddress, signature },
+  );
+}
+
 export interface MyWalletClaim {
   status: string;
   expiresAt: string;

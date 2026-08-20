@@ -5,6 +5,10 @@ import { NFT_ISSUE_STATUSES as STATUSES, type NftIssueStatus } from '@sengoku/co
 import { assertNftIssueTransition } from '../../shared/statusPolicy/nftIssueStatus.policy';
 import { DomainError } from '../../shared/errors/domainError';
 import { parsePagination } from '../../shared/pagination/parsePagination';
+import { HttpError } from '../../lib/httpError';
+import { getMintProvider } from '../../services/nftMint';
+import { submitAndMaybeConfirm, type ProcessNftMintsResult } from '../../services/nftMintProcessing';
+import { DIGITAL_COLLECTIBLE_DESTINATION, DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE } from '../../services/digitalCollectible';
 
 const router = Router();
 const TX_HASH_RE = /^0x[a-fA-F0-9]{64}$/;
@@ -28,6 +32,19 @@ router.get('/nft-issues', async (req, res) => {
     prisma.nftIssue.count({ where }),
   ]);
 
+  // 仕様書外の拡張(運営手動Mint): ready_to_issueの行に、シリアル番号入力欄の初期値として
+  // 「商品ごとのissued済み件数+1」を提案する(1クエリにまとめてN+1を避ける)。
+  const readyProductIds = [...new Set(nftIssues.filter((i) => i.status === 'ready_to_issue').map((i) => i.productId))];
+  const issuedCounts =
+    readyProductIds.length > 0
+      ? await prisma.nftIssue.groupBy({
+          by: ['productId'],
+          where: { productId: { in: readyProductIds }, status: 'issued' },
+          _count: { _all: true },
+        })
+      : [];
+  const issuedCountByProductId = new Map(issuedCounts.map((c) => [c.productId, c._count._all]));
+
   res.json({
     nftIssues: nftIssues.map((issue) => ({
       id: issue.id,
@@ -41,6 +58,8 @@ router.get('/nft-issues', async (req, res) => {
       transactionHash: issue.transactionHash,
       issuedAt: issue.issuedAt,
       adminNote: issue.adminNote,
+      serialNumber: issue.serialNumber,
+      suggestedSerialNumber: issue.status === 'ready_to_issue' ? (issuedCountByProductId.get(issue.productId) ?? 0) + 1 : null,
       // 仕様書外の拡張(NFT自動発行): 外部Mint API連携の状態表示用。
       attemptCount: issue.attemptCount,
       lastError: issue.lastError,
@@ -111,6 +130,59 @@ router.post('/nft-issues/:id/retry', async (req, res) => {
     data: { status: 'ready_to_issue', nextAttemptAt: null },
   });
 
+  res.json({ nftIssue: updated });
+});
+
+// 仕様書外の拡張(運営手動Mint): ready_to_issueの行を、運営が確認したシリアル番号で
+// 外部Mint APIへ送信する。cronの自動claimは廃止したため、送信のトリガーはこの操作のみ。
+router.post('/nft-issues/:id/mint', async (req, res) => {
+  const serialNumber = Number(req.body?.serialNumber);
+  if (!Number.isInteger(serialNumber) || serialNumber <= 0) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'シリアル番号は正の整数で入力してください');
+  }
+
+  const existing = await prisma.nftIssue.findUnique({ where: { id: req.params.id } });
+  if (!existing) return sendError(res, 404, 'NFT_ISSUE_NOT_FOUND', 'NFT発行データが見つかりません');
+  if (existing.status !== 'ready_to_issue') {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'この状態からは発行できません');
+  }
+  if (existing.nextAttemptAt && existing.nextAttemptAt > new Date()) {
+    return sendError(res, 400, 'VALIDATION_ERROR', '保留中、またはバックオフ待ちのため発行できません');
+  }
+
+  // digital_collectible対象商品はWalletClaim経由の別フローで送付するため、本来この状態には
+  // 到達しないはずだが、二重の安全策としてここでも明示的に拒否する。
+  const digitalCollectibleRule = await prisma.productIntegrationRule.findFirst({
+    where: {
+      productId: existing.productId,
+      enabled: true,
+      entitlementTargetSystemKey: DIGITAL_COLLECTIBLE_DESTINATION,
+      entitlementType: DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE,
+    },
+  });
+  if (digitalCollectibleRule) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'この商品は別の受け渡し経路(デジタル引換券)のため、この画面からは発行できません');
+  }
+
+  // 他の同時操作に先を越されていないかを条件付きUPDATEでアトミックに確認する。
+  const claimedCount = await prisma.$executeRaw`
+    UPDATE nft_issues SET status = 'processing', updated_at = now()
+    WHERE id = ${req.params.id}::uuid AND status = 'ready_to_issue'
+  `;
+  if (claimedCount === 0) {
+    return sendError(res, 409, 'NFT_ISSUE_ALREADY_CLAIMED', '他の操作により既に処理中です');
+  }
+
+  const provider = getMintProvider();
+  const result: ProcessNftMintsResult = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+  try {
+    await submitAndMaybeConfirm(req.params.id, provider, result, serialNumber);
+  } catch (e) {
+    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    throw e;
+  }
+
+  const updated = await prisma.nftIssue.findUniqueOrThrow({ where: { id: req.params.id } });
   res.json({ nftIssue: updated });
 });
 

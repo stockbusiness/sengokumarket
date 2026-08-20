@@ -16,7 +16,7 @@ export function buildNftMetadata(params: NftMetadataParams): Record<string, unkn
 
   return {
     name: `${params.productName} #${serial}`,
-    description: '戦国楽市楽座 評議員デジタル会員証です。',
+    description: '千ノ国 評議員デジタル会員証です。',
     image: params.imageUrl ?? undefined,
     external_url: `${appUrl}/mypage/nfts`,
     attributes: [

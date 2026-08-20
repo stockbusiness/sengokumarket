@@ -10,8 +10,8 @@ export default function NavBar() {
     <header className="site-header">
       <nav className="nav-bar">
         <Link to="/" className="brand">
-          <span className="brand__mark" aria-hidden="true" />
-          <span className="brand__name">戦国楽市楽座</span>
+          <img className="brand__mark" src="/favicon.png" alt="" aria-hidden="true" />
+          <span className="brand__name">千ノ国</span>
         </Link>
         <div className="nav-bar__links">
           <Link to="/products">商品一覧</Link>
