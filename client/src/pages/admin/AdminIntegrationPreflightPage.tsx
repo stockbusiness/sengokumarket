@@ -50,7 +50,7 @@ export default function AdminIntegrationPreflightPage() {
     <div>
       <h1>外部連携 Preflight・段階設定</h1>
       <p>
-        千ノ国全体連携(共通ID・紹介連携・OVEウォレット等)を有効化する前に確認すべき項目です。
+        代理店システム全体連携(共通ID・紹介連携・OVEウォレット等)を有効化する前に確認すべき項目です。
         マスタースイッチ(環境変数)がOFFの間は、ここで段階を変更しても実際の送信は一切発生しません。
       </p>
 

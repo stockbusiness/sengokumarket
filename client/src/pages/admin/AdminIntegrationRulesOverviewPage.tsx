@@ -17,7 +17,7 @@ export default function AdminIntegrationRulesOverviewPage() {
 
   return (
     <div>
-      <h1>商品連携ルール一覧(千ノ国連携)</h1>
+      <h1>商品連携ルール一覧(代理店システム連携)</h1>
       <p>各商品に設定されている外部連携先(戦国パスポート・OVEウォレット・AIアート教室)へのルーティング設定の一覧です。</p>
 
       {rules.length === 0 ? (

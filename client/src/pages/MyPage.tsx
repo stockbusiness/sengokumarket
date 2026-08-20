@@ -29,7 +29,7 @@ const WALLET_CLAIM_STATUS_LABEL: Record<string, string> = {
   PENDING: 'NFTカードを受け取る',
   CLAIMED: '受取手続き中',
   DELIVERY_PENDING: '送付処理中',
-  DELIVERED: '千ノ国ウォレットで確認',
+  DELIVERED: '外部ウォレットで確認',
   EXPIRED: '受取URLを再発行',
   REVOKED: '返金・取消済み',
   ERROR: '再試行',

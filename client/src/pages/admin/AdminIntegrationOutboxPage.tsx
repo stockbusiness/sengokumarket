@@ -59,7 +59,7 @@ export default function AdminIntegrationOutboxPage() {
   return (
     <div>
       <h1>Integration Outbox(外部連携送信状況)</h1>
-      <p>千ノ国連携(戦国パスポート・OVEウォレット・AIアート教室)への送信状況です。</p>
+      <p>代理店システム連携(戦国パスポート・OVEウォレット・AIアート教室)への送信状況です。</p>
 
       <label>
         ステータスで絞り込み

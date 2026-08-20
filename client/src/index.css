@@ -1,19 +1,19 @@
 :root {
-  /* 戦国経済圏 デザイントークン: 深紅・金・墨を基調にした和風高級感 */
-  --bg: #faf6ec;
+  /* 千ノ国 デザイントークン: ピンク・グリーン・オフホワイトを基調にした柔らかい世界観 */
+  --bg: #f7f5f0;
   --bg-elevated: #ffffff;
-  --text: #3a2f27;
-  --text-muted: #6b5b4e;
-  --text-h: #241a14;
-  --border: #ddd0b8;
-  --primary: #7a1f2b;
-  --primary-dark: #591520;
-  --primary-contrast: #fbf1e0;
-  --accent: #b8892b;
-  --accent-light: #e8c874;
-  --danger: #a8362b;
-  --success: #3f6b4a;
-  --shadow: 0 8px 20px -6px rgba(43, 33, 26, 0.16);
+  --text: #3a3530;
+  --text-muted: #6e665c;
+  --text-h: #2a241f;
+  --border: #e3ddd0;
+  --primary: #c97a90;
+  --primary-dark: #a85870;
+  --primary-contrast: #ffffff;
+  --accent: #6b8f6e;
+  --accent-light: #9ab89c;
+  --danger: #b3453f;
+  --success: #4f7a52;
+  --shadow: 0 8px 20px -6px rgba(42, 36, 31, 0.16);
 
   --font-heading: 'Shippori Mincho', 'Hiragino Mincho ProN', serif;
   --font-body: 'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', sans-serif;
@@ -31,19 +31,19 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #19120f;
-    --bg-elevated: #241a15;
-    --text: #ecdfc9;
-    --text-muted: #b9a98e;
-    --text-h: #f5ebda;
-    --border: #453425;
-    --primary: #c0454f;
-    --primary-dark: #8f2f38;
-    --primary-contrast: #fbf1e0;
-    --accent: #d4af6a;
-    --accent-light: #e9d19a;
-    --danger: #e0665a;
-    --success: #6fae7f;
+    --bg: #221c1f;
+    --bg-elevated: #2e262a;
+    --text: #ede6e0;
+    --text-muted: #c2b6ae;
+    --text-h: #fbf2ee;
+    --border: #45383d;
+    --primary: #e9a0b1;
+    --primary-dark: #c97a90;
+    --primary-contrast: #2a1418;
+    --accent: #8fb592;
+    --accent-light: #b3d1b5;
+    --danger: #e2857d;
+    --success: #8fb592;
     --shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.5);
   }
 }

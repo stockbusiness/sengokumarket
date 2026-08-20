@@ -10,7 +10,7 @@ export default function Footer() {
           <Link to="/legal/refund">返金ポリシー</Link>
           <Link to="/legal/privacy">プライバシーポリシー</Link>
         </nav>
-        <p className="site-footer__copyright">戦国楽市楽座</p>
+        <p className="site-footer__copyright">千ノ国</p>
       </div>
     </footer>
   );
