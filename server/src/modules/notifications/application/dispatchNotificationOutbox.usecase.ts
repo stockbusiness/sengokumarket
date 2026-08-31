@@ -111,12 +111,12 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const payload = event.payload as unknown as AgencyAccountSetupPayload;
     const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'agency_account_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
-    await sendNotificationOrThrow(buildAgencyAccountSetupEmail(event.recipient, payload.name, token));
+    await sendNotificationOrThrow(buildAgencyAccountSetupEmail(event.recipient, payload.name, token), event.id);
     return;
   }
   if (event.eventType === 'agency_access_granted') {
     const payload = event.payload as unknown as AgencyAccessGrantedPayload;
-    await sendNotificationOrThrow(buildAgencyAccessGrantedEmail(event.recipient, payload.name));
+    await sendNotificationOrThrow(buildAgencyAccessGrantedEmail(event.recipient, payload.name), event.id);
     return;
   }
   if (event.eventType === 'wallet_claim_reissued') {
@@ -133,7 +133,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const token = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, payload.orderId, event.id));
     if (!token) throw new Error('wallet claim is not reissuable in its current status');
 
-    await sendNotificationOrThrow(buildWalletClaimReissuedEmail(event.recipient, order.customerName, `${base}/claim/${token}`));
+    await sendNotificationOrThrow(buildWalletClaimReissuedEmail(event.recipient, order.customerName, `${base}/claim/${token}`), event.id);
     return;
   }
   if (event.eventType === 'purchase_complete') {
@@ -146,14 +146,14 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!order) throw new Error('order not found for purchase_complete notification');
     const items = await prisma.orderItem.findMany({ where: { orderId: order.id } });
     const walletClaimToken = await prisma.$transaction((tx) => reissueWalletClaimToken(tx, order.id, event.id));
-    await sendNotificationOrThrow(await buildPurchaseCompleteEmail(order, items, walletClaimToken));
+    await sendNotificationOrThrow(await buildPurchaseCompleteEmail(order, items, walletClaimToken), event.id);
     return;
   }
   if (event.eventType === 'guest_password_setup') {
     const payload = event.payload as unknown as GuestPasswordSetupPayload;
     const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'guest_password_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
-    await sendNotificationOrThrow(buildGuestPasswordSetupEmail(event.recipient, payload.name, token));
+    await sendNotificationOrThrow(buildGuestPasswordSetupEmail(event.recipient, payload.name, token), event.id);
     return;
   }
   if (event.eventType === 'bank_transfer_instructions') {
@@ -162,14 +162,14 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!order) throw new Error('order not found for bank_transfer_instructions notification');
     const items = await prisma.orderItem.findMany({ where: { orderId: order.id } });
     const config = await getBankTransferConfig();
-    await sendNotificationOrThrow(buildBankTransferInstructionsEmail(order, items, config.info, BANK_TRANSFER_EXPIRY_DAYS));
+    await sendNotificationOrThrow(buildBankTransferInstructionsEmail(order, items, config.info, BANK_TRANSFER_EXPIRY_DAYS), event.id);
     return;
   }
   if (event.eventType === 'password_reset') {
     const payload = event.payload as unknown as PasswordResetPayload;
     const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'password_reset');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
-    await sendNotificationOrThrow(buildPasswordResetEmail(event.recipient, payload.name, token));
+    await sendNotificationOrThrow(buildPasswordResetEmail(event.recipient, payload.name, token), event.id);
     return;
   }
   if (event.eventType === 'cart_abandoned') {
@@ -177,7 +177,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const order = await prisma.order.findUnique({ where: { id: payload.orderId } });
     if (!order) throw new Error('order not found for cart_abandoned notification');
     const items = await prisma.orderItem.findMany({ where: { orderId: order.id }, include: { product: true } });
-    await sendNotificationOrThrow(buildCartAbandonedEmail(order, items, items[0]?.product.slug ?? null));
+    await sendNotificationOrThrow(buildCartAbandonedEmail(order, items, items[0]?.product.slug ?? null), event.id);
     return;
   }
   if (event.eventType === 'admin_account_setup') {
@@ -185,7 +185,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     const { token, tokenId } = await getOrCreatePasswordResetTokenForEvent(event, payload.userId, 'admin_account_setup');
     await repo.recordPasswordResetTokenId(prisma, event.id, tokenId);
     const roleLabel = ADMIN_ROLE_LABEL[payload.role as AdminRole] ?? payload.role;
-    await sendNotificationOrThrow(buildAdminAccountSetupEmail(event.recipient, payload.name, token, roleLabel));
+    await sendNotificationOrThrow(buildAdminAccountSetupEmail(event.recipient, payload.name, token, roleLabel), event.id);
     return;
   }
   if (event.eventType === 'wallet_reminder') {
@@ -194,6 +194,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!nftIssue) throw new Error('nft issue not found for wallet_reminder notification');
     await sendNotificationOrThrow(
       buildWalletReminderEmail(event.recipient, nftIssue.order.customerName, nftIssue.order.orderNumber),
+      event.id,
     );
     return;
   }
@@ -208,6 +209,7 @@ async function buildAndSend(event: NotificationOutboxEvent): Promise<void> {
     if (!order.agencyLoginUrl) return;
     await sendNotificationOrThrow(
       buildAgencyPortalAccessReadyEmail(event.recipient, order.customerName, order.orderNumber, order.agencyLoginUrl, order.agencyLoginUrlExpiresAt),
+      event.id,
     );
     return;
   }

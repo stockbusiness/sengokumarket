@@ -166,7 +166,7 @@ describe('管理API: /admin/wallet-claims(戦国マーケットNFTカード受�
       event = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: event.id } });
     }
     expect(event.status).toBe('succeeded');
-    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(expect.objectContaining({ to: order.customerEmail }));
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(expect.objectContaining({ to: order.customerEmail }), expect.any(String));
 
     const updatedClaim = await prisma.walletClaim.findUniqueOrThrow({ where: { id: claim.id } });
     expect(updatedClaim.tokenHash).not.toBe(claim.tokenHash);

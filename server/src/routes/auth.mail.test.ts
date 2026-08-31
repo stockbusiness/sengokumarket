@@ -36,7 +36,7 @@ describe('パスワードリセット申請のメール送信連携(通知Outbox
     expect(events).toHaveLength(1);
     expect(events[0].status).toBe('succeeded');
     expect(sendNotificationOrThrowMock).toHaveBeenCalledTimes(1);
-    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(expect.objectContaining({ to: email }));
+    expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(expect.objectContaining({ to: email }), expect.any(String));
 
     sendNotificationOrThrowMock.mockClear();
     const nonexistentEmail = `nonexistent-auth-mail-test-${Date.now()}@example.com`;
