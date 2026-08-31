@@ -227,7 +227,7 @@ describe('外部代理店システム連携API', () => {
       outboxEventAfterDispatch = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: outboxEventAfterDispatch.id } });
     }
     expect(outboxEventAfterDispatch.status).toBe('succeeded');
-    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }));
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: loginEmail }), expect.any(String));
 
     // 同じ代理店に対して再度login_emailを送っても二重作成されない
     sendViaResendOrThrow.mockClear();
@@ -285,7 +285,7 @@ describe('外部代理店システム連携API', () => {
       outboxEvent = await prisma.notificationOutboxEvent.findFirstOrThrow({ where: { id: outboxEvent.id } });
     }
     expect(outboxEvent.status).toBe('succeeded');
-    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }));
+    expect(sendViaResendOrThrow).toHaveBeenCalledWith(expect.objectContaining({ to: memberEmail }), expect.any(String));
 
     const updatedMember = await prisma.user.findUnique({ where: { id: member.id } });
     expect(updatedMember?.role).toBe('agency');

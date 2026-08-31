@@ -5,10 +5,10 @@ import { hashClaimToken } from '../../../services/walletClaim';
 import * as repo from '../infrastructure/notificationOutbox.repository';
 import { dispatchPendingNotifications, retryNotification } from './dispatchNotificationOutbox.usecase';
 
-const sendViaResendOrThrow = vi.fn(async (_message: unknown) => undefined);
+const sendViaResendOrThrow = vi.fn(async (_message: unknown, _idempotencyKey?: string) => undefined);
 
 vi.mock('../infrastructure/resend.adapter', () => ({
-  sendViaResendOrThrow: (message: unknown) => sendViaResendOrThrow(message),
+  sendViaResendOrThrow: (message: unknown, idempotencyKey?: string) => sendViaResendOrThrow(message, idempotencyKey),
   sendViaResend: vi.fn(async () => undefined),
 }));
 
@@ -52,14 +52,43 @@ describe('dispatchPendingNotifications(残課題指示書Stage3)', () => {
       if ((message as { to?: string }).to === user.email) throw new Error('resend api error');
     });
 
-    await dispatchPendingNotifications();
-
-    const updated = await prisma.notificationOutboxEvent.findUnique({ where: { id: event.id } });
+    // フルスイート実行時は他テストが積んだ古いpendingイベントがBATCH_LIMIT内に混在しうるため、
+    // 1回のdispatchPendingNotifications()呼び出しでこのイベントがまだclaimされないことがある。
+    // その場合は実際にclaimされるまで追加でdispatchする。
+    let updated = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+    for (let i = 0; i < 5 && updated.attemptCount === 0; i++) {
+      await dispatchPendingNotifications();
+      updated = await prisma.notificationOutboxEvent.findUniqueOrThrow({ where: { id: event.id } });
+    }
     expect(updated?.status).toBe('pending');
     expect(updated?.attemptCount).toBe(1);
     expect(updated?.lastError).toContain('resend api error');
     expect(updated?.nextAttemptAt).not.toBeNull();
     expect(updated!.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  // 購入者から「同じメールが何度も届く」との問い合わせを受けて修正: Resend送信自体は成功したが
+  // markSucceededの直前でクラッシュ・DBエラー等が起きると、イベントはprocessing→(stale
+  // reclaimまたは例外経由で)pendingに戻り、次回Dispatcherで同一メールが再送されてしまう。
+  // event.id(リトライ間で不変)をResendのidempotencyKeyとして渡すことで、Resend側で
+  // 重複送信を1回分にまとめてもらう。全イベント種別で同じ入口(sendNotificationOrThrow)を
+  // 通るため、代表としてagency_access_grantedで検証する。
+  it('Resend送信時にevent.idをidempotencyKeyとして渡す(重複送信防止)', async () => {
+    const user = await createUser();
+    const event = await repo.enqueueNotification(prisma, {
+      eventType: 'agency_access_granted',
+      recipient: user.email,
+      payload: { name: user.name },
+    });
+
+    // フルスイート実行時は他テストが積んだ古いpendingイベントがBATCH_LIMIT内に混在しうるため、
+    // 1回のdispatchPendingNotifications()呼び出しでこのイベントが処理されないことがある。
+    let call = sendViaResendOrThrow.mock.calls.find(([message]) => (message as { to?: string }).to === user.email);
+    for (let i = 0; i < 5 && !call; i++) {
+      await dispatchPendingNotifications();
+      call = sendViaResendOrThrow.mock.calls.find(([message]) => (message as { to?: string }).to === user.email);
+    }
+    expect(call?.[1]).toBe(event.id);
   });
 
   // 本番安定化指示書Stage2・5.4「1回の処理時間上限」: Functionの残り時間に余裕がない場合は

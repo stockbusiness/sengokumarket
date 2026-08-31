@@ -54,6 +54,7 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     expect(event.status).toBe('succeeded');
     expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
       expect.objectContaining({ to: email, text: expect.stringContaining('閲覧専用管理者') }),
+      expect.any(String),
     );
 
     const list = await agent.get('/api/admin/admin-users');
@@ -120,6 +121,7 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     expect(event.status).toBe('succeeded');
     expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
       expect.objectContaining({ to: email, text: expect.stringContaining('スタッフ') }),
+      expect.any(String),
     );
 
     const list = await agent.get('/api/admin/admin-users');
@@ -140,6 +142,7 @@ describe('管理API: 管理者アカウント管理(仕様書外の拡張)', () 
     expect(events.some((e) => e.status === 'succeeded')).toBe(true);
     expect(sendNotificationOrThrowMock).toHaveBeenCalledWith(
       expect.objectContaining({ to: viewerEmail, text: expect.stringContaining('再送対象太郎') }),
+      expect.any(String),
     );
   });
 
