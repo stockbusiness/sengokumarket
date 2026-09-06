@@ -170,7 +170,7 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     await prisma.$disconnect();
   });
 
-  it('業務項目をトップレベルに展開したフラットpayload・共通契約HMACヘッダーでCommon Event APIへ送信し、成功後CollectibleDelivery=DELIVERED・WalletClaim=DELIVEREDへ進む', async () => {
+  it('metadataでラップしたペイロード・共通契約HMACヘッダーでCommon Event APIへ送信し、成功後CollectibleDelivery=DELIVERED・WalletClaim=DELIVEREDへ進む', async () => {
     const { product, order, walletClaim, delivery, outboxEventId } = await createEligibleFixture('happy');
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{}') });
     vi.stubGlobal('fetch', fetchMock);
@@ -187,11 +187,15 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     expect(options.headers['X-Event-Version']).toBeTruthy();
 
     const sentBody = JSON.parse(options.body);
-    // 14章「業務項目はトップレベルに置き、data内だけに格納しない」
-    expect(sentBody.entitlement_id).toBe(delivery.nftIssueId);
-    expect(sentBody.nft_issue_id).toBe(delivery.nftIssueId);
-    expect(sentBody.quantity).toBe(1);
-    expect(sentBody.asset_code).toBe('SGK-CARD-001');
+    // SENNOKUNI_COMMERCE_REQUEST.md: 業務項目はdata・metadataへ格納し、ウォレットが受け付ける
+    // entitlement_type(MEMBERSHIP_PASS)はmetadata配下にのみ置く(dataは内部値digital_collectibleの
+    // ままでよい)。
+    expect(sentBody.data.entitlement_id).toBe(delivery.nftIssueId);
+    expect(sentBody.data.nft_issue_id).toBe(delivery.nftIssueId);
+    expect(sentBody.data.quantity).toBe(1);
+    expect(sentBody.metadata.asset_code).toBe('SGK-CARD-001');
+    expect(sentBody.metadata.entitlement_type).toBe('MEMBERSHIP_PASS');
+    expect(sentBody.reason_code).toBeUndefined();
     expect(sentBody.data.entitlement_id).toBe(delivery.nftIssueId);
 
     const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery.id } });
@@ -344,12 +348,17 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     // enqueueと同時にWalletClaim=REVOCATION_PENDINGへ進める想定のため、その状態を再現する。
     await prisma.walletClaim.update({ where: { id: walletClaim.id }, data: { status: 'REVOCATION_PENDING' } });
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{}') }));
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, text: () => Promise.resolve('{}') });
+    vi.stubGlobal('fetch', fetchMock);
 
     const { dispatchPendingOutboxEvents } = await loadDispatcher();
     const result = await dispatchPendingOutboxEvents();
 
     expect(result.succeeded).toBe(1);
+    // SENNOKUNI_COMMERCE_REQUEST.md 3-4: entitlement.revokedにはreason_codeを付ける
+    // (現状の唯一のトリガーである全額返金を示す固定値)。
+    const [, options] = fetchMock.mock.calls[0];
+    expect(JSON.parse(options.body).reason_code).toBe('full_refund');
     const updatedDelivery = await prisma.collectibleDelivery.findUniqueOrThrow({ where: { id: delivery.id } });
     expect(updatedDelivery.status).toBe('REVOKED');
     expect(updatedDelivery.revokedAt).not.toBeNull();
