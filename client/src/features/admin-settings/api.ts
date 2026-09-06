@@ -62,6 +62,14 @@ export function testNftMintConnection(nftMintApiKey: string) {
   return adminSend<ConnectionTestResult>('POST', '/settings/test/nft-mint', { nft_mint_api_key: nftMintApiKey });
 }
 
+export function testOveWalletEventsConnection(baseUrl: string, keyId: string, hmacSecret: string) {
+  return adminSend<ConnectionTestResult>('POST', '/settings/test/ove-wallet-events', {
+    ove_wallet_base_url: baseUrl,
+    ove_wallet_events_key_id: keyId,
+    ove_wallet_events_hmac_secret: hmacSecret,
+  });
+}
+
 // --- 銀行振込設定(仕様書外の拡張) ---
 export interface BankTransferSettings {
   enabled: boolean;

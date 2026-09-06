@@ -5,6 +5,7 @@ import {
   testAgencyKeyConnection,
   testExternalAgencyConnection,
   testNftMintConnection,
+  testOveWalletEventsConnection,
   testResendConnection,
   testStripeConnection,
   updateAdminSettings,
@@ -87,6 +88,7 @@ export default function AdminSettingsPage() {
   const [resendTestTo, setResendTestTo] = useState('');
   const [resendTest, setResendTest] = useState<TestState>(null);
   const [nftMintTest, setNftMintTest] = useState<TestState>(null);
+  const [oveWalletEventsTest, setOveWalletEventsTest] = useState<TestState>(null);
 
   function load() {
     fetchAdminSettings().then((d) => setSettings(d.settings));
@@ -142,6 +144,17 @@ export default function AdminSettingsPage() {
   async function handleTestNftMint() {
     setNftMintTest('testing');
     setNftMintTest(await testNftMintConnection(inputs.nft_mint_api_key ?? ''));
+  }
+
+  async function handleTestOveWalletEvents() {
+    setOveWalletEventsTest('testing');
+    setOveWalletEventsTest(
+      await testOveWalletEventsConnection(
+        inputs.ove_wallet_base_url ?? '',
+        inputs.ove_wallet_events_key_id ?? '',
+        inputs.ove_wallet_events_hmac_secret ?? '',
+      ),
+    );
   }
 
   return (
@@ -220,6 +233,15 @@ export default function AdminSettingsPage() {
                     接続テスト
                   </button>
                   <TestResultText state={nftMintTest} />
+                </div>
+              )}
+
+              {field.key === 'ove_wallet_events_hmac_secret' && (
+                <div className="admin-settings-test">
+                  <button type="button" className="btn-secondary btn-small" onClick={handleTestOveWalletEvents}>
+                    接続テスト
+                  </button>
+                  <TestResultText state={oveWalletEventsTest} />
                 </div>
               )}
             </Fragment>
