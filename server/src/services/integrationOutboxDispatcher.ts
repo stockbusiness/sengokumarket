@@ -614,17 +614,34 @@ async function sendOutboxEvent(event: IntegrationOutboxEvent, stage: SennokuniIn
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)14章: digital_collectible専用の
 // Common Event API送信。sendViaCommonContract(パスポート・AIアート教室向け)と同じ共通契約
 // (X-SenNoKuni-*)署名方式を使うが、宛先path・認証鍵はove_wallet_events_*専用のものを使う。
-// 「業務項目はトップレベルに置き、data内だけに格納しない」(14章)ため、envelopeのdataに加えて
-// 業務項目をトップレベルにも展開する。
 const OVE_WALLET_EVENTS_PATH = '/api/integrations/events';
+
+// 千ノ国ウォレット側のCommon Event API契約(SENNOKUNI_COMMERCE_REQUEST.md)がこのシステムからの
+// entitlement_typeとして受け付ける唯一の値。内部のDB値・ルーティングキー(digital_collectible)は
+// このシステム独自の識別子として変更せず、ウォレットへ送るペイロード(metadata.entitlement_type)
+// だけをこの値に変換する(DIGITAL_COLLECTIBLEは別システム(NFT作品マーケット)専用のためウォレット
+// 側で400拒否される)。
+const OVE_WALLET_MEMBERSHIP_PASS_ENTITLEMENT_TYPE = 'MEMBERSHIP_PASS';
+
+// ウォレット側で取消の表示文言を持つreason_code。現状entitlement.revokedは全額返金時のみ
+// enqueueされるため('戦国マーケット NFTカード受取・送付 実装指示書'11章)、固定値でよい。
+const OVE_WALLET_REVOKE_REASON_CODE = 'full_refund';
 
 async function sendDigitalCollectibleToOveWallet(event: IntegrationOutboxEvent, stage: SennokuniIntegrationStage): Promise<SendOutcome> {
   const credentials = await getOveWalletEventsCredentials();
   if (!credentials) throw new Error('ove-wallet events HMAC credentials are not configured');
 
-  const payload = event.deliveryPayload as Record<string, unknown> & { common_user_id?: string | null };
+  const payload = event.deliveryPayload as Record<string, unknown> & {
+    common_user_id?: string | null;
+    asset_code?: string | null;
+    name?: string | null;
+    description?: string | null;
+    image_url?: string | null;
+    thumbnail_url?: string | null;
+    serial_number?: number | null;
+  };
   const method = 'POST';
-  const envelope = {
+  const envelope: Record<string, unknown> = {
     event_id: event.eventId,
     event_type: event.eventType,
     event_version: event.eventVersion,
@@ -632,9 +649,20 @@ async function sendDigitalCollectibleToOveWallet(event: IntegrationOutboxEvent, 
     source_system_key: 'sengoku-market',
     common_user_id: payload.common_user_id ?? null,
     correlation_id: event.correlationId,
-    ...payload,
     data: payload,
+    metadata: {
+      entitlement_type: OVE_WALLET_MEMBERSHIP_PASS_ENTITLEMENT_TYPE,
+      asset_code: payload.asset_code ?? null,
+      name: payload.name ?? null,
+      description: payload.description ?? null,
+      image_url: payload.image_url ?? null,
+      thumbnail_url: payload.thumbnail_url ?? null,
+      serial_number: payload.serial_number ?? null,
+    },
   };
+  if (event.eventType === 'entitlement.revoked') {
+    envelope.reason_code = OVE_WALLET_REVOKE_REASON_CODE;
+  }
   const rawBody = JSON.stringify(envelope);
   const timestamp = String(Math.floor(Date.now() / 1000));
   const nonce = crypto.randomBytes(16).toString('hex');
