@@ -9,6 +9,7 @@ const testResendConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, m
 const testExternalAgencyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'external ok' }));
 const testAgencyKeyConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'agency key ok' }));
 const testNftMintConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'nft mint ok' }));
+const testOveWalletEventsConnection = vi.fn(async (..._args: unknown[]) => ({ ok: true, message: 'ove wallet events ok' }));
 
 vi.mock('../../services/connectionTest', () => ({
   testStripeConnection: (...args: unknown[]) => testStripeConnection(...args),
@@ -16,6 +17,7 @@ vi.mock('../../services/connectionTest', () => ({
   testExternalAgencyConnection: (...args: unknown[]) => testExternalAgencyConnection(...args),
   testAgencyKeyConnection: (...args: unknown[]) => testAgencyKeyConnection(...args),
   testNftMintConnection: (...args: unknown[]) => testNftMintConnection(...args),
+  testOveWalletEventsConnection: (...args: unknown[]) => testOveWalletEventsConnection(...args),
 }));
 
 const app = createApp();
@@ -130,5 +132,17 @@ describe('管理API: 接続テスト(仕様書外の拡張)', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true, message: 'nft mint ok' });
     expect(testNftMintConnection).toHaveBeenCalledWith('mintkey');
+  });
+
+  it('POST /settings/test/ove-wallet-eventsはtestOveWalletEventsConnectionの結果を返す(仕様書外の拡張)', async () => {
+    const { agent } = await createAdminAgent(app);
+    testOveWalletEventsConnection.mockClear();
+    const res = await agent
+      .post('/api/admin/settings/test/ove-wallet-events')
+      .set('Origin', TEST_ORIGIN)
+      .send({ ove_wallet_base_url: 'https://ove-wallet.example.com', ove_wallet_events_key_id: 'key-1', ove_wallet_events_hmac_secret: 'secret-1' });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, message: 'ove wallet events ok' });
+    expect(testOveWalletEventsConnection).toHaveBeenCalledWith('https://ove-wallet.example.com', 'key-1', 'secret-1');
   });
 });

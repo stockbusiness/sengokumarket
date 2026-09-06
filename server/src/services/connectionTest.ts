@@ -1,8 +1,10 @@
+import crypto from 'crypto';
 import Stripe from 'stripe';
 import { Resend } from 'resend';
 import { getSetting } from './settings';
 import { fetchExternalAgencyHierarchy } from './externalAgencySystem';
 import { HttpError } from '../lib/httpError';
+import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
 
 // 仕様書外の拡張: 管理画面の「決済・メール設定」から、保存前(入力中)の値、または
 // 保存済みの値で外部サービスへの接続を試せるようにする。
@@ -106,5 +108,43 @@ export async function testAgencyKeyConnection(apiKeyOverride?: string): Promise<
     return { ok: false, message: body?.message ?? `認証に失敗しました(HTTP ${res.status})` };
   } catch (e) {
     return { ok: false, message: `接続に失敗しました: ${e instanceof Error ? e.message : '不明なエラー'}` };
+  }
+}
+
+// 仕様書外の拡張: OVEウォレット(評議員デジタル会員証送信用)の接続テスト。
+// このAPI(POST /api/integrations/events)には読み取り専用の疎通確認手段が無く、
+// 唯一のエンドポイントは呼ぶたびに実際の会員証付与・取消として処理される(先方の
+// SENNOKUNI_COMMERCE_REQUEST.md参照)。誤って本番の会員証付与を発生させないよう、
+// このテストでは実際のentitlement.granted/revokedは送信せず、(1)保存済み設定での
+// HMAC署名生成が例外なく行えること、(2)接続先ホストへネットワーク到達できること、
+// の2点のみを確認する。
+export async function testOveWalletEventsConnection(
+  baseUrlOverride?: string,
+  keyIdOverride?: string,
+  secretOverride?: string,
+): Promise<ConnectionTestResult> {
+  const baseUrl = (baseUrlOverride?.trim() || (await getSetting('ove_wallet_base_url')))?.replace(/\/+$/, '');
+  const keyId = keyIdOverride?.trim() || (await getSetting('ove_wallet_events_key_id'));
+  const secret = secretOverride?.trim() || (await getSetting('ove_wallet_events_hmac_secret'));
+  if (!baseUrl) return { ok: false, message: '接続先URLが未入力です' };
+  if (!keyId) return { ok: false, message: 'Key IDが未入力です' };
+  if (!secret) return { ok: false, message: 'HMAC Secretが未入力です' };
+
+  try {
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const nonce = crypto.randomBytes(16).toString('hex');
+    buildSennokuniHeaders({ keyId, secret, timestamp, nonce, method: 'POST', path: '/api/integrations/events', rawBody: '{}' });
+  } catch (e) {
+    return { ok: false, message: `署名の生成に失敗しました: ${e instanceof Error ? e.message : '不明なエラー'}` };
+  }
+
+  try {
+    const res = await fetch(baseUrl, { method: 'GET', signal: AbortSignal.timeout(8000) });
+    return {
+      ok: true,
+      message: `接続先(${baseUrl})へ到達できました(HTTPステータス: ${res.status})。署名生成も成功しています。実際の会員証イベント(entitlement.granted等)はこのテストでは送信していません。`,
+    };
+  } catch (e) {
+    return { ok: false, message: `接続先へ到達できませんでした: ${e instanceof Error ? e.message : '不明なエラー'}` };
   }
 }

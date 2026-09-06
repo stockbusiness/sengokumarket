@@ -5,6 +5,7 @@ import {
   testAgencyKeyConnection,
   testExternalAgencyConnection,
   testNftMintConnection,
+  testOveWalletEventsConnection,
   testResendConnection,
   testStripeConnection,
 } from '../../services/connectionTest';
@@ -63,6 +64,15 @@ router.post('/settings/test/agency-key', async (req, res) => {
 // (fakeなら常に成功、crossmint等の未実装プロバイダーはその旨を返す)。
 router.post('/settings/test/nft-mint', async (req, res) => {
   const result = await testNftMintConnection(readString(req.body, 'nft_mint_api_key'));
+  res.json(result);
+});
+
+router.post('/settings/test/ove-wallet-events', async (req, res) => {
+  const result = await testOveWalletEventsConnection(
+    readString(req.body, 'ove_wallet_base_url'),
+    readString(req.body, 'ove_wallet_events_key_id'),
+    readString(req.body, 'ove_wallet_events_hmac_secret'),
+  );
   res.json(result);
 });
 
