@@ -939,3 +939,43 @@ export async function retryOutboxEvent(id: string): Promise<{ ok: boolean; statu
   const refreshed = await prisma.integrationOutboxEvent.findUnique({ where: { id } });
   return { ok: true, status: refreshed?.status };
 }
+
+const BULK_RETRY_LIMIT = 50;
+
+export interface BulkRetryOutboxEventsResult {
+  attempted: number;
+  succeeded: number;
+  retrying: number;
+  dead: number;
+  blocked: number;
+}
+
+// 仕様書外の拡張: 千ノ国ウォレット連携でのご指摘(SENNOKUNI_COMMERCE_REPLY.md 3-1)。
+// 「共通顧客HUBには登録済みだが、まだウォレットに登録していない」購入者への送信は404を返され、
+// 通常のbackoff(最大5回・約2時間15分)でdeadへ進んでしまう。ウォレット登録は数日後になることも
+// あるため、管理画面からdead(または任意のステータス)の行をまとめて再送できるようにする
+// (先方提案の「後から一括で再送」案への対応)。1回の呼び出しで処理する件数には上限を設け、
+// 呼び出し元(管理API)のレスポンス時間が長くなりすぎないようにする。
+export async function retryOutboxEventsBulk(filter: { status: string; destinationSystemKey?: string }): Promise<BulkRetryOutboxEventsResult> {
+  const result: BulkRetryOutboxEventsResult = { attempted: 0, succeeded: 0, retrying: 0, dead: 0, blocked: 0 };
+  if (!isSennokuniIntegrationEnabled()) return result;
+
+  const candidates = await prisma.integrationOutboxEvent.findMany({
+    where: { status: filter.status, ...(filter.destinationSystemKey ? { destinationSystemKey: filter.destinationSystemKey } : {}) },
+    orderBy: { createdAt: 'asc' },
+    take: BULK_RETRY_LIMIT,
+    select: { id: true },
+  });
+
+  for (const { id } of candidates) {
+    const outcome = await retryOutboxEvent(id);
+    if (!outcome.ok) continue;
+    result.attempted++;
+    if (outcome.status === 'succeeded') result.succeeded++;
+    else if (outcome.status === 'dead') result.dead++;
+    else if (outcome.status === 'blocked') result.blocked++;
+    else result.retrying++;
+  }
+
+  return result;
+}
