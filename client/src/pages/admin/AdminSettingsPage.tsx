@@ -40,6 +40,22 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
     label: 'NFT Mint APIキー(仕様書外の拡張・NFT自動発行)',
     helpText: '外部のNFT発行サービス(NFT_MINT_PROVIDER環境変数で選択)の認証キーです。fakeプロバイダー(既定)ではこのキーは使用されません。',
   },
+  {
+    key: 'ove_wallet_base_url',
+    label: 'OVEウォレット接続先URL(評議員デジタル会員証の送信先)',
+    helpText:
+      '例: https://api.sennokuni-wallet.com(末尾にパスは付けません)。この値はOVEポイント付与機能とも共用のため、検証のため一時的に変更する場合は、OVEポイント付与が本番で稼働中でないか事前に確認してください。',
+  },
+  {
+    key: 'ove_wallet_events_key_id',
+    label: 'OVEウォレット 会員証送信用 Key ID',
+    helpText: 'ウォレット側から発行される、評議員デジタル会員証の送受信専用のkey_idです(OVEポイント付与用の鍵とは別物です)。',
+  },
+  {
+    key: 'ove_wallet_events_hmac_secret',
+    label: 'OVEウォレット 会員証送信用 HMAC Secret',
+    helpText: '上記key_idに対応するsecretです。ウォレット側から安全な方法で共有を受けて入力してください。',
+  },
 ];
 
 function generateApiKey(): string {

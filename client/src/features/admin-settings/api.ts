@@ -15,6 +15,11 @@ export interface AdminSettings {
   external_agency_system_api_key: AdminSettingInfo;
   // 仕様書外の拡張(NFT自動発行): 外部Mint APIプロバイダーの認証キー。
   nft_mint_api_key: AdminSettingInfo;
+  // 仕様書外の拡張(戦国マーケット NFTカード受取・送付 実装指示書14章): digital_collectible
+  // (評議員デジタル会員証)をOVEウォレットのCommon Event APIへ送信するための認証情報・接続先。
+  ove_wallet_base_url: AdminSettingInfo;
+  ove_wallet_events_key_id: AdminSettingInfo;
+  ove_wallet_events_hmac_secret: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {
