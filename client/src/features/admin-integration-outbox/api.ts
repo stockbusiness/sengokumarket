@@ -28,6 +28,21 @@ export function retryAdminIntegrationOutboxEvent(id: string) {
   return adminSend<{ ok: boolean; status: string }>('POST', `/integration-outbox/${id}/retry`, undefined);
 }
 
+export interface AdminIntegrationOutboxBulkRetryResult {
+  attempted: number;
+  succeeded: number;
+  retrying: number;
+  dead: number;
+  blocked: number;
+}
+
+export function bulkRetryAdminIntegrationOutboxEvents(status: string, destinationSystemKey?: string) {
+  return adminSend<AdminIntegrationOutboxBulkRetryResult>('POST', '/integration-outbox/bulk-retry', {
+    status,
+    destinationSystemKey,
+  });
+}
+
 export interface AdminIntegrationEventAttempt {
   id: string;
   attemptNumber: number;

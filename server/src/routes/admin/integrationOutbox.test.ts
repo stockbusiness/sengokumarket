@@ -286,3 +286,100 @@ describe('管理API: 連携Outbox手動再送(残課題指示書Stage7)', () => 
     await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId } });
   });
 });
+
+// 仕様書外の拡張: 千ノ国ウォレット様からのご指摘(SENNOKUNI_COMMERCE_REPLY.md 3-1)への対応。
+// 「共通顧客HUBには登録済みだがウォレット未登録」の間は404が返り、通常のbackoff(最大5回・
+// 約2時間15分)でdeadへ進んでしまうため、管理画面からまとめて再送できるようにした。
+describe('管理API: 連携Outbox一括再送(仕様書外の拡張)', () => {
+  const originalFlag = process.env.SENNOKUNI_INTEGRATION_ENABLED;
+
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
+    await prisma.setting.deleteMany({
+      where: {
+        key: {
+          in: [
+            'sennokuni_hmac_key_id',
+            'sennokuni_hmac_secret',
+            'sennokuni_agency_hub_base_url',
+            'integration_endpoint_sengoku_passport',
+            'integration_endpoint_path_sengoku_passport',
+            'sennokuni_integration_stage',
+          ],
+        },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await prisma.$disconnect();
+  });
+
+  it('不正なステータスは400', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .post('/api/admin/integration-outbox/bulk-retry')
+      .set('Origin', TEST_ORIGIN)
+      .send({ status: 'not-a-real-status' });
+    expect(res.status).toBe(400);
+  });
+
+  it('Feature Flag無効時は0件のまま(実送信を行わない)', async () => {
+    delete process.env.SENNOKUNI_INTEGRATION_ENABLED;
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .post('/api/admin/integration-outbox/bulk-retry')
+      .set('Origin', TEST_ORIGIN)
+      .send({ status: 'dead' });
+    expect(res.status).toBe(200);
+    expect(res.body.attempted).toBe(0);
+  });
+
+  it('Feature Flag有効時、dead状態のイベントをまとめて再送でき成功すればsucceededに集計される', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    await setSetting('sennokuni_hmac_key_id', 'key-123');
+    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
+    await setSetting('integration_endpoint_sengoku_passport', 'https://passport.example.com');
+    await setSetting('integration_endpoint_path_sengoku_passport', '/shopping/webhook');
+    await setSennokuniIntegrationStageSetting('production');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+
+    const { agent } = await createAdminAgent(app);
+    const correlationId = `integration-outbox-bulk-retry-test-${Date.now()}`;
+    await prisma.$transaction(async (tx) => {
+      await enqueueOutboxEvent(tx, { eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport', payload: {}, correlationId });
+      await enqueueOutboxEvent(tx, { eventType: 'entitlement.granted', destinationSystemKey: 'sengoku-passport', payload: {}, correlationId });
+    });
+    const rows = await prisma.integrationOutboxEvent.findMany({ where: { correlationId } });
+    expect(rows).toHaveLength(2);
+    await prisma.integrationOutboxEvent.updateMany({ where: { correlationId }, data: { status: 'dead' } });
+
+    const res = await agent
+      .post('/api/admin/integration-outbox/bulk-retry')
+      .set('Origin', TEST_ORIGIN)
+      .send({ status: 'dead', destinationSystemKey: 'sengoku-passport' });
+    expect(res.status).toBe(200);
+    expect(res.body.attempted).toBeGreaterThanOrEqual(2);
+    expect(res.body.succeeded).toBeGreaterThanOrEqual(2);
+
+    const updated = await prisma.integrationOutboxEvent.findMany({ where: { correlationId } });
+    expect(updated.every((e) => e.status === 'succeeded')).toBe(true);
+
+    await prisma.integrationEventAttempt.deleteMany({ where: { outboxEventId: { in: rows.map((r) => r.id) } } });
+    await prisma.integrationOutboxEvent.deleteMany({ where: { correlationId } });
+  });
+
+  it('閲覧専用管理者は403(READONLY_ADMIN)', async () => {
+    process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    const { agent } = await createViewerAgent();
+    const res = await agent
+      .post('/api/admin/integration-outbox/bulk-retry')
+      .set('Origin', TEST_ORIGIN)
+      .send({ status: 'dead' });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('READONLY_ADMIN');
+  });
+});

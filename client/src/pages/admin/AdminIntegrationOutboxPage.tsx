@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   fetchAdminIntegrationOutbox,
   retryAdminIntegrationOutboxEvent,
+  bulkRetryAdminIntegrationOutboxEvents,
   fetchAdminIntegrationOutboxAttempts,
   type AdminIntegrationOutboxEvent,
   type AdminIntegrationEventAttempt,
@@ -50,6 +51,23 @@ export default function AdminIntegrationOutboxPage() {
     }
   }
 
+  // 千ノ国ウォレット様からのご指摘(共通顧客HUBには登録済みだがウォレット未登録のため404となり、
+  // 通常のbackoffでdeadになる件)への対応: 表示中のステータスに絞って一括再送する。
+  async function bulkRetry() {
+    if (!statusFilter) return;
+    setError(null);
+    setMessage(null);
+    try {
+      const result = await bulkRetryAdminIntegrationOutboxEvents(statusFilter);
+      setMessage(
+        `${result.attempted}件を再送しました(成功${result.succeeded}・再試行待ち${result.retrying}・保留${result.blocked}・失敗${result.dead})`,
+      );
+      load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '一括再送に失敗しました');
+    }
+  }
+
   async function showAttempts(event: AdminIntegrationOutboxEvent) {
     setAttemptsFor(event);
     const d = await fetchAdminIntegrationOutboxAttempts(event.id);
@@ -72,6 +90,11 @@ export default function AdminIntegrationOutboxPage() {
           ))}
         </select>
       </label>
+      {statusFilter && (
+        <button type="button" className="btn-secondary btn-small" onClick={bulkRetry}>
+          「{statusFilter}」をまとめて再試行(最大50件)
+        </button>
+      )}
 
       {error && <p className="checkout-error">{error}</p>}
       {message && <p>{message}</p>}

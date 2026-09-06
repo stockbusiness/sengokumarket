@@ -4,7 +4,7 @@ import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { INTEGRATION_OUTBOX_STATUSES as STATUSES } from '@sengoku/contracts';
 import { parsePagination } from '../../shared/pagination/parsePagination';
-import { retryOutboxEvent } from '../../services/integrationOutboxDispatcher';
+import { retryOutboxEvent, retryOutboxEventsBulk } from '../../services/integrationOutboxDispatcher';
 
 const router = Router();
 
@@ -55,6 +55,18 @@ router.post('/integration-outbox/:id/retry', async (req, res) => {
   if (!result.ok) {
     return sendError(res, 404, 'NOT_FOUND', '再送可能なイベントが見つかりません');
   }
+  res.json(result);
+});
+
+// 仕様書外の拡張: 千ノ国ウォレット様からのご指摘(SENNOKUNI_COMMERCE_REPLY.md 3-1)に対応。
+// 指定したステータス(・任意で送信先)に該当する行をまとめて再送する。
+router.post('/integration-outbox/bulk-retry', async (req, res) => {
+  const status = typeof req.body.status === 'string' ? req.body.status : undefined;
+  if (!status || !(STATUSES as readonly string[]).includes(status)) {
+    return sendError(res, 400, 'VALIDATION_ERROR', 'ステータスを指定してください');
+  }
+  const destinationSystemKey = typeof req.body.destinationSystemKey === 'string' ? req.body.destinationSystemKey : undefined;
+  const result = await retryOutboxEventsBulk({ status, destinationSystemKey });
   res.json(result);
 });
 
