@@ -190,11 +190,13 @@ describe('管理API: 商品管理', () => {
   });
 
   // basePriceは一覧表示用の代表(最安)価格に過ぎず、実際に決済で使われるのはバリエーションごとの
-  // priceである(残課題指示書第15章・バリエーション別価格へ移行)。basePriceの変更が既存の
-  // バリエーションpriceを巻き込んで書き換えないことの回帰テスト。
-  it('basePriceを変更しても既存バリエーションのpriceは変更されない', async () => {
+  // priceである(残課題指示書第15章・バリエーション別価格へ移行)。ただし「代表価格」と
+  // 「バリエーションの価格」という2つの入力欄が並ぶことで片方だけ更新して実売価格が古いまま
+  // 残る事故が本番で発生したため(仕様書外の拡張)、バリエーションが1件だけ(=実質バリエーション
+  // 無し)の商品に限り、basePriceの変更をその1件のpriceにも反映するようにした。
+  it('バリエーションが1件だけの商品はbasePriceの変更が唯一のバリエーションのpriceにも反映される(仕様書外の拡張)', async () => {
     const product = await prisma.product.findUniqueOrThrow({ where: { slug }, include: { variants: true } });
-    const originalVariantPrice = product.variants[0].price;
+    expect(product.variants).toHaveLength(1);
 
     const res = await agent
       .put(`/api/admin/products/${product.id}`)
@@ -203,10 +205,44 @@ describe('管理API: 商品管理', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.product.basePrice).toBe(27500);
-    expect(res.body.product.variants[0].price).toBe(originalVariantPrice);
+    expect(res.body.product.variants[0].price).toBe(27500);
 
     const variant = await prisma.productVariant.findUniqueOrThrow({ where: { id: product.variants[0].id } });
-    expect(variant.price).toBe(originalVariantPrice);
+    expect(variant.price).toBe(27500);
+  });
+
+  // 色・サイズ等で価格が異なりうる複数バリエーションの商品には上記の自動反映を適用しない
+  // (過去に全バリエーション一括上書きのカスケードを廃止した経緯があるため)。
+  it('バリエーションが複数ある商品はbasePriceを変更しても既存バリエーションのpriceは変更されない', async () => {
+    const multiVariantSlug = `${slug}-multi-variant-${Date.now()}`;
+    const created = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: '複数バリエーションテスト商品',
+        slug: multiVariantSlug,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        variants: [
+          { name: '通常', price: 10000, stock: 5 },
+          { name: 'プレミアム', price: 20000, stock: 3 },
+        ],
+      });
+    expect(created.body.product.variants).toHaveLength(2);
+
+    const res = await agent
+      .put(`/api/admin/products/${created.body.product.id}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ basePrice: 15000 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.product.basePrice).toBe(15000);
+    const prices = res.body.product.variants.map((v: { price: number }) => v.price).sort((a: number, b: number) => a - b);
+    expect(prices).toEqual([10000, 20000]);
+
+    await prisma.productVariant.deleteMany({ where: { productId: created.body.product.id } });
+    await prisma.product.delete({ where: { id: created.body.product.id } });
   });
 
   it('バリエーションごとに個別の価格を指定して更新できる', async () => {

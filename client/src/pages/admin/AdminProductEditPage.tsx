@@ -444,18 +444,29 @@ export default function AdminProductEditPage() {
         {product.variants.map((v) => (
           <div className="admin-variant-row" key={v.id}>
             <span className="admin-variant-row__name">{v.name}</span>
-            <label className="admin-variant-row__price">
-              価格
-              <input
-                type="number"
-                min={0}
-                defaultValue={v.price}
-                onBlur={(e) => {
-                  const next = Number(e.target.value);
-                  if (next !== v.price) handleUpdateVariantPrice(v.id, v.name, next);
-                }}
-              />
-            </label>
+            {product.variants.length === 1 ? (
+              // 仕様書外の拡張: バリエーションが1件だけ(=実質バリエーション無し)の場合、価格欄を
+              // 上の「価格(代表価格)」欄と別に持たせると、片方だけ更新して実売価格がずれる事故に
+              // つながるため、価格の入力自体をここでは行わせない(サーバー側で代表価格と自動的に
+              // 一致させる)。色・サイズ等の選択肢を追加した時点(バリエーション2件目以降)から、
+              // 通常どおりバリエーションごとに価格を個別入力できるようにする。
+              <span className="admin-variant-row__price">
+                価格 {v.price.toLocaleString()}円(上の「価格(代表価格)」と連動)
+              </span>
+            ) : (
+              <label className="admin-variant-row__price">
+                価格
+                <input
+                  type="number"
+                  min={0}
+                  defaultValue={v.price}
+                  onBlur={(e) => {
+                    const next = Number(e.target.value);
+                    if (next !== v.price) handleUpdateVariantPrice(v.id, v.name, next);
+                  }}
+                />
+              </label>
+            )}
             <label className="admin-variant-row__stock">
               在庫数
               <input
