@@ -109,7 +109,13 @@ export default function AdminProductCreatePage() {
         basePrice: finalPrice,
         status: 'draft',
         images: parseImagesText(imagesText),
-        variants: validVariants.map((v) => ({ name: v.name.trim(), price: toTaxIncluded(v.price, priceMode), stock: v.stock })),
+        // バリエーションが1件だけの場合は価格入力欄を表示していないため(代表価格を使う設計)、
+        // row.priceの値に依存せず必ずfinalPrice(代表価格)を送る。
+        variants: validVariants.map((v) => ({
+          name: v.name.trim(),
+          price: validVariants.length === 1 ? finalPrice : toTaxIncluded(v.price, priceMode),
+          stock: v.stock,
+        })),
         agencyAccessMode,
         agencyRole: agencyRole.trim() || null,
         agencyProductCode: agencyProductCode.trim() || null,
@@ -232,15 +238,24 @@ export default function AdminProductCreatePage() {
                   onChange={(e) => updateVariantRow(index, 'name', e.target.value)}
                 />
               </label>
-              <label className="admin-variant-row__price">
-                価格
-                <input
-                  type="number"
-                  value={row.price}
-                  min={0}
-                  onChange={(e) => updateVariantRow(index, 'price', Number(e.target.value))}
-                />
-              </label>
+              {variantRows.length === 1 ? (
+                // 仕様書外の拡張: バリエーションが1件だけ(=実質バリエーション無し)の場合、価格を
+                // 上の「価格(代表価格)」欄と別に入力させると、片方だけ入力して実売価格がずれる
+                // 事故につながるため、ここでは価格入力自体を行わせず代表価格をそのまま使う。
+                // 「+バリエーションを追加」で2件目以降を作った時点から、通常どおり個別に価格を
+                // 入力できるようにする。
+                <span className="admin-variant-row__price">価格 {basePrice.toLocaleString()}円(上の「価格(代表価格)」と同額)</span>
+              ) : (
+                <label className="admin-variant-row__price">
+                  価格
+                  <input
+                    type="number"
+                    value={row.price}
+                    min={0}
+                    onChange={(e) => updateVariantRow(index, 'price', Number(e.target.value))}
+                  />
+                </label>
+              )}
               <label className="admin-variant-row__stock">
                 在庫数
                 <input

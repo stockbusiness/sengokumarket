@@ -243,6 +243,14 @@ router.put('/products/:id', async (req, res) => {
     }
   }
 
+  // 仕様書外の拡張: バリエーションが1件だけ(=実質バリエーション無しの単一商品)の場合に限り、
+  // その1件の価格を代表価格(basePrice)と常に一致させる。管理画面で「代表価格」と
+  // 「バリエーションの価格」という2つの入力欄が並び、片方だけ更新して実売価格が0円のまま
+  // 残ってしまう事故があったための対応。色・サイズ等で価格が異なる複数バリエーションの
+  // 商品には適用しない(過去に全バリエーション一括上書きのカスケードを廃止した経緯がある
+  // ため、単一バリエーションの場合に限定する)。このPUTが同時にvariantsも更新する呼び出し
+  // (現状のクライアントは基本情報とバリエーションを別々のリクエストで送るため該当しない)
+  // では、明示的なvariants指定を優先しこのカスケードは行わない。
   await prisma.$transaction(async (tx) => {
     await tx.product.update({
       where: { id },
@@ -263,6 +271,13 @@ router.put('/products/:id', async (req, res) => {
         agencyLoginRedirectPath: agencyLoginRedirectPath === undefined ? undefined : agencyLoginRedirectPath,
       },
     });
+
+    if (variants === undefined && basePrice !== undefined) {
+      const existingVariants = await tx.productVariant.findMany({ where: { productId: id }, select: { id: true } });
+      if (existingVariants.length === 1) {
+        await tx.productVariant.update({ where: { id: existingVariants[0].id }, data: { price: basePrice } });
+      }
+    }
 
     for (const v of updateEntries) {
       await tx.productVariant.update({
