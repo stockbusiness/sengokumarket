@@ -47,6 +47,14 @@ export default function AdminProductCreatePage() {
       .filter((line) => line.length > 0);
   }
 
+  // 仕様書外の拡張: 価格(代表価格)を入力したら、まだ手動で価格を変更していないバリエーション行
+  // (=DEFAULT_VARIANT_ROWSのまま、または直前のbasePriceと同額のまま)には自動で反映する。
+  // 既に価格を個別に変更した行(basePriceと異なる値になっている行)は上書きしない。
+  function handleBasePriceChange(value: number) {
+    setVariantRows((prev) => prev.map((row) => (row.price === basePrice ? { ...row, price: value } : row)));
+    setBasePrice(value);
+  }
+
   function addVariantRow() {
     setVariantRows((prev) => [...prev, { name: '', stock: 0, price: basePrice }]);
   }
@@ -175,7 +183,7 @@ export default function AdminProductCreatePage() {
           </p>
           <label>
             価格(代表価格)
-            <input type="number" value={basePrice} onChange={(e) => setBasePrice(Number(e.target.value))} required />
+            <input type="number" value={basePrice} onChange={(e) => handleBasePriceChange(Number(e.target.value))} required />
           </label>
           <div className="admin-tax-mode">
             <label>
@@ -211,6 +219,7 @@ export default function AdminProductCreatePage() {
           <p className="admin-form-section__hint">
             色・サイズ等の選択肢ごとに、名前・価格・在庫数(個数)を入力してください。ここで在庫数を設定しないと購入できません。
             価格は上の「価格(代表価格)」欄と同じ税込/税別モードで入力してください。
+            選択肢が無い商品は「通常」のまま在庫数(個数)だけ入力すれば大丈夫です。
           </p>
           {variantRows.map((row, index) => (
             <div className="admin-variant-row" key={index}>

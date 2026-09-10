@@ -100,6 +100,10 @@ export default function AdminProductEditPage() {
         setAgencyProductCode(d.product.agencyProductCode ?? '');
         setAgencyAccessExpiresDays(d.product.agencyAccessExpiresDays != null ? String(d.product.agencyAccessExpiresDays) : '');
         setAgencyLoginRedirectPath(d.product.agencyLoginRedirectPath ?? '');
+        // 仕様書外の拡張: 新規バリエーション追加欄は代表価格をデフォルト値にする(価格の入力し直しを省く)。
+        // バリエーションが1つも無い(=バリエーション不要な単一商品)場合は、名前も「通常」を
+        // 初期値にし、在庫数だけ入力すればよいようにする。
+        setNewVariant({ name: d.product.variants.length === 0 ? '通常' : '', stock: 0, price: d.product.basePrice });
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : '読み込みに失敗しました'))
       .finally(() => setLoading(false));
@@ -433,7 +437,9 @@ export default function AdminProductEditPage() {
       <div className="admin-form-card admin-form-card--wide">
         <h2 className="admin-form-section__title">バリエーション・在庫</h2>
         {product.variants.length === 0 && (
-          <p className="checkout-error">バリエーションが無く購入できません。下から追加してください。</p>
+          <p className="checkout-error">
+            バリエーションが無く購入できません。色・サイズ等の選択肢が無い商品は、下の欄の名前を「通常」のままにして在庫数だけ入力し「追加」してください。
+          </p>
         )}
         {product.variants.map((v) => (
           <div className="admin-variant-row" key={v.id}>
