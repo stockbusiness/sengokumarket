@@ -4,6 +4,8 @@ import { prisma } from '../lib/prisma';
 import { HttpError } from '../lib/httpError';
 import { getMintProvider, type MintProvider, type MintStatusResult } from './nftMint';
 import { buildNftMetadata, uploadNftMetadata } from './nftMetadata';
+import { composeNftSerialImage, uploadComposedNftSerialImage } from './nftSerialImageComposer';
+import { validateNftSerialOverlayConfig } from './nftSerialOverlay';
 
 const BATCH_LIMIT = 50;
 const MAX_ATTEMPTS = 5;
@@ -69,10 +71,11 @@ export async function submitAndMaybeConfirm(
   }
 
   try {
+    const imageUrl = await resolveNftImageUrl(issue.id, issue.product.images[0] ?? null, issue.product.nftSerialOverlay, serialNumber);
     const metadata = buildNftMetadata({
       productName: issue.product.name,
       serialNumber,
-      imageUrl: issue.product.images[0] ?? null,
+      imageUrl,
     });
     const metadataUri = await uploadNftMetadata(issue.id, metadata);
 
@@ -99,6 +102,27 @@ export async function submitAndMaybeConfirm(
     }
     await handleFailure(issueId, e instanceof Error ? e.message : String(e), result);
   }
+}
+
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み。有効な設定(Product.nftSerialOverlay)が
+// あれば、番号欄を空欄にしたベース画像(images[0])へこのNftIssue固有のシリアル番号を
+// 合成した画像を1枚生成してアップロードし、そのURLを使う。設定が無い・無効な場合は
+// 従来通りbaseImageUrlをそのまま返す(既存商品への影響はない)。
+// 合成・アップロードに失敗した場合は例外をそのまま投げ、呼び出し元(submitAndMaybeConfirm)の
+// 既存のリトライ・バックオフ処理に委ねる(番号なしの画像のまま発行してしまう事故を防ぐため)。
+async function resolveNftImageUrl(
+  nftIssueId: string,
+  baseImageUrl: string | null,
+  nftSerialOverlayRaw: unknown,
+  serialNumber: number,
+): Promise<string | null> {
+  if (!baseImageUrl || !nftSerialOverlayRaw) return baseImageUrl;
+
+  const validated = validateNftSerialOverlayConfig(nftSerialOverlayRaw);
+  if (!validated.ok || !validated.config.enabled) return baseImageUrl;
+
+  const composed = await composeNftSerialImage(baseImageUrl, serialNumber, validated.config);
+  return uploadComposedNftSerialImage(nftIssueId, composed);
 }
 
 // claim直後、まだsubmitMintの送信が完了していない行(providerRequestId未設定)は、

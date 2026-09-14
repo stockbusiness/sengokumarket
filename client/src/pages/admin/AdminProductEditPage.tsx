@@ -5,12 +5,14 @@ import {
   deleteAdminProduct,
   deleteAdminProductVariant,
   fetchAdminProduct,
+  previewNftSerialOverlay,
   updateAdminProduct,
   updateAdminProductIntegrationRule,
   uploadAdminProductImage,
   type AdminProduct,
   type AdminProductIntegrationRule,
   type IntegrationRuleRequest,
+  type NftSerialOverlayConfig,
 } from '../../lib/adminApi';
 import {
   ITEM_TYPES,
@@ -49,6 +51,17 @@ const AGENCY_ACCESS_MODE_LABEL: Record<string, string> = {
 
 type StatusMessage = { type: 'success' | 'error'; text: string };
 
+const DEFAULT_NFT_SERIAL_OVERLAY: NftSerialOverlayConfig = {
+  enabled: false,
+  boxXPct: 30,
+  boxYPct: 70,
+  boxWidthPct: 40,
+  boxHeightPct: 10,
+  textColor: '#e7c27a',
+  textTemplate: 'INF-{serial}',
+  serialDigits: 6,
+};
+
 export default function AdminProductEditPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -80,6 +93,14 @@ export default function AdminProductEditPage() {
   const [ruleSubmitting, setRuleSubmitting] = useState(false);
   const priceInputRef = useRef<HTMLInputElement | null>(null);
 
+  // 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定。
+  const [overlay, setOverlay] = useState<NftSerialOverlayConfig>(DEFAULT_NFT_SERIAL_OVERLAY);
+  const [overlaySaving, setOverlaySaving] = useState(false);
+  const [overlayPreviewSerial, setOverlayPreviewSerial] = useState(1);
+  const [overlayPreviewImage, setOverlayPreviewImage] = useState<string | null>(null);
+  const [overlayPreviewing, setOverlayPreviewing] = useState(false);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+
   function load() {
     if (!id) return;
     setLoading(true);
@@ -104,6 +125,9 @@ export default function AdminProductEditPage() {
         // バリエーションが1つも無い(=バリエーション不要な単一商品)場合は、名前も「通常」を
         // 初期値にし、在庫数だけ入力すればよいようにする。
         setNewVariant({ name: d.product.variants.length === 0 ? '通常' : '', stock: 0, price: d.product.basePrice });
+        setOverlay(d.product.nftSerialOverlay ?? DEFAULT_NFT_SERIAL_OVERLAY);
+        setOverlayPreviewImage(null);
+        setOverlayError(null);
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : '読み込みに失敗しました'))
       .finally(() => setLoading(false));
@@ -275,6 +299,35 @@ export default function AdminProductEditPage() {
       load();
     } catch (e) {
       notify('error', e instanceof Error ? e.message : '連携ルールの更新に失敗しました');
+    }
+  }
+
+  async function handleSaveOverlay() {
+    if (!product) return;
+    setOverlaySaving(true);
+    setOverlayError(null);
+    try {
+      await updateAdminProduct(product.id, { nftSerialOverlay: overlay });
+      notify('success', 'NFTシリアル番号の焼き込み設定を保存しました');
+      load();
+    } catch (e) {
+      setOverlayError(e instanceof Error ? e.message : '保存に失敗しました');
+    } finally {
+      setOverlaySaving(false);
+    }
+  }
+
+  async function handlePreviewOverlay() {
+    if (!product) return;
+    setOverlayPreviewing(true);
+    setOverlayError(null);
+    try {
+      const { imageDataUrl } = await previewNftSerialOverlay(product.id, overlay, overlayPreviewSerial);
+      setOverlayPreviewImage(imageDataUrl);
+    } catch (e) {
+      setOverlayError(e instanceof Error ? e.message : 'プレビューの生成に失敗しました');
+    } finally {
+      setOverlayPreviewing(false);
     }
   }
 
@@ -514,6 +567,116 @@ export default function AdminProductEditPage() {
           <button type="button" className="btn-secondary btn-small" onClick={handleAddVariant}>
             追加
           </button>
+        </div>
+      </div>
+
+      <div className="admin-form-card admin-form-card--wide">
+        <h2 className="admin-form-section__title">NFTシリアル番号の画像焼き込み(仕様書外の拡張)</h2>
+        <p className="admin-form-section__hint">
+          商品画像(先頭の画像)の指定した位置に、発行するNFTごとのシリアル番号を合成して1枚ずつ生成します。
+          画像側は番号欄を空欄にしたベース画像を用意してください。位置は画像の幅・高さに対する割合(%)で指定します。
+        </p>
+        <label>
+          <input
+            type="checkbox"
+            checked={overlay.enabled}
+            onChange={(e) => setOverlay((prev) => ({ ...prev, enabled: e.target.checked }))}
+          />
+          有効にする
+        </label>
+        <div className="admin-variant-row">
+          <label className="admin-variant-row__stock">
+            左端(%)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={overlay.boxXPct}
+              onChange={(e) => setOverlay((prev) => ({ ...prev, boxXPct: Number(e.target.value) }))}
+            />
+          </label>
+          <label className="admin-variant-row__stock">
+            上端(%)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={overlay.boxYPct}
+              onChange={(e) => setOverlay((prev) => ({ ...prev, boxYPct: Number(e.target.value) }))}
+            />
+          </label>
+          <label className="admin-variant-row__stock">
+            幅(%)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={overlay.boxWidthPct}
+              onChange={(e) => setOverlay((prev) => ({ ...prev, boxWidthPct: Number(e.target.value) }))}
+            />
+          </label>
+          <label className="admin-variant-row__stock">
+            高さ(%)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              value={overlay.boxHeightPct}
+              onChange={(e) => setOverlay((prev) => ({ ...prev, boxHeightPct: Number(e.target.value) }))}
+            />
+          </label>
+        </div>
+        <div className="admin-variant-row">
+          <label className="admin-variant-row__name">
+            文字色
+            <input
+              type="text"
+              value={overlay.textColor}
+              placeholder="#e7c27a"
+              onChange={(e) => setOverlay((prev) => ({ ...prev, textColor: e.target.value }))}
+            />
+          </label>
+          <label className="admin-variant-row__name">
+            表示形式({'{serial}'}がシリアル番号に置き換わります)
+            <input
+              type="text"
+              value={overlay.textTemplate}
+              placeholder="INF-{serial}"
+              onChange={(e) => setOverlay((prev) => ({ ...prev, textTemplate: e.target.value }))}
+            />
+          </label>
+          <label className="admin-variant-row__stock">
+            ゼロ埋め桁数
+            <input
+              type="number"
+              min={1}
+              max={12}
+              value={overlay.serialDigits}
+              onChange={(e) => setOverlay((prev) => ({ ...prev, serialDigits: Number(e.target.value) }))}
+            />
+          </label>
+        </div>
+        <button type="button" className="btn-primary btn-small" onClick={handleSaveOverlay} disabled={overlaySaving}>
+          {overlaySaving ? '保存中...' : 'この設定を保存する'}
+        </button>
+
+        <div className="admin-settings-test">
+          <label>
+            プレビュー用シリアル番号
+            <input
+              type="number"
+              min={1}
+              value={overlayPreviewSerial}
+              onChange={(e) => setOverlayPreviewSerial(Number(e.target.value))}
+            />
+          </label>
+          <button type="button" className="btn-secondary btn-small" onClick={handlePreviewOverlay} disabled={overlayPreviewing}>
+            {overlayPreviewing ? '生成中...' : 'プレビューを生成'}
+          </button>
+          {overlayError && <p className="admin-settings-test-ng">{overlayError}</p>}
+          {overlayPreviewImage && (
+            <img src={overlayPreviewImage} alt="NFTシリアル番号焼き込みプレビュー" className="admin-nft-serial-preview-image" />
+          )}
         </div>
       </div>
 

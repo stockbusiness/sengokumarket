@@ -10,6 +10,15 @@ vi.mock('@vercel/blob', () => ({
   put: (...args: [string, unknown, unknown]) => put(...args),
 }));
 
+// 仕様書外の拡張: NFTシリアル番号焼き込みのプレビューAPI用。実際の画像合成(canvas)は
+// nftSerialImageComposer.test.tsで別途検証済みのため、ここではルーティング・検証の
+// 配線のみを確認する。
+const composeNftSerialImage = vi.fn(async (_baseImageUrl: string, _serialNumber: number, _config: unknown) => Buffer.from('fake-png-bytes'));
+
+vi.mock('../../services/nftSerialImageComposer', () => ({
+  composeNftSerialImage: (...args: [string, number, unknown]) => composeNftSerialImage(...args),
+}));
+
 const app = createApp();
 
 describe('管理API: 商品管理', () => {
@@ -600,5 +609,112 @@ describe('管理API: 商品管理', () => {
     await prisma.orderItem.deleteMany({ where: { orderId: order.id } });
     await prisma.order.delete({ where: { id: order.id } });
     await prisma.user.delete({ where: { id: user.id } });
+  });
+});
+
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定。
+describe('管理API: NFTシリアル番号の画像焼き込み設定(仕様書外の拡張)', () => {
+  let agent: Awaited<ReturnType<typeof createAdminAgent>>['agent'];
+  let productId: string;
+  const slug = `admin-test-nft-serial-overlay-${Date.now()}`;
+
+  const validConfig = {
+    enabled: true,
+    boxXPct: 30,
+    boxYPct: 70,
+    boxWidthPct: 40,
+    boxHeightPct: 10,
+    textColor: '#e7c27a',
+    textTemplate: 'INF-{serial}',
+    serialDigits: 6,
+  };
+
+  beforeEach(async () => {
+    composeNftSerialImage.mockClear();
+  });
+
+  afterAll(async () => {
+    await prisma.productVariant.deleteMany({ where: { product: { slug } } });
+    await prisma.product.deleteMany({ where: { slug } });
+    await prisma.user.deleteMany({ where: { email: { contains: 'admin-test' } } });
+    await prisma.$disconnect();
+  });
+
+  it('準備: 商品を作成する', async () => {
+    ({ agent } = await createAdminAgent(app));
+    const res = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({
+        name: 'NFTシリアル焼き込みテスト商品',
+        slug,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        images: ['https://example.com/base-blank.png'],
+      });
+    expect(res.status).toBe(201);
+    productId = res.body.product.id;
+    expect(res.body.product.nftSerialOverlay).toBeNull();
+  });
+
+  it('有効な設定を保存できる', async () => {
+    const res = await agent.put(`/api/admin/products/${productId}`).set('Origin', TEST_ORIGIN).send({ nftSerialOverlay: validConfig });
+    expect(res.status).toBe(200);
+    expect(res.body.product.nftSerialOverlay).toEqual(validConfig);
+  });
+
+  it('不正な設定(矩形が範囲外)は400を返し、保存されない', async () => {
+    const res = await agent
+      .put(`/api/admin/products/${productId}`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ nftSerialOverlay: { ...validConfig, boxXPct: 90, boxWidthPct: 50 } });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+
+    const after = await agent.get(`/api/admin/products/${productId}`).set('Origin', TEST_ORIGIN);
+    expect(after.body.product.nftSerialOverlay).toEqual(validConfig);
+  });
+
+  it('nullを送ると設定が解除される', async () => {
+    const res = await agent.put(`/api/admin/products/${productId}`).set('Origin', TEST_ORIGIN).send({ nftSerialOverlay: null });
+    expect(res.status).toBe(200);
+    expect(res.body.product.nftSerialOverlay).toBeNull();
+  });
+
+  it('POST /products/:id/nft-serial-previewはcomposeNftSerialImageの結果をdata URLとして返す', async () => {
+    const res = await agent
+      .post(`/api/admin/products/${productId}/nft-serial-preview`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ config: validConfig, serialNumber: 4821 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.imageDataUrl).toBe(`data:image/png;base64,${Buffer.from('fake-png-bytes').toString('base64')}`);
+    expect(composeNftSerialImage).toHaveBeenCalledWith('https://example.com/base-blank.png', 4821, validConfig);
+  });
+
+  it('プレビューで不正な設定を送ると400を返す', async () => {
+    const res = await agent
+      .post(`/api/admin/products/${productId}/nft-serial-preview`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ config: { ...validConfig, textColor: 'gold' } });
+    expect(res.status).toBe(400);
+    expect(composeNftSerialImage).not.toHaveBeenCalled();
+  });
+
+  it('商品画像が未設定の場合プレビューは400を返す', async () => {
+    const noImageRes = await agent
+      .post('/api/admin/products')
+      .set('Origin', TEST_ORIGIN)
+      .send({ name: '画像未設定テスト', slug: `${slug}-no-image`, category: 'テスト', itemType: 'nft', basePrice: 1000 });
+    const noImageProductId = noImageRes.body.product.id;
+
+    const res = await agent
+      .post(`/api/admin/products/${noImageProductId}/nft-serial-preview`)
+      .set('Origin', TEST_ORIGIN)
+      .send({ config: validConfig });
+    expect(res.status).toBe(400);
+
+    await prisma.product.delete({ where: { id: noImageProductId } });
   });
 });
