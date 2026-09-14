@@ -226,6 +226,12 @@ model Product {
   agencyProductCode       String?  @map("agency_product_code")
   agencyAccessExpiresDays Int?     @map("agency_access_expires_days")
   agencyLoginRedirectPath String?  @map("agency_login_redirect_path")
+  // 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定。有効な場合、発行時にimages[0]
+  // (番号欄を空欄にしたベース画像)へシリアル番号を合成した画像を1枚ずつ生成し、
+  // そのNFT固有の画像としてメタデータに使う。null(既定)の場合は従来通りimages[0]を
+  // そのまま使う(既存商品への影響はない)。形は NftSerialOverlayConfig
+  // (server/src/services/nftSerialOverlay.ts)を参照。
+  nftSerialOverlay        Json?    @map("nft_serial_overlay")
   createdAt               DateTime @default(now()) @map("created_at")
   updatedAt               DateTime @updatedAt @map("updated_at")
 

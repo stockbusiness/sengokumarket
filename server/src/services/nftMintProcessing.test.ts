@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { processNftMints, submitAndMaybeConfirm } from './nftMintProcessing';
 import { fakeMintProvider, resetFakeMintProvider, setFakeMintBehavior } from './nftMintProviders/fake';
@@ -13,6 +14,17 @@ vi.mock('./nftMetadata', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./nftMetadata')>();
   return { ...actual, uploadNftMetadata: (...args: [string, Record<string, unknown>]) => uploadNftMetadata(...args) };
 });
+
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み。実際の画像合成(canvas)・Blobアップロードは
+// 他のテストで別途検証済みのため、ここではsubmitAndMaybeConfirmが「有効な設定がある時だけ
+// 呼び出し、その結果をmetadata.imageとして使う」という配線だけを確認する。
+const composeNftSerialImage = vi.fn(async (_baseImageUrl: string, _serialNumber: number, _config: unknown) => Buffer.from('fake-png'));
+const uploadComposedNftSerialImage = vi.fn(async (nftIssueId: string, _buffer: Buffer) => `https://blob.example.com/nft-images/${nftIssueId}.png`);
+
+vi.mock('./nftSerialImageComposer', () => ({
+  composeNftSerialImage: (...args: [string, number, unknown]) => composeNftSerialImage(...args),
+  uploadComposedNftSerialImage: (...args: [string, Buffer]) => uploadComposedNftSerialImage(...args),
+}));
 
 describe('processNftMints(仕様書外の拡張)', () => {
   let productId: string;
@@ -56,6 +68,8 @@ describe('processNftMints(仕様書外の拡張)', () => {
   afterEach(() => {
     resetFakeMintProvider();
     uploadNftMetadata.mockClear();
+    composeNftSerialImage.mockClear();
+    uploadComposedNftSerialImage.mockClear();
   });
 
   async function createOrderAndIssue(
@@ -230,5 +244,152 @@ describe('processNftMints(仕様書外の拡張)', () => {
 
     const afterSecond = await prisma.nftIssue.findUniqueOrThrow({ where: { id: issue.id } });
     expect(afterSecond.status).toBe('issued');
+  });
+});
+
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み(Product.nftSerialOverlay)。
+describe('submitAndMaybeConfirmのNFTシリアル番号画像焼き込み(仕様書外の拡張)', () => {
+  const validOverlayConfig = {
+    enabled: true,
+    boxXPct: 30,
+    boxYPct: 70,
+    boxWidthPct: 40,
+    boxHeightPct: 10,
+    textColor: '#e7c27a',
+    textTemplate: 'INF-{serial}',
+    serialDigits: 6,
+  };
+
+  let userId: string;
+  const originalProvider = process.env.NFT_MINT_PROVIDER;
+
+  beforeAll(async () => {
+    process.env.NFT_MINT_PROVIDER = 'fake';
+    const user = await prisma.user.create({
+      data: { name: 'シリアル焼き込みテスト太郎', email: `nftmint-overlay-test-${Date.now()}@example.com`, passwordHash: 'x', role: 'user' },
+    });
+    userId = user.id;
+  });
+
+  afterAll(async () => {
+    process.env.NFT_MINT_PROVIDER = originalProvider;
+    await prisma.user.delete({ where: { id: userId } });
+  });
+
+  afterEach(() => {
+    resetFakeMintProvider();
+    uploadNftMetadata.mockClear();
+    composeNftSerialImage.mockClear();
+    uploadComposedNftSerialImage.mockClear();
+  });
+
+  async function createProductOrderAndIssue(nftSerialOverlay: unknown, images: string[]) {
+    const product = await prisma.product.create({
+      data: {
+        name: 'シリアル焼き込みテスト商品',
+        slug: `nftmint-overlay-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        category: 'テスト',
+        itemType: 'nft',
+        basePrice: 10000,
+        status: 'published',
+        images,
+        nftSerialOverlay: nftSerialOverlay as Prisma.InputJsonValue,
+      },
+    });
+    const order = await prisma.order.create({
+      data: {
+        orderNumber: `SG-NFTOVERLAYTEST-${Math.random().toString(36).slice(2)}`,
+        userId,
+        totalAmount: 10000,
+        originalAmount: 10000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: 'テスト',
+        customerEmail: 'nftmint-overlay-test@example.com',
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    const orderItem = await prisma.orderItem.create({
+      data: {
+        orderId: order.id,
+        productId: product.id,
+        productName: product.name,
+        itemType: 'nft',
+        quantity: 1,
+        unitPrice: 10000,
+        subtotal: 10000,
+      },
+    });
+    const nftIssue = await prisma.nftIssue.create({
+      data: {
+        orderId: order.id,
+        orderItemId: orderItem.id,
+        userId,
+        productId: product.id,
+        status: 'ready_to_issue',
+        walletAddress: '0x2222222222222222222222222222222222222222',
+      },
+    });
+    return { product, order, orderItem, nftIssue };
+  }
+
+  it('有効なnftSerialOverlayがある商品はcomposeNftSerialImageを呼び、その結果をmetadata.imageに使う', async () => {
+    const { product, nftIssue } = await createProductOrderAndIssue(validOverlayConfig, ['https://example.com/base-blank.png']);
+    await claimToProcessing(nftIssue.id);
+
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(nftIssue.id, fakeMintProvider, result, 4821);
+
+    expect(result.issued).toBe(1);
+    expect(composeNftSerialImage).toHaveBeenCalledWith('https://example.com/base-blank.png', 4821, validOverlayConfig);
+    expect(uploadComposedNftSerialImage).toHaveBeenCalledWith(nftIssue.id, Buffer.from('fake-png'));
+    expect(uploadNftMetadata).toHaveBeenCalledWith(
+      nftIssue.id,
+      expect.objectContaining({ image: `https://blob.example.com/nft-images/${nftIssue.id}.png` }),
+    );
+
+    await prisma.nftIssue.deleteMany({ where: { productId: product.id } });
+    await prisma.orderItem.deleteMany({ where: { productId: product.id } });
+    await prisma.order.deleteMany({ where: { id: nftIssue.orderId } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  it('nftSerialOverlayが未設定(null)の商品はcomposeNftSerialImageを呼ばず、従来通りimages[0]をそのまま使う', async () => {
+    const { product, nftIssue } = await createProductOrderAndIssue(null, ['https://example.com/plain-image.png']);
+    await claimToProcessing(nftIssue.id);
+
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(nftIssue.id, fakeMintProvider, result, 12);
+
+    expect(result.issued).toBe(1);
+    expect(composeNftSerialImage).not.toHaveBeenCalled();
+    expect(uploadComposedNftSerialImage).not.toHaveBeenCalled();
+    expect(uploadNftMetadata).toHaveBeenCalledWith(
+      nftIssue.id,
+      expect.objectContaining({ image: 'https://example.com/plain-image.png' }),
+    );
+
+    await prisma.nftIssue.deleteMany({ where: { productId: product.id } });
+    await prisma.orderItem.deleteMany({ where: { productId: product.id } });
+    await prisma.order.deleteMany({ where: { id: nftIssue.orderId } });
+    await prisma.product.delete({ where: { id: product.id } });
+  });
+
+  it('enabled:falseのnftSerialOverlayは設定があってもcomposeNftSerialImageを呼ばない', async () => {
+    const { product, nftIssue } = await createProductOrderAndIssue({ ...validOverlayConfig, enabled: false }, ['https://example.com/disabled.png']);
+    await claimToProcessing(nftIssue.id);
+
+    const result = { claimed: 1, issued: 0, stillProcessing: 0, retrying: 0, failed: 0, skipped: 0 };
+    await submitAndMaybeConfirm(nftIssue.id, fakeMintProvider, result, 99);
+
+    expect(result.issued).toBe(1);
+    expect(composeNftSerialImage).not.toHaveBeenCalled();
+    expect(uploadNftMetadata).toHaveBeenCalledWith(nftIssue.id, expect.objectContaining({ image: 'https://example.com/disabled.png' }));
+
+    await prisma.nftIssue.deleteMany({ where: { productId: product.id } });
+    await prisma.orderItem.deleteMany({ where: { productId: product.id } });
+    await prisma.order.deleteMany({ where: { id: nftIssue.orderId } });
+    await prisma.product.delete({ where: { id: product.id } });
   });
 });

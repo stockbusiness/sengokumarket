@@ -32,6 +32,8 @@ export const REQUIRED_MIGRATIONS = [
   'purchase_agency_provisioning',
   // 仕様書外の拡張(NFT自動発行→運営手動発行への移行): WalletRegistrationLink。
   'wallet_registration_links',
+  // 仕様書外の拡張: NFTシリアル番号の画像焼き込み(Product.nftSerialOverlay)。
+  'nft_serial_overlay',
 ];
 
 // Wallet Claim本番前安定化指示書(2026-07-25)Phase9(11.2「推奨方式」): migration名の部分一致
@@ -54,6 +56,8 @@ const SENTINEL_QUERIES: { label: string; run: () => Promise<unknown> }[] = [
   { label: 'purchase_provisioning_jobs.deduplication_key', run: () => prisma.$queryRaw`SELECT deduplication_key FROM purchase_provisioning_jobs LIMIT 0` },
   // 仕様書外の拡張(NFT自動発行→運営手動発行への移行): WalletRegistrationLink。
   { label: 'wallet_registration_links.token_hash', run: () => prisma.$queryRaw`SELECT token_hash FROM wallet_registration_links LIMIT 0` },
+  // 仕様書外の拡張: NFTシリアル番号の画像焼き込み。
+  { label: 'products.nft_serial_overlay', run: () => prisma.$queryRaw`SELECT nft_serial_overlay FROM products LIMIT 0` },
 ];
 
 export async function checkDatabaseHealth(): Promise<{ ok: boolean; error?: string }> {

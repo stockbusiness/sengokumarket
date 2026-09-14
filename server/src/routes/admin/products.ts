@@ -5,6 +5,8 @@ import { put } from '@vercel/blob';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
 import { AGENCY_ACCESS_MODES, ITEM_TYPES, PRODUCT_STATUSES as STATUSES, SALES_MODELS } from '@sengoku/contracts';
+import { validateNftSerialOverlayConfig } from '../../services/nftSerialOverlay';
+import { composeNftSerialImage } from '../../services/nftSerialImageComposer';
 
 const router = Router();
 
@@ -174,6 +176,7 @@ router.put('/products/:id', async (req, res) => {
     agencyProductCode,
     agencyAccessExpiresDays,
     agencyLoginRedirectPath,
+    nftSerialOverlay,
   } = req.body ?? {};
 
   const existing = await prisma.product.findUnique({ where: { id } });
@@ -190,6 +193,12 @@ router.put('/products/:id', async (req, res) => {
   }
   if (basePrice !== undefined && (!Number.isInteger(basePrice) || basePrice < 0)) {
     return sendError(res, 400, 'VALIDATION_ERROR', '価格は0以上の整数で入力してください');
+  }
+  // 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定。undefinedは既存値を維持、nullは
+  // 解除(以後は従来通りimages[0]をそのまま使う)、それ以外は検証してから保存する。
+  if (nftSerialOverlay !== undefined && nftSerialOverlay !== null) {
+    const validated = validateNftSerialOverlayConfig(nftSerialOverlay);
+    if (!validated.ok) return sendError(res, 400, 'VALIDATION_ERROR', validated.error);
   }
   // PUTは部分更新のため、agencyAccessModeが省略された場合は既存値を基準に検証する
   // (例: 既にagent_portalの商品でagencyRoleだけをnullへ更新しようとする事故を防ぐ)。
@@ -269,6 +278,7 @@ router.put('/products/:id', async (req, res) => {
         agencyProductCode: agencyProductCode === undefined ? undefined : agencyProductCode,
         agencyAccessExpiresDays: agencyAccessExpiresDays === undefined ? undefined : agencyAccessExpiresDays,
         agencyLoginRedirectPath: agencyLoginRedirectPath === undefined ? undefined : agencyLoginRedirectPath,
+        nftSerialOverlay: nftSerialOverlay === undefined ? undefined : nftSerialOverlay,
       },
     });
 
@@ -304,6 +314,30 @@ router.put('/products/:id', async (req, res) => {
 
   const product = await prisma.product.findUnique({ where: { id }, include: { variants: true } });
   res.json({ product });
+});
+
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定を、実際に発行する前に管理画面で
+// プレビューできるようにする。保存前の入力値(config)をそのまま検証して合成するため、
+// まだ保存していない位置・色の調整をその場で確認できる。images[0]をベース画像として使う。
+router.post('/products/:id/nft-serial-preview', async (req, res) => {
+  const product = await prisma.product.findUnique({ where: { id: req.params.id } });
+  if (!product) return sendError(res, 404, 'PRODUCT_NOT_FOUND', '商品が見つかりません');
+
+  const baseImageUrl = product.images[0];
+  if (!baseImageUrl) return sendError(res, 400, 'VALIDATION_ERROR', '商品画像が未設定です');
+
+  const validated = validateNftSerialOverlayConfig(req.body?.config);
+  if (!validated.ok) return sendError(res, 400, 'VALIDATION_ERROR', validated.error);
+
+  const rawSerialNumber = req.body?.serialNumber;
+  const serialNumber = Number.isInteger(rawSerialNumber) && rawSerialNumber > 0 ? rawSerialNumber : 1;
+
+  try {
+    const imageBuffer = await composeNftSerialImage(baseImageUrl, serialNumber, validated.config);
+    res.json({ imageDataUrl: `data:image/png;base64,${imageBuffer.toString('base64')}` });
+  } catch (e) {
+    return sendError(res, 502, 'PREVIEW_FAILED', e instanceof Error ? e.message : 'プレビューの生成に失敗しました');
+  }
 });
 
 // 仕様書外の拡張: 誤って追加したバリエーション(名前の付け間違い等)を削除できるようにする。

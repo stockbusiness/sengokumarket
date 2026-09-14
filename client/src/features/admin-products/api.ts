@@ -32,6 +32,19 @@ export interface AdminProductIntegrationRule {
   collectibleRarity: string | null;
 }
 
+// 仕様書外の拡張: NFTシリアル番号の画像焼き込み設定。有効な場合、発行時にimages[0]
+// (番号欄を空欄にしたベース画像)へシリアル番号を合成した画像を1枚ずつ生成して使う。
+export interface NftSerialOverlayConfig {
+  enabled: boolean;
+  boxXPct: number;
+  boxYPct: number;
+  boxWidthPct: number;
+  boxHeightPct: number;
+  textColor: string;
+  textTemplate: string;
+  serialDigits: number;
+}
+
 export interface AdminProduct {
   id: string;
   name: string;
@@ -52,6 +65,7 @@ export interface AdminProduct {
   agencyProductCode: string | null;
   agencyAccessExpiresDays: number | null;
   agencyLoginRedirectPath: string | null;
+  nftSerialOverlay: NftSerialOverlayConfig | null;
 }
 
 export function fetchAdminProducts() {
@@ -111,6 +125,7 @@ export interface UpdateProductRequest {
   agencyProductCode?: string | null;
   agencyAccessExpiresDays?: number | null;
   agencyLoginRedirectPath?: string | null;
+  nftSerialOverlay?: NftSerialOverlayConfig | null;
 }
 
 export function createAdminProduct(payload: CreateProductRequest) {
@@ -119,6 +134,11 @@ export function createAdminProduct(payload: CreateProductRequest) {
 
 export function updateAdminProduct(id: string, payload: UpdateProductRequest) {
   return adminSend<{ product: AdminProduct }>('PUT', `/products/${id}`, payload);
+}
+
+// 仕様書外の拡張: 保存前の設定値でNFTシリアル番号焼き込みのプレビュー画像を生成する。
+export function previewNftSerialOverlay(productId: string, config: NftSerialOverlayConfig, serialNumber?: number) {
+  return adminSend<{ imageDataUrl: string }>('POST', `/products/${productId}/nft-serial-preview`, { config, serialNumber });
 }
 
 export function deleteAdminProduct(id: string) {
