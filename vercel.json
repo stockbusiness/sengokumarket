@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build --workspace=client && node scripts/deploy-apply-migrations.mjs",
+  "buildCommand": "npm run build --workspace=client && if [ \"$VERCEL_ENV\" = \"production\" ]; then npm run prisma:deploy --workspace=server; else echo \"prisma migrate deployをスキップ(VERCEL_ENV=$VERCEL_ENV、本番ビルドのみ実行)\"; fi",
   "outputDirectory": "client/dist",
   "installCommand": "npm install",
   "regions": ["hnd1"],
