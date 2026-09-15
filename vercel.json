@@ -1,5 +1,5 @@
 {
-  "buildCommand": "npm run build --workspace=client",
+  "buildCommand": "npm run build --workspace=client && node scripts/deploy-apply-migrations.mjs",
   "outputDirectory": "client/dist",
   "installCommand": "npm install",
   "regions": ["hnd1"],
