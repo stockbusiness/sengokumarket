@@ -57,6 +57,25 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
     label: 'OVEウォレット 会員証送信用 HMAC Secret',
     helpText: '上記key_idに対応するsecretです。ウォレット側から安全な方法で共有を受けて入力してください。',
   },
+  {
+    key: 'wallet_claim_web_base_url',
+    label: '千ノ国ウォレット 受取ページURL',
+    helpText:
+      'このシステムのドメインではなく、千ノ国ウォレット側の受取ページのURLです(購入完了メール・マイページの受取リンクに使われます)。先方から共有を受けて入力してください。',
+  },
+  {
+    key: 'wallet_claim_inbound_key_id',
+    label: '千ノ国ウォレットからの受取確認API用 Key ID(こちらで発行)',
+    helpText:
+      'このKey ID・Secretはこちらで発行し、千ノ国ウォレット側に安全な方法で共有する値です(受取確認APIの呼び出し元を認証するために使います)。下のボタンで生成できます。',
+    generatable: true,
+  },
+  {
+    key: 'wallet_claim_inbound_hmac_secret',
+    label: '千ノ国ウォレットからの受取確認API用 HMAC Secret(こちらで発行)',
+    helpText: '上記Key IDに対応するSecretです。下のボタンで生成できます。',
+    generatable: true,
+  },
 ];
 
 function generateApiKey(): string {
