@@ -187,14 +187,14 @@ describe('integrationOutboxDispatcher: digital_collectible専用送信', () => {
     expect(options.headers['X-Event-Version']).toBeTruthy();
 
     const sentBody = JSON.parse(options.body);
-    // SENNOKUNI_COMMERCE_REQUEST.md: 業務項目はdata・metadataへ格納し、ウォレットが受け付ける
-    // entitlement_type(MEMBERSHIP_PASS)はmetadata配下にのみ置く(dataは内部値digital_collectibleの
-    // ままでよい)。
+    // SENNOKUNI_COMMERCE_QUESTIONS.md回答: 業務項目はdata・metadataへ格納し、ウォレットが受け付ける
+    // entitlement_type(membership_pass、小文字固定)はmetadata配下にのみ置く(dataは内部値
+    // digital_collectibleのままでよい)。
     expect(sentBody.data.entitlement_id).toBe(delivery.nftIssueId);
     expect(sentBody.data.nft_issue_id).toBe(delivery.nftIssueId);
     expect(sentBody.data.quantity).toBe(1);
     expect(sentBody.metadata.asset_code).toBe('SGK-CARD-001');
-    expect(sentBody.metadata.entitlement_type).toBe('MEMBERSHIP_PASS');
+    expect(sentBody.metadata.entitlement_type).toBe('membership_pass');
     expect(sentBody.reason_code).toBeUndefined();
     expect(sentBody.data.entitlement_id).toBe(delivery.nftIssueId);
 

@@ -616,12 +616,12 @@ async function sendOutboxEvent(event: IntegrationOutboxEvent, stage: SennokuniIn
 // (X-SenNoKuni-*)署名方式を使うが、宛先path・認証鍵はove_wallet_events_*専用のものを使う。
 const OVE_WALLET_EVENTS_PATH = '/api/integrations/events';
 
-// 千ノ国ウォレット側のCommon Event API契約(SENNOKUNI_COMMERCE_REQUEST.md)がこのシステムからの
-// entitlement_typeとして受け付ける唯一の値。内部のDB値・ルーティングキー(digital_collectible)は
-// このシステム独自の識別子として変更せず、ウォレットへ送るペイロード(metadata.entitlement_type)
-// だけをこの値に変換する(DIGITAL_COLLECTIBLEは別システム(NFT作品マーケット)専用のためウォレット
-// 側で400拒否される)。
-const OVE_WALLET_MEMBERSHIP_PASS_ENTITLEMENT_TYPE = 'MEMBERSHIP_PASS';
+// 千ノ国ウォレット側のCommon Event API契約(SENNOKUNI_COMMERCE_QUESTIONS.md回答)がこのシステムからの
+// entitlement_typeとして受け付ける唯一の値(小文字固定)。内部のDB値・ルーティングキー
+// (digital_collectible)はこのシステム独自の識別子として変更せず、ウォレットへ送るペイロード
+// (metadata.entitlement_type)だけをこの値に変換する(digital_collectibleは別システム(NFT作品
+// マーケット)専用のためウォレット側で400拒否される)。
+const OVE_WALLET_MEMBERSHIP_PASS_ENTITLEMENT_TYPE = 'membership_pass';
 
 // ウォレット側で取消の表示文言を持つreason_code。現状entitlement.revokedは全額返金時のみ
 // enqueueされるため('戦国マーケット NFTカード受取・送付 実装指示書'11章)、固定値でよい。

@@ -35,7 +35,7 @@
     "rarity": "rare"
   },
   "metadata": {
-    "entitlement_type": "MEMBERSHIP_PASS",
+    "entitlement_type": "membership_pass",
     "asset_code": "SGK-CARD-001",
     "name": "千ノ国評議員 デジタル会員証",
     "description": "戦国楽市楽座 評議員向けデジタル会員証カード",
