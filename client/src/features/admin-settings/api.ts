@@ -20,6 +20,11 @@ export interface AdminSettings {
   ove_wallet_base_url: AdminSettingInfo;
   ove_wallet_events_key_id: AdminSettingInfo;
   ove_wallet_events_hmac_secret: AdminSettingInfo;
+  // 同指示書6・8章: 千ノ国ウォレット側の受取ページURL、および千ノ国ウォレット側からの
+  // Claim確認APIリクエストを認証するための専用鍵(ove_wallet_events_*とは別物)。
+  wallet_claim_web_base_url: AdminSettingInfo;
+  wallet_claim_inbound_key_id: AdminSettingInfo;
+  wallet_claim_inbound_hmac_secret: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {
