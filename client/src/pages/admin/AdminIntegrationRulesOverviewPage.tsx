@@ -18,7 +18,7 @@ export default function AdminIntegrationRulesOverviewPage() {
   return (
     <div>
       <h1>商品連携ルール一覧(代理店システム連携)</h1>
-      <p>各商品に設定されている外部連携先(戦国パスポート・OVEウォレット・AIアート教室)へのルーティング設定の一覧です。</p>
+      <p>各商品に設定されている外部連携先(戦国パスポート・千ノ国ウォレット・AIアート教室)へのルーティング設定の一覧です。</p>
 
       {rules.length === 0 ? (
         <div className="admin-table-card">
@@ -32,7 +32,7 @@ export default function AdminIntegrationRulesOverviewPage() {
                 <th>商品</th>
                 <th>送信先</th>
                 <th>権利種別</th>
-                <th>OVEポイント</th>
+                <th>ORIポイント</th>
                 <th>返金時取消</th>
                 <th>有効</th>
                 <th>操作</th>
