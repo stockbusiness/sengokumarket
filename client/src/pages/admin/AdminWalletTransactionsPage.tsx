@@ -26,8 +26,8 @@ export default function AdminWalletTransactionsPage() {
 
   return (
     <div>
-      <h1>OVEウォレット取引履歴</h1>
-      <p>OVEウォレットへのポイント付与(grant)・取消(reversal)の成功記録です。編集・削除はできません。</p>
+      <h1>千ノ国ウォレット取引履歴</h1>
+      <p>千ノ国ウォレットへのORIポイント付与(grant)・取消(reversal)の成功記録です。編集・削除はできません。</p>
 
       <label>
         注文IDで絞り込み

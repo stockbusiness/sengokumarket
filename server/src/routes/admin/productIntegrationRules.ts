@@ -44,7 +44,7 @@ function validateRuleInput(body: RuleInput): string | null {
   }
   if (body.rewardCalculationMode !== undefined && body.rewardCalculationMode !== null) {
     if (!(REWARD_CALCULATION_MODES as readonly string[]).includes(body.rewardCalculationMode)) {
-      return 'OVEポイント計算方式が不正です';
+      return 'ORIポイント計算方式が不正です';
     }
   }
   if (body.rewardAmountPerUnit !== undefined && body.rewardAmountPerUnit !== null) {
