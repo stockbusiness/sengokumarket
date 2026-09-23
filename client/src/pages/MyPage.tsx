@@ -2,27 +2,15 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
-  fetchMyNftIssues,
   fetchMyNotices,
   fetchMyOrders,
-  fetchMyWallet,
   markMyNoticeRead,
   reissueAgencyPortalAccessUrl,
   reissueWalletClaimUrl,
   submitAgencyApplication,
-  type MyNftIssue,
   type MyNotice,
   type MyOrder,
 } from '../lib/api';
-
-const NFT_STATUS_LABEL: Record<string, string> = {
-  wallet_required: 'ウォレット未登録',
-  ready_to_issue: '発行準備中',
-  processing: '発行手続き中',
-  issued: '発行済み',
-  failed: '発行エラー',
-  cancelled: 'キャンセル済み',
-};
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)7章「マイページ状態」。
 const WALLET_CLAIM_STATUS_LABEL: Record<string, string> = {
@@ -49,9 +37,7 @@ const AGENCY_PORTAL_STATUS_LABEL: Record<string, string> = {
 export default function MyPage() {
   const { user, refresh } = useAuth();
   const [orders, setOrders] = useState<MyOrder[]>([]);
-  const [nftIssues, setNftIssues] = useState<MyNftIssue[]>([]);
   const [notices, setNotices] = useState<MyNotice[]>([]);
-  const [hasWallet, setHasWallet] = useState<boolean | null>(null);
   const [applying, setApplying] = useState(false);
   const [applicationError, setApplicationError] = useState<string | null>(null);
   const [claimUrlByOrderId, setClaimUrlByOrderId] = useState<Record<string, string>>({});
@@ -62,13 +48,11 @@ export default function MyPage() {
 
   useEffect(() => {
     fetchMyOrders().then((d) => setOrders(d.orders));
-    fetchMyNftIssues().then((d) => setNftIssues(d.nftIssues));
     fetchMyNotices().then((d) => {
       setNotices(d.notices);
       // 表示した時点で既読化する(次回訪問時から「NEW」表示が外れる)
       d.notices.filter((n) => !n.read).forEach((n) => markMyNoticeRead(n.id).catch(() => {}));
     });
-    fetchMyWallet().then((d) => setHasWallet(d.wallet !== null));
   }, []);
 
   async function handleReceiveClick(orderId: string) {
@@ -115,37 +99,6 @@ export default function MyPage() {
           {user.name}さん({user.email}) <Link to="/mypage/profile">登録情報を編集する</Link>
         </p>
       )}
-
-      {hasWallet === false && (
-        <div className="mypage-banner">
-          <p>受取用ウォレットが未登録です。デジタル会員証を受け取るには登録が必要です。</p>
-          <Link to="/mypage/wallet">ウォレットを登録する</Link>
-        </div>
-      )}
-
-      <section>
-        <h2>デジタル会員証の発行状況</h2>
-        {nftIssues.length === 0 && <p>対象のデジタル会員証はありません。</p>}
-        <ul className="nft-status-list">
-          {nftIssues.map((issue) => (
-            <li key={issue.id} className={`nft-status-card nft-status-card--${issue.status}`}>
-              <div className="nft-status-card__name">
-                {issue.productName} {issue.variantName}
-              </div>
-              <div className="nft-status-card__status">{NFT_STATUS_LABEL[issue.status] ?? issue.status}</div>
-              {issue.status === 'issued' && issue.tokenId && (
-                <div className="nft-status-card__meta">token ID: {issue.tokenId}</div>
-              )}
-              {issue.status === 'failed' && <div className="nft-status-card__meta">サポートまでお問い合わせください</div>}
-              {issue.status === 'wallet_required' && (
-                <div className="nft-status-card__meta">
-                  <Link to="/mypage/wallet">ウォレットを登録する</Link>
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
 
       <section>
         <h2>購入履歴</h2>
