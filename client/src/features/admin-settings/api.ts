@@ -25,6 +25,11 @@ export interface AdminSettings {
   wallet_claim_web_base_url: AdminSettingInfo;
   wallet_claim_inbound_key_id: AdminSettingInfo;
   wallet_claim_inbound_hmac_secret: AdminSettingInfo;
+  // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT・2026-07-22指示書対応):
+  // 代理店HUB(common_user resolve・referral capture/confirm)向けの接続先・認証情報。
+  sennokuni_agency_hub_base_url: AdminSettingInfo;
+  sennokuni_hmac_key_id: AdminSettingInfo;
+  sennokuni_hmac_secret: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {
