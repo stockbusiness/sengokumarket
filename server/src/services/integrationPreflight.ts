@@ -69,6 +69,19 @@ async function getUsedDestinations(): Promise<string[]> {
   return rules.map((r) => r.entitlementTargetSystemKey!).filter((v): v is string => Boolean(v));
 }
 
+// ove-walletは2つの別契約(reward付与/取消のX-OVE-*方式・digital_collectible専用の共通契約
+// 方式)を持つため、送信先として使われているというだけで一律にreward側の鍵(ove_wallet_api_key_id
+// /ove_wallet_hmac_secret)を必須にすると、digital_collectibleしか使わない場合でも使わない鍵が
+// 必須扱いになってしまう(11.2「使用する送信先だけ必須とする」の趣旨に反する)。実際に有効な
+// reward向けルール(entitlementType!=='digital_collectible')があるかどうかで分ける。
+async function isOveWalletRewardInUse(): Promise<boolean> {
+  const rules = await prisma.productIntegrationRule.findMany({
+    where: { enabled: true, entitlementTargetSystemKey: 'ove-wallet' },
+    select: { entitlementType: true },
+  });
+  return rules.some((r) => r.entitlementType !== DIGITAL_COLLECTIBLE_ENTITLEMENT_TYPE);
+}
+
 function isValidUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
@@ -125,12 +138,12 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
       await checkSetting('integration_endpoint_path_ai_art_school', 'path'),
     );
   }
+  const oveWalletRewardInUse = usedDestinations.includes('ove-wallet') && (await isOveWalletRewardInUse());
   if (usedDestinations.includes('ove-wallet')) {
-    settingChecks.push(
-      await checkSetting('ove_wallet_base_url', 'url'),
-      await checkSetting('ove_wallet_api_key_id', 'secret'),
-      await checkSetting('ove_wallet_hmac_secret', 'secret'),
-    );
+    settingChecks.push(await checkSetting('ove_wallet_base_url', 'url'));
+    if (oveWalletRewardInUse) {
+      settingChecks.push(await checkSetting('ove_wallet_api_key_id', 'secret'), await checkSetting('ove_wallet_hmac_secret', 'secret'));
+    }
   }
 
   // 11.2「HMAC test vector」: 正式な相互テストベクトルは統合責任者確定前のため(sennokuniHmac.ts
@@ -148,7 +161,7 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
           : null,
     },
   ];
-  if (usedDestinations.includes('ove-wallet')) {
+  if (oveWalletRewardInUse) {
     const oveSecret = await getSetting('ove_wallet_hmac_secret');
     hmacSelfTests.push({
       target: 'ove-wallet',

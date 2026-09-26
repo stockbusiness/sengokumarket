@@ -140,6 +140,42 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
     expect(oveTest!.passed).toBe(true);
   });
 
+  // 戦国マーケット NFTカード受取・送付 実装指示書対応: ove-walletはreward付与(X-OVE-*方式)と
+  // digital_collectible専用送信(共通契約方式)の2契約を持つため、digital_collectibleしか
+  // 使っていない場合はreward向けの鍵(ove_wallet_api_key_id/ove_wallet_hmac_secret)を
+  // 必須にしてはならない(11.2「使用する送信先だけ必須とする」の趣旨)。
+  it('ove-walletがdigital_collectibleのみで使われている場合、reward向けの鍵は必須にならない', async () => {
+    const product = await createProduct('ove-digital-collectible-only');
+    createdProductIds.push(product.id);
+    await prisma.productIntegrationRule.create({
+      data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+    });
+
+    const report = await buildIntegrationPreflightReport();
+    expect(report.missingSettings).not.toContain('ove_wallet_api_key_id');
+    expect(report.missingSettings).not.toContain('ove_wallet_hmac_secret');
+    // ove_wallet_base_urlは両契約共通のため引き続き必須。
+    expect(report.missingSettings).toContain('ove_wallet_base_url');
+    expect(report.hmacSelfTests.find((t) => t.target === 'ove-wallet')).toBeUndefined();
+  });
+
+  it('ove-walletでdigital_collectibleとreward向けルールが両方有効な場合はreward向けの鍵も必須になる', async () => {
+    const product = await createProduct('ove-both');
+    createdProductIds.push(product.id);
+    await prisma.productIntegrationRule.create({
+      data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', enabled: true },
+    });
+    const product2 = await createProduct('ove-both-reward');
+    createdProductIds.push(product2.id);
+    await prisma.productIntegrationRule.create({
+      data: { productId: product2.id, entitlementTargetSystemKey: 'ove-wallet', enabled: true },
+    });
+
+    const report = await buildIntegrationPreflightReport();
+    expect(report.missingSettings).toContain('ove_wallet_api_key_id');
+    expect(report.missingSettings).toContain('ove_wallet_hmac_secret');
+  });
+
   it('接続テスト: 到達できれば ok:true、例外時はok:falseになる', async () => {
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 200 }));
