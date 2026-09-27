@@ -206,6 +206,19 @@ describe('GET/POST /api/collectible-claims (HMAC認証)', () => {
     expect(res2.body.error.code).toBe('NONCE_REUSED');
   });
 
+  // 千ノ国ウォレット側の実装はIdempotency-Keyヘッダーを送信しない(canonical stringにも
+  // 含まれない: sennokuniHmac.ts参照)。このヘッダーが無くても認証を通すことを確認する。
+  it('Idempotency-Keyヘッダーが無くても認証は通る', async () => {
+    const path = '/api/collectible-claims/some-token';
+    const timestamp = String(Math.floor(Date.now() / 1000));
+    const nonce = crypto.randomBytes(8).toString('hex');
+    const headers = buildSennokuniHeaders({ keyId: KEY_ID, secret: SECRET, timestamp, nonce, method: 'GET', path, rawBody: '' });
+    expect(headers['Idempotency-Key']).toBeUndefined();
+
+    const res = await request(app).get(path).set(headers);
+    expect(res.status).toBe(404); // 認証は通るがトークン自体は存在しない
+  });
+
   it('正しい署名でGET状態確認・POST確認(common_user_id一致)が成功する(quantity=1のDelivery/Outboxが作成される)', async () => {
     const token = 'wc-route-happy-path-token';
     const { order, product } = await createEligibleOrderWithClaim('happy', token);
