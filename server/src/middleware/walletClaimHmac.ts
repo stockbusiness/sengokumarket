@@ -55,9 +55,13 @@ export async function requireWalletClaimHmac(req: Request, res: Response, next: 
   const timestamp = req.header('x-sennokuni-timestamp');
   const nonce = req.header('x-sennokuni-nonce');
   const signature = req.header('x-sennokuni-signature');
+  // 千ノ国 共通仕様確定パッケージv1.1のcanonical stringにIdempotency-Keyは含まれず
+  // (sennokuniHmac.ts参照)、この受取確認APIの呼び出し元(千ノ国ウォレット)の実装も
+  // このヘッダーを送信しない。署名検証にも業務ロジックにも使わないため、送られてきた
+  // 場合のみ長さを検証し、必須ヘッダーには含めない。
   const idempotencyKey = req.header('idempotency-key');
 
-  if (!keyId || !timestamp || !nonce || !signature || !idempotencyKey) {
+  if (!keyId || !timestamp || !nonce || !signature) {
     return sendIntegrationError(res, 401, 'AUTH_HEADERS_REQUIRED', 'HMAC認証に必要なヘッダーが不足しています');
   }
 
@@ -67,7 +71,7 @@ export async function requireWalletClaimHmac(req: Request, res: Response, next: 
     timestamp.length > MAX_LENGTHS.timestamp ||
     nonce.length > MAX_LENGTHS.nonce ||
     signature.length > MAX_LENGTHS.signature ||
-    idempotencyKey.length > MAX_LENGTHS.idempotencyKey ||
+    (idempotencyKey && idempotencyKey.length > MAX_LENGTHS.idempotencyKey) ||
     claimTokenSegment.length > MAX_LENGTHS.claimToken
   ) {
     return sendIntegrationError(res, 400, 'HEADER_TOO_LONG', 'ヘッダーまたはパスの長さが上限を超えています');
