@@ -103,7 +103,7 @@ async function cleanupOrder(orderId: string, productId: string) {
   await prisma.product.deleteMany({ where: { id: productId } });
 }
 
-describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
+describe('GET/POST /api/collectible-claims (HMAC認証)', () => {
   const originalFlag = process.env.ENABLE_WALLET_CLAIM;
 
   beforeAll(async () => {
@@ -127,20 +127,20 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
 
   it('ENABLE_WALLET_CLAIM=falseの間は認証情報があっても503を返す', async () => {
     delete process.env.ENABLE_WALLET_CLAIM;
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
     const res = await request(app).get(path).set(headers);
     expect(res.status).toBe(503);
   });
 
   it('認証ヘッダーが不足している場合401', async () => {
-    const res = await request(app).get('/api/integrations/wallet-claims/some-token');
+    const res = await request(app).get('/api/collectible-claims/some-token');
     expect(res.status).toBe(401);
     expect(res.body.ok).toBe(false);
   });
 
   it('署名が不正な場合401', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
     headers['X-SenNoKuni-Signature'] = 'a'.repeat(64);
     const res = await request(app).get(path).set(headers);
@@ -152,7 +152,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
   // INSERTしない。無効署名のリクエストでnonce行が消費されないため、同じnonceを正しい署名で
   // 再利用できることを確認する。
   it('無効な署名のリクエストはnonceを消費しない(同じnonceを正しい署名で再利用できる)', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const nonce = crypto.randomBytes(8).toString('hex');
     const invalidHeaders = signedHeaders({ method: 'GET', path, rawBody: '', nonce });
     invalidHeaders['X-SenNoKuni-Signature'] = 'a'.repeat(64);
@@ -166,7 +166,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
   });
 
   it('ヘッダーが上限長を超える場合400', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
     headers['X-SenNoKuni-Key-Id'] = 'k'.repeat(200);
     const res = await request(app).get(path).set(headers);
@@ -175,7 +175,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
   });
 
   it('DB障害(P2002以外のエラー)はnonce再利用と誤判定せず500として伝播する', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
 
     const spy = vi.spyOn(prisma.walletClaimApiNonce, 'create').mockRejectedValueOnce(new Error('connection refused'));
@@ -185,7 +185,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
   });
 
   it('timestampが許容範囲外の場合401', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const oldTimestamp = String(Math.floor(Date.now() / 1000) - 60 * 60);
     const headers = signedHeaders({ method: 'GET', path, rawBody: '', timestamp: oldTimestamp });
     const res = await request(app).get(path).set(headers);
@@ -194,7 +194,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
   });
 
   it('同じnonceを2回使うと2回目は401(リプレイ拒否)', async () => {
-    const path = '/api/integrations/wallet-claims/some-token';
+    const path = '/api/collectible-claims/some-token';
     const nonce = crypto.randomBytes(8).toString('hex');
     const headers1 = signedHeaders({ method: 'GET', path, rawBody: '', nonce });
     const res1 = await request(app).get(path).set(headers1);
@@ -210,13 +210,13 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
     const token = 'wc-route-happy-path-token';
     const { order, product } = await createEligibleOrderWithClaim('happy', token);
 
-    const statusPath = `/api/integrations/wallet-claims/${token}`;
+    const statusPath = `/api/collectible-claims/${token}`;
     const statusHeaders = signedHeaders({ method: 'GET', path: statusPath, rawBody: '' });
     const statusRes = await request(app).get(statusPath).set(statusHeaders);
     expect(statusRes.status).toBe(200);
     expect(statusRes.body.status).toBe('PENDING');
 
-    const confirmPath = `/api/integrations/wallet-claims/${token}/confirm`;
+    const confirmPath = `/api/collectible-claims/${token}/confirm`;
     const body = JSON.stringify({ ove_account_id: 'ove-acc-1', common_user_id: 'cu_test_00000001' });
     const confirmHeaders = signedHeaders({ method: 'POST', path: confirmPath, rawBody: body });
     const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
@@ -234,7 +234,7 @@ describe('GET/POST /api/integrations/wallet-claims (HMAC認証)', () => {
     const token = 'wc-route-mismatch-token';
     const { order, product } = await createEligibleOrderWithClaim('mismatch', token);
 
-    const confirmPath = `/api/integrations/wallet-claims/${token}/confirm`;
+    const confirmPath = `/api/collectible-claims/${token}/confirm`;
     const body = JSON.stringify({ ove_account_id: 'ove-acc-1', common_user_id: 'cu_someone_else' });
     const confirmHeaders = signedHeaders({ method: 'POST', path: confirmPath, rawBody: body });
     const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
@@ -355,7 +355,7 @@ describe('dry_run結合テスト: Claim確認 → NftIssue単位Outbox → dry_r
       })),
     });
 
-    const confirmPath = `/api/integrations/wallet-claims/${token}/confirm`;
+    const confirmPath = `/api/collectible-claims/${token}/confirm`;
     const body = JSON.stringify({ ove_account_id: 'ove-acc-dryrun', common_user_id: 'cu_test_00000001' });
     const confirmHeaders = signedHeaders({ method: 'POST', path: confirmPath, rawBody: body });
     const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);

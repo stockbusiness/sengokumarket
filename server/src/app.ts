@@ -74,7 +74,7 @@ export function createApp(): Express {
     },
   });
   app.use(
-    '/api/integrations/wallet-claims',
+    '/api/collectible-claims',
     express.raw({ type: 'application/json' }),
     walletClaimIpLimiter,
     requireWalletClaimHmac,
