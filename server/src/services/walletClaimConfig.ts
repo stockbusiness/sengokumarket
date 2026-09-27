@@ -23,7 +23,7 @@ export interface WalletClaimInboundCredentials {
   secret: string;
 }
 
-// Claim確認API(GET/POST /api/integrations/wallet-claims/...)を呼び出す千ノ国ウォレット側の
+// Claim確認API(GET/POST /api/collectible-claims/...)を呼び出す千ノ国ウォレット側の
 // 専用system key。既存のsennokuni_hmac_key_id(代理店HUB向け)・ove_wallet_api_key_id
 // (reward付与/取消向け、X-OVE-*方式)のいずれとも異なる、この用途専用の鍵。
 export async function getWalletClaimInboundCredentials(): Promise<WalletClaimInboundCredentials | null> {

@@ -7,7 +7,7 @@ import { buildSennokuniSigningString, signSennokuniRequest } from '../lib/sennok
 import { getWalletClaimInboundCredentials, isWalletClaimEnabled } from '../services/walletClaimConfig';
 
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)8章: 千ノ国ウォレットから
-// サーバー間で呼ばれるClaim確認API(/api/integrations/wallet-claims/...)専用のHMAC認証。
+// サーバー間で呼ばれるClaim確認API(/api/collectible-claims/...)専用のHMAC認証。
 // 署名対象の組み立ては既存のsennokuniHmac.ts(共通契約 X-SenNoKuni-*方式)をそのまま流用するが、
 // 検証に使う鍵(wallet_claim_inbound_*)は代理店HUB向け(sennokuni_hmac_*)・OVE reward向け
 // (ove_wallet_*)のいずれとも別の専用system keyとする(用途混同による誤送信・不正な権限昇格を防ぐ)。

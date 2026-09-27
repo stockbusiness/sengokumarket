@@ -10,7 +10,7 @@ export interface WalletClaimStatusResult {
   expiresAt: Date;
 }
 
-// GET /api/integrations/wallet-claims/{token}: 千ノ国ウォレット側がConfirm前に状態を確認するための
+// GET /api/collectible-claims/{token}: 千ノ国ウォレット側がConfirm前に状態を確認するための
 // 読み取り専用API。注文の個人情報(氏名・メール等)は一切含めない。
 export async function getWalletClaimStatus(token: string): Promise<WalletClaimStatusResult | null> {
   const tokenHash = hashClaimToken(token);

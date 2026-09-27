@@ -11,7 +11,7 @@ const router = Router();
 
 router.get('/:token', async (req, res) => {
   const result = await getWalletClaimStatus(req.params.token);
-  if (!result) return sendIntegrationError(res, 404, 'CLAIM_NOT_FOUND', '指定されたClaimが見つかりません');
+  if (!result) return sendIntegrationError(res, 404, 'CLAIM_TOKEN_INVALID', '指定されたClaimが見つかりません');
   res.json({ ok: true, status: result.status, expires_at: result.expiresAt.toISOString() });
 });
 
@@ -35,7 +35,7 @@ router.post('/:token/confirm', async (req, res) => {
 
   switch (outcome.kind) {
     case 'not_found':
-      return sendIntegrationError(res, 404, 'CLAIM_NOT_FOUND', '指定されたClaimが見つかりません');
+      return sendIntegrationError(res, 404, 'CLAIM_TOKEN_INVALID', '指定されたClaimが見つかりません');
     case 'expired':
       return sendIntegrationError(res, 410, 'CLAIM_EXPIRED', 'Claimの有効期限が切れています');
     case 'revoked':
