@@ -90,6 +90,7 @@ export default function AdminOrdersPage() {
             <thead>
               <tr>
                 <th>注文番号</th>
+                <th>注文日時</th>
                 <th>購入者</th>
                 <th>金額</th>
                 <th>決済方法</th>
@@ -107,6 +108,7 @@ export default function AdminOrdersPage() {
               {orders.map((o) => (
                 <tr key={o.id}>
                   <td>{o.orderNumber}</td>
+                  <td>{new Date(o.createdAt).toLocaleString('ja-JP')}</td>
                   <td>
                     {o.customerName}
                     <br />
