@@ -253,6 +253,24 @@ describe('GET/POST /api/collectible-claims (HMAC認証)', () => {
     await cleanupOrder(order.id, product.id);
   });
 
+  // GETだけでなくPOST確認(/confirm)でも同じミドルウェア(requireWalletClaimHmac)が
+  // 適用されているため、sha256=接頭辞を認証できることを確認する(千ノ国ウォレット側からの
+  // 確認依頼: 状態照会のみのテストでは検出できない不整合のため)。
+  it('POST確認でも署名ヘッダーにsha256=接頭辞が付いていて認証が通る', async () => {
+    const token = 'wc-route-confirm-prefix-token';
+    const { order, product } = await createEligibleOrderWithClaim('confirm-prefix', token);
+
+    const confirmPath = `/api/collectible-claims/${token}/confirm`;
+    const body = JSON.stringify({ ove_account_id: 'ove-acc-1', common_user_id: 'cu_test_00000001' });
+    const confirmHeaders = signedHeaders({ method: 'POST', path: confirmPath, rawBody: body });
+    confirmHeaders['X-SenNoKuni-Signature'] = `sha256=${confirmHeaders['X-SenNoKuni-Signature']}`;
+    const confirmRes = await request(app).post(confirmPath).set(confirmHeaders).set('Content-Type', 'application/json').send(body);
+    expect(confirmRes.status).toBe(200);
+    expect(confirmRes.body.status).toBe('DELIVERY_PENDING');
+
+    await cleanupOrder(order.id, product.id);
+  });
+
   it('common_user_idが不一致の場合409を返す', async () => {
     const token = 'wc-route-mismatch-token';
     const { order, product } = await createEligibleOrderWithClaim('mismatch', token);
