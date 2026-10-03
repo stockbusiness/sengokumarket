@@ -112,6 +112,24 @@ export async function requireWalletClaimHmac(req: Request, res: Response, next: 
   });
 
   if (!timingSafeEqualStrings(signature, expectedSignature)) {
+    // 千ノ国ウォレット側との署名不一致の切り分け用(2026-10)。秘密鍵(secret)は出力しない。
+    // 受信ヘッダー・組み立てたcanonical string・期待する署名をログに残し、Vercelの
+    // Logsタブから先方の送信内容と突き合わせられるようにする。
+    console.error('wallet-claim HMAC signature mismatch', {
+      method: req.method,
+      path,
+      receivedHeaders: {
+        'x-sennokuni-key-id': keyId,
+        'x-sennokuni-timestamp': timestamp,
+        'x-sennokuni-nonce': nonce,
+        'x-sennokuni-signature': signature,
+        'idempotency-key': idempotencyKey ?? null,
+        'content-type': req.header('content-type') ?? null,
+      },
+      rawBody: JSON.stringify(rawBody),
+      canonicalString: JSON.stringify(buildSennokuniSigningString({ keyId, timestamp, nonce, method: req.method, path, rawBody })),
+      expectedSignature,
+    });
     return sendIntegrationError(res, 401, 'INVALID_SIGNATURE', '署名が正しくありません');
   }
 
