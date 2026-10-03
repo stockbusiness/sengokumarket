@@ -54,7 +54,13 @@ export async function requireWalletClaimHmac(req: Request, res: Response, next: 
   const keyId = req.header('x-sennokuni-key-id');
   const timestamp = req.header('x-sennokuni-timestamp');
   const nonce = req.header('x-sennokuni-nonce');
-  const signature = req.header('x-sennokuni-signature');
+  // 千ノ国 共通仕様確定パッケージv1.1では署名値に"sha256="接頭辞を付けて送る(千ノ国ウォレット
+  // 側の実装もこの通り)。signSennokuniRequest()は接頭辞なしの生hexを返すため、比較前に
+  // 接頭辞があれば取り除く(無ければそのまま)。これが無いと、hex部分が完全に一致していても
+  // 文字列長の違いでINVALID_SIGNATUREになってしまう(2026-10に発覚)。
+  const rawSignatureHeader = req.header('x-sennokuni-signature');
+  const signature =
+    rawSignatureHeader && rawSignatureHeader.startsWith('sha256=') ? rawSignatureHeader.slice('sha256='.length) : rawSignatureHeader;
   // 千ノ国 共通仕様確定パッケージv1.1のcanonical stringにIdempotency-Keyは含まれず
   // (sennokuniHmac.ts参照)、この受取確認APIの呼び出し元(千ノ国ウォレット)の実装も
   // このヘッダーを送信しない。署名検証にも業務ロジックにも使わないため、送られてきた
@@ -122,7 +128,7 @@ export async function requireWalletClaimHmac(req: Request, res: Response, next: 
         'x-sennokuni-key-id': keyId,
         'x-sennokuni-timestamp': timestamp,
         'x-sennokuni-nonce': nonce,
-        'x-sennokuni-signature': signature,
+        'x-sennokuni-signature': rawSignatureHeader,
         'idempotency-key': idempotencyKey ?? null,
         'content-type': req.header('content-type') ?? null,
       },

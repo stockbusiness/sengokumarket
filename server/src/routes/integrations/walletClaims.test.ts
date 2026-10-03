@@ -148,6 +148,16 @@ describe('GET/POST /api/collectible-claims (HMAC認証)', () => {
     expect(res.body.error.code).toBe('INVALID_SIGNATURE');
   });
 
+  // 千ノ国ウォレット側の実装は署名値に"sha256="接頭辞を付けて送る(2026-10の実機テストで判明)。
+  // 接頭辞の有無どちらでも認証を通すことを確認する。
+  it('署名ヘッダーにsha256=接頭辞が付いていても認証は通る', async () => {
+    const path = '/api/collectible-claims/some-token';
+    const headers = signedHeaders({ method: 'GET', path, rawBody: '' });
+    headers['X-SenNoKuni-Signature'] = `sha256=${headers['X-SenNoKuni-Signature']}`;
+    const res = await request(app).get(path).set(headers);
+    expect(res.status).toBe(404); // 認証は通るがトークン自体は存在しない
+  });
+
   // Wallet Claim本番前安定化指示書(2026-07-25)Phase2「必須処理順序」: 署名検証より前にnonceを
   // INSERTしない。無効署名のリクエストでnonce行が消費されないため、同じnonceを正しい署名で
   // 再利用できることを確認する。
