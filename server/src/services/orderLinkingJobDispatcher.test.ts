@@ -633,7 +633,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     await prisma.$transaction((tx) => enqueueCommonUserResolveJob(tx, { userId: user.id, orderId: order.id }));
 
     const fetchMock = vi.fn().mockImplementation((url: string) => {
-      if (url.endsWith('/api/common-users/resolve')) {
+      if (url.endsWith('/api/common-users/resolve/')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ common_user_id: `cu_${emailSuffix}_priority` }) });
       }
       return Promise.resolve({

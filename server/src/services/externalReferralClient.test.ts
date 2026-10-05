@@ -67,7 +67,7 @@ describe('externalReferralClient(代理店HUB referral capture/confirm)', () => 
         expiresAt: null,
       });
       const [url, options] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://sengoku-ai.com/api/referrals/capture');
+      expect(url).toBe('https://sengoku-ai.com/api/referrals/capture/');
       expect(options.headers['x-api-key']).toBe('api-key-abc');
       expect(JSON.parse(options.body)).toMatchObject({ system_key: 'sengoku-rr', referral_token: 'SGI0001' });
     });
@@ -142,7 +142,7 @@ describe('externalReferralClient(代理店HUB referral capture/confirm)', () => 
         closingAgentId: 'AGENT-CODE-004',
       });
       const [url, options] = fetchMock.mock.calls[0];
-      expect(url).toBe('https://sengoku-ai.com/api/referrals/confirm');
+      expect(url).toBe('https://sengoku-ai.com/api/referrals/confirm/');
       expect(options.headers['x-api-key']).toBe('api-key-abc');
       expect(JSON.parse(options.body)).toMatchObject({
         system_key: 'sengoku-rr',
