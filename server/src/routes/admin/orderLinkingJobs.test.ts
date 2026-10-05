@@ -142,7 +142,7 @@ describe('管理API: order-linking-jobs手動再送・skip(本番安定化指示
     vi.unstubAllGlobals();
     process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
     await prisma.setting.deleteMany({
-      where: { key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url'] } },
+      where: { key: { in: ['sennokuni_agency_hub_api_key', 'sennokuni_agency_hub_base_url'] } },
     });
   });
 
@@ -167,8 +167,7 @@ describe('管理API: order-linking-jobs手動再送・skip(本番安定化指示
 
   it('Feature Flag有効時、dead状態のジョブを再送でき成功すればsucceededになる', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ common_user_id: 'cu_retry_route_test' }) }));
 
@@ -188,8 +187,7 @@ describe('管理API: order-linking-jobs手動再送・skip(本番安定化指示
   // ジョブは、既存のorder-linking-jobs管理API(一覧・手動再送)だけで運用できることの確認。
   it('common_user_id_conflictでblockedのジョブは一覧に表示され、管理者が手動再送できる', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const { agent } = await createAdminAgent(app);

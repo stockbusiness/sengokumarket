@@ -64,7 +64,10 @@ export interface SennokuniHubCredentials {
   baseUrl: string;
 }
 
-// 代理店HUB(common-users/resolve・referrals/capture・referrals/confirm)向けの認証情報。
+// 代理店HUB(referrals/capture・referrals/confirm)向けの旧HMAC認証情報。2026-10時点で
+// externalReferralClient.tsのみが使用する。代理店HUB(sengoku-ai.com)の実際の認証方式は
+// HMACではなく単純な1本のAPIキーであることが判明しており(getSennokuniAgencyHubApiCredentials
+// 参照)、この関数・呼び出し元は正しい契約に合わせた書き直しが別途必要(2026-10時点で未着手)。
 // いずれか未設定ならnull(呼び出し側は「環境未設定」として安全にスキップする)。
 export async function getSennokuniHubCredentials(): Promise<SennokuniHubCredentials | null> {
   const [keyId, secret, baseUrl] = await Promise.all([
@@ -74,6 +77,24 @@ export async function getSennokuniHubCredentials(): Promise<SennokuniHubCredenti
   ]);
   if (!keyId || !secret || !baseUrl) return null;
   return { keyId, secret, baseUrl: baseUrl.replace(/\/+$/, '') };
+}
+
+export interface SennokuniAgencyHubApiCredentials {
+  apiKey: string;
+  baseUrl: string;
+}
+
+// 代理店HUB(sengoku-ai.com)向けの正しい認証情報(2026-10に先方の開発者向けガイドで確認)。
+// x-api-keyヘッダー1本のみで、common-users/resolve・referrals/capture・referrals/confirm・
+// integrations/eventsいずれも同じキーを使う(キーに紐づくスコープで権限を分ける方式)。
+// 現状はresolveCommonUserId(externalCommonUserClient.ts)のみがこれを使う。
+export async function getSennokuniAgencyHubApiCredentials(): Promise<SennokuniAgencyHubApiCredentials | null> {
+  const [apiKey, baseUrl] = await Promise.all([
+    getSetting('sennokuni_agency_hub_api_key'),
+    getSetting('sennokuni_agency_hub_base_url'),
+  ]);
+  if (!apiKey || !baseUrl) return null;
+  return { apiKey, baseUrl: baseUrl.replace(/\/+$/, '') };
 }
 
 export interface OveWalletCredentials {

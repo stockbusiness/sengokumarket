@@ -19,11 +19,18 @@ export const SETTING_KEYS = [
   'bank_transfer_enabled',
   'bank_transfer_info',
   // 仕様書外の拡張(千ノ国全体連携 共通インターフェース契約v1.1 DRAFT・2026-07-22指示書対応):
-  // 代理店HUB(common_user resolve・referral capture/confirm)向けのHMAC認証情報・接続先。
+  // 代理店HUB(common_user resolve・referral capture/confirm)向けの接続先。
   // 実送信自体はSENNOKUNI_INTEGRATION_ENABLED環境変数がtrueの場合のみ行われる(既定OFF)。
   'sennokuni_agency_hub_base_url',
+  // sennokuni_hmac_key_id/sennokuni_hmac_secretはHMAC方式を前提に用意していたが、代理店HUB
+  // (sengoku-ai.com)の実際の認証方式は単純な1本のAPIキー(x-api-keyヘッダー、スコープは
+  // 発行済みキーに紐づく)であることが先方の開発者向けガイドで判明した(2026-10)。
+  // externalReferralClient.ts(referral capture/confirm)は旧HMAC実装のまま残っているため
+  // この2キーも後方互換のため残すが、新規の接続(common_user resolve)はsennokuni_hmac_*ではなく
+  // 下記のsennokuni_agency_hub_api_keyを使う。
   'sennokuni_hmac_key_id',
   'sennokuni_hmac_secret',
+  'sennokuni_agency_hub_api_key',
   // 仕様書外の拡張: Outbox dispatcherが送信先ごとに参照する接続先URL(未設定の送信先はスキップする)。
   'integration_endpoint_sengoku_passport',
   'integration_endpoint_ai_art_school',

@@ -1,5 +1,4 @@
 import { prisma } from '../lib/prisma';
-import { signSennokuniRequest } from '../lib/sennokuniHmac';
 import { signOveWalletRequest } from '../lib/oveWalletHmac';
 import { getSetting, type SettingKey } from './settings';
 import {
@@ -25,7 +24,7 @@ export interface SettingCheckResult {
 }
 
 export interface HmacSelfTestResult {
-  target: 'sennokuni' | 'ove-wallet';
+  target: 'ove-wallet';
   configured: boolean;
   passed: boolean | null; // configured=falseの場合はnull(判定不能)
 }
@@ -121,9 +120,11 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
   const usedDestinations = await getUsedDestinations();
 
   const settingChecks: SettingCheckResult[] = [
-    // sennokuni hub: 送信先設定に関わらず常に必須(common_user resolve・referral capture/confirm)。
-    await checkSetting('sennokuni_hmac_key_id', 'secret'),
-    await checkSetting('sennokuni_hmac_secret', 'secret'),
+    // sennokuni hub: 送信先設定に関わらず常に必須(common_user resolve)。2026-10判明の正しい
+    // 認証方式(x-api-key)に合わせ、sennokuni_hmac_*ではなくsennokuni_agency_hub_api_keyを
+    // 必須とする(sennokuni_hmac_*はreferral capture/confirmの旧実装専用で、まだ正しい契約に
+    // 書き直されていないためここでは必須に含めない)。
+    await checkSetting('sennokuni_agency_hub_api_key', 'secret'),
     await checkSetting('sennokuni_agency_hub_base_url', 'url'),
   ];
   if (usedDestinations.includes('sengoku-passport')) {
@@ -148,19 +149,10 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
 
   // 11.2「HMAC test vector」: 正式な相互テストベクトルは統合責任者確定前のため(sennokuniHmac.ts
   // 冒頭コメント参照)、ここでは「設定された鍵で決定論的に正しい形式(64桁16進)の署名を
-  // 生成できるか」という自己診断にとどめる(secret未設定ならnull=判定不能)。
-  const sennokuniSecret = await getSetting('sennokuni_hmac_secret');
-  const sennokuniKeyId = await getSetting('sennokuni_hmac_key_id');
-  const hmacSelfTests: HmacSelfTestResult[] = [
-    {
-      target: 'sennokuni',
-      configured: Boolean(sennokuniSecret && sennokuniKeyId),
-      passed:
-        sennokuniSecret && sennokuniKeyId
-          ? selfTestSennokuniHmac(sennokuniKeyId, sennokuniSecret)
-          : null,
-    },
-  ];
+  // 生成できるか」という自己診断にとどめる(secret未設定ならnull=判定不能)。代理店HUB
+  // (sennokuni_agency_hub_api_key)はHMACではなく単純なAPIキーのため自己診断の対象外
+  // (診断できる暗号処理が無い)。
+  const hmacSelfTests: HmacSelfTestResult[] = [];
   if (oveWalletRewardInUse) {
     const oveSecret = await getSetting('ove_wallet_hmac_secret');
     hmacSelfTests.push({
@@ -217,13 +209,6 @@ export async function buildIntegrationPreflightReport(): Promise<IntegrationPref
     walletClaimFlagInconsistentRuleCount,
     readyForActivation,
   };
-}
-
-function selfTestSennokuniHmac(keyId: string, secret: string): boolean {
-  const input = { keyId, timestamp: '1700000000', nonce: 'preflight-self-test-nonce', method: 'POST', path: '/preflight-self-test', rawBody: '{}' };
-  const a = signSennokuniRequest({ ...input, secret });
-  const b = signSennokuniRequest({ ...input, secret });
-  return a === b && /^[0-9a-f]{64}$/.test(a);
 }
 
 function selfTestOveWalletHmac(secret: string): boolean {

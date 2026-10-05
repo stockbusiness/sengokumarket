@@ -5,8 +5,7 @@ import { setSennokuniIntegrationStageSetting } from './sennokuniIntegrationConfi
 import { buildIntegrationPreflightReport } from './integrationPreflight';
 
 const ALL_SETTING_KEYS = [
-  'sennokuni_hmac_key_id',
-  'sennokuni_hmac_secret',
+  'sennokuni_agency_hub_api_key',
   'sennokuni_agency_hub_base_url',
   'integration_endpoint_sengoku_passport',
   'integration_endpoint_path_sengoku_passport',
@@ -53,7 +52,7 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
     const report = await buildIntegrationPreflightReport();
     expect(report.usedDestinations).toEqual([]);
     const requiredKeys = report.settingChecks.map((c) => c.key);
-    expect(requiredKeys).toEqual(['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url']);
+    expect(requiredKeys).toEqual(['sennokuni_agency_hub_api_key', 'sennokuni_agency_hub_base_url']);
     expect(report.missingSettings).toEqual(requiredKeys);
     expect(report.readyForActivation).toBe(false);
   });
@@ -86,8 +85,7 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
   });
 
   it('URL形式が不正な設定はinvalidFormatSettingsに含まれる', async () => {
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'not-a-valid-url');
 
     const report = await buildIntegrationPreflightReport();
@@ -106,24 +104,6 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
 
     const report = await buildIntegrationPreflightReport();
     expect(report.invalidFormatSettings).toContain('integration_endpoint_path_sengoku_passport');
-  });
-
-  it('HMAC自己診断: secretが設定されていれば決定論的な64桁16進の署名を生成できるかを確認する', async () => {
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
-    await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
-
-    const report = await buildIntegrationPreflightReport();
-    const sennokuniTest = report.hmacSelfTests.find((t) => t.target === 'sennokuni')!;
-    expect(sennokuniTest.configured).toBe(true);
-    expect(sennokuniTest.passed).toBe(true);
-  });
-
-  it('HMAC自己診断: secret未設定の場合はnull(判定不能)になる', async () => {
-    const report = await buildIntegrationPreflightReport();
-    const sennokuniTest = report.hmacSelfTests.find((t) => t.target === 'sennokuni')!;
-    expect(sennokuniTest.configured).toBe(false);
-    expect(sennokuniTest.passed).toBeNull();
   });
 
   it('ove-walletが使用中の場合のみove-walletのHMAC自己診断を行う', async () => {
@@ -217,8 +197,7 @@ describe('integrationPreflight(本番安定化指示書Stage8)', () => {
   });
 
   it('すべての必須設定・形式・HMAC自己診断が揃うとreadyForActivation=trueになる', async () => {
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const report = await buildIntegrationPreflightReport();
