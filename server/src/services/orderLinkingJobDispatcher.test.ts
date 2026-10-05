@@ -330,9 +330,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   describe('referral_capture job', () => {
     it('referralCodeがある注文はcapture APIを呼びreferralSessionKeyを保存する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0099' });
@@ -342,10 +340,10 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              status: 'captured',
+              ok: true,
               canonical_referral_token: 'rt_test',
               referral_session_key: 'rs_test_job',
-              agency_id: 'AGENT-CODE-JOB',
+              agent_id: 'AGENT-CODE-JOB',
               expires_at: null,
             }),
         }),
@@ -380,9 +378,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   describe('referral_confirm_purchase job(残課題指示書Stage5)', () => {
     it('referralSessionKey・commonUserIdが揃っていればconfirm APIを呼び代理店4役を保存する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0097' });
@@ -396,12 +392,14 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              status: 'confirmed',
+              ok: true,
               common_user_id: `cu_${emailSuffix}_confirm_purchase`,
-              registration_referrer_agency_id: 'AGENT-CODE-001',
-              assigned_agency_id: 'AGENT-CODE-002',
-              sales_agent_id: 'AGENT-CODE-003',
-              closing_agent_id: 'AGENT-CODE-004',
+              transaction: {
+                registration_referrer_agency_id: 'AGENT-CODE-001',
+                assigned_agency_id: 'AGENT-CODE-002',
+                sales_agent_id: 'AGENT-CODE-003',
+                closing_agent_id: 'AGENT-CODE-004',
+              },
             }),
         }),
       );
@@ -420,9 +418,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     // 本番安定化指示書Stage9(12.3「confirm結果検証」)。
     it('confirmレスポンスのcommon_user_idが送信値と一致しない場合は成功扱いにせず再試行になる', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0097-mismatch' });
@@ -436,12 +432,14 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              status: 'confirmed',
+              ok: true,
               common_user_id: `cu_${emailSuffix}_different_from_sent`,
-              registration_referrer_agency_id: 'AGENT-CODE-001',
-              assigned_agency_id: 'AGENT-CODE-002',
-              sales_agent_id: 'AGENT-CODE-003',
-              closing_agent_id: 'AGENT-CODE-004',
+              transaction: {
+                registration_referrer_agency_id: 'AGENT-CODE-001',
+                assigned_agency_id: 'AGENT-CODE-002',
+                sales_agent_id: 'AGENT-CODE-003',
+                closing_agent_id: 'AGENT-CODE-004',
+              },
             }),
         }),
       );
@@ -506,9 +504,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('blockedになったジョブは依存解決後の再ディスパッチで自動的に処理される(依存解決後にpendingへ戻る運用の実質)', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0093' });
@@ -532,12 +528,14 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
           ok: true,
           json: () =>
             Promise.resolve({
-              status: 'confirmed',
+              ok: true,
               common_user_id: `cu_${emailSuffix}_now_ready`,
-              registration_referrer_agency_id: null,
-              assigned_agency_id: null,
-              sales_agent_id: null,
-              closing_agent_id: null,
+              transaction: {
+                registration_referrer_agency_id: null,
+                assigned_agency_id: null,
+                sales_agent_id: null,
+                closing_agent_id: null,
+              },
             }),
         }),
       );
@@ -622,11 +620,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   // referral_confirm_purchaseが同じバッチで成功できる。
   it('job_type優先順位: common_user_resolveがreferral_confirm_purchaseより先に同一バッチ内で処理される', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    // common_user_resolveはsennokuni_agency_hub_api_key、referral_confirm_purchaseは
-    // まだ旧HMAC実装(externalReferralClient.ts)のsennokuni_hmac_*を使う。両方必要。
     await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const user = await createUser();
@@ -646,12 +640,14 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            status: 'confirmed',
+            ok: true,
             common_user_id: `cu_${emailSuffix}_priority`,
-            registration_referrer_agency_id: null,
-            assigned_agency_id: null,
-            sales_agent_id: null,
-            closing_agent_id: null,
+            transaction: {
+              registration_referrer_agency_id: null,
+              assigned_agency_id: null,
+              sales_agent_id: null,
+              closing_agent_id: null,
+            },
           }),
       });
     });

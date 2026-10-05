@@ -265,10 +265,25 @@ async function runReferralCaptureJob(job: OrderLinkingJob): Promise<void> {
   if (!order) return;
   if (!order.referralCode) return;
 
-  const captured = await captureReferralToken(order.id, order.referralCode);
+  const captured = await captureReferralToken(order.referralCode);
   if (!captured) throw new Error('referral capture failed or returned no result');
 
   await prisma.order.update({ where: { id: order.id }, data: { referralSessionKey: captured.referralSessionKey } });
+}
+
+// referral confirmのproduct_codeは任意項目のため、一意に決められる場合のみ送る。注文に複数の
+// 商品が含まれる場合や、商品にproduct_integration_rules.product_codeが設定されていない場合は
+// nullを返す(その場合confirmReferral側でproduct_codeを省略してもtransaction自体は作成される)。
+async function resolveSingleProductCode(orderId: string): Promise<string | null> {
+  const items = await prisma.orderItem.findMany({ where: { orderId }, select: { productId: true } });
+  const distinctProductIds = [...new Set(items.map((item) => item.productId))];
+  if (distinctProductIds.length !== 1) return null;
+
+  const rule = await prisma.productIntegrationRule.findFirst({
+    where: { productId: distinctProductIds[0], productCode: { not: null } },
+    select: { productCode: true },
+  });
+  return rule?.productCode ?? null;
 }
 
 // 残課題指示書Stage5: 決済確定(applyPaidOrderSideEffects)と同一トランザクションでenqueueされる。
@@ -289,7 +304,9 @@ async function runReferralConfirmPurchaseJob(job: OrderLinkingJob): Promise<void
     orderId: order.id,
     referralSessionKey: order.referralSessionKey,
     commonUserId: order.commonUserId,
-    event: 'purchase',
+    externalUserId: order.userId,
+    productCode: await resolveSingleProductCode(order.id),
+    amountJpy: order.totalAmount,
   });
   if (!confirmed) throw new Error('referral confirm failed or returned no result');
 

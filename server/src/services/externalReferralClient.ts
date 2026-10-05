@@ -1,8 +1,14 @@
-import crypto from 'crypto';
-import { isSennokuniIntegrationEnabled, getSennokuniHubCredentials } from './sennokuniIntegrationConfig';
-import { buildSennokuniHeaders } from '../lib/sennokuniHmac';
+import { isSennokuniIntegrationEnabled, getSennokuniAgencyHubApiCredentials } from './sennokuniIntegrationConfig';
 
-const SYSTEM_KEY = 'sengoku-market';
+// 代理店HUB(sengoku-ai.com)向けreferral capture/confirmクライアント。2026-10に先方の開発者向け
+// ガイド・個別確認で判明した実際の契約(x-api-key認証、system_key='sengoku-rr'(サイト識別子)・
+// project_key='sengoku-market'(戦国マーケット全体で1つの導線として固定)・agent_id/agency_idの
+// フィールド名)に合わせて書き直したもの。このシステムの`referral_links.code`を代理店HUBの
+// canonical_referral_tokenへ変換する。Feature Flag無効、または接続情報未設定の場合は即座にnull
+// (呼び出し側は既存どおりreferral_links.codeのみでの解決を続ける。既存の紹介・報酬フローには
+// 一切影響しない)。
+const SYSTEM_KEY = 'sengoku-rr';
+const PROJECT_KEY = 'sengoku-market';
 const CAPTURE_PATH = '/api/referrals/capture';
 const CONFIRM_PATH = '/api/referrals/confirm';
 const FETCH_TIMEOUT_MS = 8000;
@@ -10,44 +16,23 @@ const FETCH_TIMEOUT_MS = 8000;
 export interface CaptureReferralResult {
   canonicalReferralToken: string;
   referralSessionKey: string;
-  agencyId: string;
+  agentId: string;
   expiresAt: string | null;
 }
 
-// referral_token capture(共通契約v1.1 DRAFT 5章 / 2026-07-22指示書対応)。
-// このシステムの`referral_links.code`を代理店HUBのcanonical_referral_tokenへ変換する。
-// Feature Flag無効、または接続情報未設定の場合は即座にnull(呼び出し側は既存どおり
-// referral_links.codeのみでの解決を続ける。既存の紹介・報酬フローには一切影響しない)。
-export async function captureReferralToken(orderId: string, rawRefValue: string): Promise<CaptureReferralResult | null> {
+export async function captureReferralToken(rawRefValue: string): Promise<CaptureReferralResult | null> {
   if (!isSennokuniIntegrationEnabled()) return null;
 
-  const credentials = await getSennokuniHubCredentials();
+  const credentials = await getSennokuniAgencyHubApiCredentials();
   if (!credentials) return null;
 
-  const method = 'POST';
-  const rawBody = JSON.stringify({ system_key: SYSTEM_KEY, token: rawRefValue });
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const nonce = crypto.randomBytes(16).toString('hex');
-  // 本番安定化指示書Stage5(8.2): 同じ注文に対する再試行が外部側で重複captureとならないよう、
-  // 固定のIdempotency-Keyを送る。
-  const idempotencyKey = `referral-capture:${orderId}`;
-  const headers = buildSennokuniHeaders({
-    keyId: credentials.keyId,
-    secret: credentials.secret,
-    timestamp,
-    nonce,
-    method,
-    path: CAPTURE_PATH,
-    rawBody,
-    eventVersion: '1.0',
-    idempotencyKey,
-  });
+  const rawBody = JSON.stringify({ system_key: SYSTEM_KEY, referral_token: rawRefValue });
 
   let res: Response;
   try {
     res = await fetch(`${credentials.baseUrl}${CAPTURE_PATH}`, {
-      method,
-      headers,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': credentials.apiKey },
       body: rawBody,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -62,19 +47,19 @@ export async function captureReferralToken(orderId: string, rawRefValue: string)
   }
 
   const json = (await res.json().catch(() => null)) as {
-    status?: unknown;
+    ok?: unknown;
     canonical_referral_token?: unknown;
     referral_session_key?: unknown;
-    agency_id?: unknown;
+    agent_id?: unknown;
     expires_at?: unknown;
   } | null;
 
   if (
     !json ||
-    json.status !== 'captured' ||
+    json.ok !== true ||
     typeof json.canonical_referral_token !== 'string' ||
     typeof json.referral_session_key !== 'string' ||
-    typeof json.agency_id !== 'string'
+    (typeof json.agent_id !== 'string' && typeof json.agent_id !== 'number')
   ) {
     return null;
   }
@@ -82,7 +67,7 @@ export async function captureReferralToken(orderId: string, rawRefValue: string)
   return {
     canonicalReferralToken: json.canonical_referral_token,
     referralSessionKey: json.referral_session_key,
-    agencyId: json.agency_id,
+    agentId: String(json.agent_id),
     expiresAt: typeof json.expires_at === 'string' ? json.expires_at : null,
   };
 }
@@ -91,7 +76,14 @@ export interface ConfirmReferralInput {
   orderId: string;
   referralSessionKey: string;
   commonUserId: string;
-  event: 'registration' | 'purchase';
+  // 代理店HUB側のユーザー解決に使うこのシステムのuser.id。ゲスト購入等でuserIdが無い注文では
+  // 省略する(common_user_idだけでも紹介関係・transactionの確定は行える)。
+  externalUserId?: string | null;
+  // product_integration_rules.product_codeから解決した値。注文内の商品構成からは一意に
+  // 決められない場合(複数商品・ルール未設定等)はnull(その場合product_codeは送らない。
+  // 必須項目ではないため、省略してもtransaction自体は作成される)。
+  productCode?: string | null;
+  amountJpy: number;
 }
 
 export interface ConfirmReferralResult {
@@ -102,46 +94,38 @@ export interface ConfirmReferralResult {
   closingAgentId: string | null;
 }
 
-// referral confirm(共通契約v1.1 DRAFT 5章)。capture済みのreferral_session_keyとcommon_user_id
-// を紐付け、代理店4役(registration_referrer/assigned/sales/closing)を確定させる。
+// referral confirm。capture済みのreferral_session_keyとcommon_user_idを紐付け、注文を
+// transactionとして確定させる。代理店4役(registration_referrer/assigned/sales/closing)は
+// 先方への個別確認(2026-10)により、レスポンス直下ではなくtransaction配下に入ることが判明した。
+// registration_referrer_agency_idは紹介トークンから自動設定されるため送らない。assigned_agency_id
+// も未指定時は紹介元代理店が自動的に入るため送らない。sales_agent_id/closing_agent_idは
+// このシステム側に販売担当・クロージング担当を別管理する仕組みが無いため現状送らない
+// (将来その仕組みができた場合はここから明示的に送る)。
 // Feature Flag無効・接続情報未設定時はnull(既存フローには影響しない)。
 export async function confirmReferral(input: ConfirmReferralInput): Promise<ConfirmReferralResult | null> {
   if (!isSennokuniIntegrationEnabled()) return null;
 
-  const credentials = await getSennokuniHubCredentials();
+  const credentials = await getSennokuniAgencyHubApiCredentials();
   if (!credentials) return null;
 
-  const method = 'POST';
   const rawBody = JSON.stringify({
     system_key: SYSTEM_KEY,
-    referral_session_key: input.referralSessionKey,
+    session_key: input.referralSessionKey,
+    external_user_id: input.externalUserId ?? undefined,
+    project_key: PROJECT_KEY,
     common_user_id: input.commonUserId,
-    event: input.event,
-  });
-  const timestamp = String(Math.floor(Date.now() / 1000));
-  const nonce = crypto.randomBytes(16).toString('hex');
-  // 本番安定化指示書Stage5(8.2): 同じ注文に対する再試行が外部側で重複confirmとならないよう、
-  // 固定のIdempotency-Keyを送る。このシステムはevent=purchaseのconfirmのみ発行する
-  // (registration confirmのjob typeは未実装。将来追加する場合はreferral-confirm-registration:
-  // <user_id>形式にする)。
-  const idempotencyKey = `referral-confirm-purchase:${input.orderId}`;
-  const headers = buildSennokuniHeaders({
-    keyId: credentials.keyId,
-    secret: credentials.secret,
-    timestamp,
-    nonce,
-    method,
-    path: CONFIRM_PATH,
-    rawBody,
-    eventVersion: '1.0',
-    idempotencyKey,
+    order_id: input.orderId,
+    product_code: input.productCode ?? undefined,
+    payment_status: 'paid',
+    amount: input.amountJpy,
+    currency: 'JPY',
   });
 
   let res: Response;
   try {
     res = await fetch(`${credentials.baseUrl}${CONFIRM_PATH}`, {
-      method,
-      headers,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': credentials.apiKey },
       body: rawBody,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
@@ -157,10 +141,7 @@ export async function confirmReferral(input: ConfirmReferralInput): Promise<Conf
 
   const json = (await res.json().catch(() => null)) as ConfirmReferralResponseBody | null;
 
-  // 購入後代理店システム連携実装指示書 6.8・8.2章「受理条件」: status='confirmed'を必須と
-  // しない(ok===trueを正とし、旧仕様のstatus='confirmed'のみの応答にも後方互換で対応する)。
-  const succeeded = json?.ok === true || json?.status === 'confirmed';
-  if (!json || !succeeded || typeof json.common_user_id !== 'string') {
+  if (!json || json.ok !== true || typeof json.common_user_id !== 'string') {
     return null;
   }
 
@@ -170,19 +151,19 @@ export async function confirmReferral(input: ConfirmReferralInput): Promise<Conf
   };
 }
 
-interface ConfirmReferralResponseBody {
-  ok?: unknown;
-  status?: unknown;
-  common_user_id?: unknown;
-  transaction?: unknown;
-  // 8.2章「互換期間はagency_id、relation、agency_relationsも返してよい」: 代理店4役は
-  // トップレベル(正式契約)・agency_assignment・relationのいずれかに入っている可能性がある。
-  agency_assignment?: Record<string, unknown>;
-  relation?: Record<string, unknown>;
+interface ConfirmReferralTransaction {
   registration_referrer_agency_id?: unknown;
   assigned_agency_id?: unknown;
   sales_agent_id?: unknown;
   closing_agent_id?: unknown;
+}
+
+interface ConfirmReferralResponseBody {
+  ok?: unknown;
+  common_user_id?: unknown;
+  // order_id(今回は常に送信)がある場合にのみ作成される。無い場合は紹介関係の確定のみで
+  // transactionは空になりうる(先方の2026-10回答より)。
+  transaction?: ConfirmReferralTransaction;
 }
 
 function extractAgencyRoleFields(json: ConfirmReferralResponseBody): {
@@ -191,15 +172,10 @@ function extractAgencyRoleFields(json: ConfirmReferralResponseBody): {
   salesAgentId: string | null;
   closingAgentId: string | null;
 } {
-  const sources = [json, json.agency_assignment, json.relation].filter(
-    (s): s is Record<string, unknown> => typeof s === 'object' && s !== null,
-  );
-  function pick(key: string): string | null {
-    for (const source of sources) {
-      const value = source[key];
-      if (typeof value === 'string') return value;
-    }
-    return null;
+  const t = json.transaction;
+  function pick(key: keyof ConfirmReferralTransaction): string | null {
+    const value = t?.[key];
+    return typeof value === 'string' ? value : null;
   }
   return {
     registrationReferrerAgencyId: pick('registration_referrer_agency_id'),
