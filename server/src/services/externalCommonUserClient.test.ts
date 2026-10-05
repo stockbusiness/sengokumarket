@@ -73,7 +73,7 @@ describe('externalCommonUserClient(代理店HUB common_user_id解決)', () => {
     expect(result).toEqual({ commonUserId: 'cu_test_00000001' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
-    expect(url).toBe('https://sengoku-ai.com/api/common-users/resolve');
+    expect(url).toBe('https://sengoku-ai.com/api/common-users/resolve/');
     expect(options.method).toBe('POST');
     expect(options.headers['x-api-key']).toBe('api-key-abc');
     expect(options.headers['Content-Type']).toBe('application/json');

@@ -3,7 +3,10 @@ import { isSennokuniIntegrationEnabled, getSennokuniAgencyHubApiCredentials } fr
 // 代理店HUB(sengoku-ai.com)側でこのシステムを識別するsite_key(先方の開発者向けガイドで
 // 指定された固定値)。千ノ国ウォレット向けのsource_system_key('sengoku-market')とは別物。
 const SYSTEM_KEY = 'sengoku-rr';
-const RESOLVE_PATH = '/api/common-users/resolve';
+// 2026-10の先方確認: 末尾スラッシュ無しだと301で末尾スラッシュ付きURLへリダイレクトされ、
+// その際にPOSTがGETへ変わってしまう(fetchは301/302リダイレクトでPOSTをGETに変える仕様)ため
+// 404に見える。リダイレクトを発生させないよう、最初から末尾スラッシュ付きで直接呼ぶ。
+const RESOLVE_PATH = '/api/common-users/resolve/';
 const FETCH_TIMEOUT_MS = 8000;
 
 export interface ResolveCommonUserInput {

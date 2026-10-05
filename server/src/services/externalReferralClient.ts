@@ -9,8 +9,12 @@ import { isSennokuniIntegrationEnabled, getSennokuniAgencyHubApiCredentials } fr
 // 一切影響しない)。
 const SYSTEM_KEY = 'sengoku-rr';
 const PROJECT_KEY = 'sengoku-market';
-const CAPTURE_PATH = '/api/referrals/capture';
-const CONFIRM_PATH = '/api/referrals/confirm';
+// 2026-10の先方確認(common_user_id解決で実際に踏んだ不具合): 末尾スラッシュ無しだと301で
+// 末尾スラッシュ付きURLへリダイレクトされ、その際にPOSTがGETへ変わってしまう(fetchは301/302
+// リダイレクトでPOSTをGETに変える仕様)ため404に見える。capture/confirmも同じ基盤(sengoku-ai.com)
+// のため、最初から末尾スラッシュ付きで直接呼ぶ。
+const CAPTURE_PATH = '/api/referrals/capture/';
+const CONFIRM_PATH = '/api/referrals/confirm/';
 const FETCH_TIMEOUT_MS = 8000;
 
 export interface CaptureReferralResult {
