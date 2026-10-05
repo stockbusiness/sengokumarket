@@ -826,6 +826,15 @@
   background: var(--bg-elevated);
 }
 
+/* セル内の折り返しを止め、幅が入りきらない表は(折り返しで行が異常に縦長くなるのではなく)
+   .admin-content/.admin-table-cardのoverflow-x: autoで横スクロールさせる。折り返しを許すと
+   長いUUID・エラーメッセージを含む行だけ極端に縦長になり、横スクロールバーがページの
+   はるか下まで届かなくなる(操作不能に近い状態になる)ため。 */
+.admin-content table th,
+.admin-content table td {
+  white-space: nowrap;
+}
+
 /* テーブル/一覧をカードとして囲み、データが少なくても余白だけが伸びないようにする。
    列数が多い表(商品管理等)が画面幅を超えても右側の列が切れて操作不能にならないよう、
    縦方向(角丸)はhidden、横方向はスクロールできるようにする。 */
@@ -847,10 +856,11 @@
   margin-bottom: 0;
 }
 
-.admin-audit-body {
+.admin-content table td.admin-audit-body {
   max-width: 360px;
   font-family: monospace;
   font-size: 0.85em;
+  white-space: pre-wrap;
 }
 
 .admin-pagination {
