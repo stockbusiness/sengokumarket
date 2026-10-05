@@ -213,7 +213,6 @@ async function runCommonUserResolveJob(job: OrderLinkingJob): Promise<void> {
       externalUserId: user.id,
       name: user.name,
       email: user.email,
-      emailVerified: false,
       phone: user.phone,
     });
     if (!resolved) throw new Error('common_user_id resolve failed or returned no result');

@@ -80,17 +80,23 @@ const FIELDS: { key: keyof AdminSettings; label: string; helpText?: string; gene
     key: 'sennokuni_agency_hub_base_url',
     label: '代理店HUB接続先URL(共通ID解決・紹介キャプチャ/確認)',
     helpText:
-      '千ノ国ウォレットの会員証送信とは別の接続先です。共通ID(common_user_id)の解決や紹介トークンの連携に使われます。先方から共有を受けて入力してください。',
+      '千ノ国ウォレットとは別の接続先(sengoku-ai.com)です。共通ID(common_user_id)の解決や紹介トークンの連携に使われます。末尾にパスは付けません(例: https://sengoku-ai.com)。',
+  },
+  {
+    key: 'sennokuni_agency_hub_api_key',
+    label: '代理店HUB用 APIキー(共通ID解決)',
+    helpText:
+      '代理店HUB(sengoku-ai.com)が発行する、x-api-key方式の単一のAPIキーです(HMACのKey ID/Secretではありません)。先方の連携先一覧画面で発行された値を入力してください。',
   },
   {
     key: 'sennokuni_hmac_key_id',
-    label: '代理店HUB用 Key ID',
-    helpText: '上記URLへの接続に使うKey IDです。先方から発行される値を入力してください。',
+    label: '代理店HUB用 Key ID(紹介キャプチャ/確認用・旧実装)',
+    helpText: '紹介キャプチャ/確認(referral capture/confirm)がまだ旧HMAC実装のため残っています。共通ID解決には使われません。',
   },
   {
     key: 'sennokuni_hmac_secret',
-    label: '代理店HUB用 HMAC Secret',
-    helpText: '上記Key IDに対応するSecretです。先方から安全な方法で共有を受けて入力してください。',
+    label: '代理店HUB用 HMAC Secret(紹介キャプチャ/確認用・旧実装)',
+    helpText: '上記Key IDに対応するSecretです。共通ID解決には使われません。',
   },
 ];
 

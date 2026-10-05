@@ -68,7 +68,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     vi.unstubAllGlobals();
     process.env.SENNOKUNI_INTEGRATION_ENABLED = originalFlag;
     await prisma.setting.deleteMany({
-      where: { key: { in: ['sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url'] } },
+      where: { key: { in: ['sennokuni_agency_hub_api_key', 'sennokuni_hmac_key_id', 'sennokuni_hmac_secret', 'sennokuni_agency_hub_base_url'] } },
     });
     // 各テストが作成したジョブを都度片付け、他のテストのdispatch結果へ混入しないようにする。
     await prisma.orderLinkingJob.deleteMany({
@@ -110,8 +110,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     await processOrderLinkingJobs();
 
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     vi.stubGlobal(
       'fetch',
@@ -130,8 +129,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   it('時間予算(ORDER_LINKING_TIME_BUDGET_MS)を使い切っている場合は新規claimを行わない', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
     process.env.ORDER_LINKING_TIME_BUDGET_MS = '0';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -152,8 +150,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   describe('common_user_resolve job', () => {
     it('未解決ユーザーはresolve APIを呼びcommonUserIdを更新する(orderIdがあれば注文へも反映)', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -176,8 +173,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('既にcommonUserId解決済みのユーザーはAPIを呼ばずorderへ反映するのみ(即succeeded)', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser(`cu_${emailSuffix}_already_resolved`);
@@ -197,8 +193,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('外部API停止時(非2xx)はpendingへ戻りbackoffが設定され、再試行可能', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -217,8 +212,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('最大試行回数を超えるとdeadになる', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -235,8 +229,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     // 本番安定化指示書Stage9(12.1「ExternalIdentity」)。
     it('解決成功時、users.commonUserIdだけでなくexternal_identitiesへも保存する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -262,8 +255,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     // しない・conflict管理可能」)。
     it('既存external_identitiesと異なるcommon_user_idが返るとconflictでblockedになり、上書きしない', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -304,8 +296,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('conflictでblockedになったジョブは自動再評価の対象外になり、外部APIを再び呼ばない', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const user = await createUser();
@@ -339,6 +330,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   describe('referral_capture job', () => {
     it('referralCodeがある注文はcapture APIを呼びreferralSessionKeyを保存する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
       await setSetting('sennokuni_hmac_key_id', 'key-123');
       await setSetting('sennokuni_hmac_secret', 'secret-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
@@ -371,8 +363,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('captureが失敗した場合は再試行できる', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0098' });
@@ -389,6 +380,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   describe('referral_confirm_purchase job(残課題指示書Stage5)', () => {
     it('referralSessionKey・commonUserIdが揃っていればconfirm APIを呼び代理店4役を保存する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
       await setSetting('sennokuni_hmac_key_id', 'key-123');
       await setSetting('sennokuni_hmac_secret', 'secret-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
@@ -428,6 +420,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     // 本番安定化指示書Stage9(12.3「confirm結果検証」)。
     it('confirmレスポンスのcommon_user_idが送信値と一致しない場合は成功扱いにせず再試行になる', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
       await setSetting('sennokuni_hmac_key_id', 'key-123');
       await setSetting('sennokuni_hmac_secret', 'secret-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
@@ -472,8 +465,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
     // deadにならない」の直接検証)。
     it('referralSessionKeyが未解決(referral_captureが未完了)の間はblockedになりattempt_countを消費しない', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0096' });
@@ -494,8 +486,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('commonUserIdが未解決(common_user_resolveが未完了)の間はblockedになりattempt_countを消費しない', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0095' });
@@ -515,6 +506,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('blockedになったジョブは依存解決後の再ディスパッチで自動的に処理される(依存解決後にpendingへ戻る運用の実質)', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+      // referral capture/confirmはまだ旧HMAC実装(externalReferralClient.ts)のまま。
       await setSetting('sennokuni_hmac_key_id', 'key-123');
       await setSetting('sennokuni_hmac_secret', 'secret-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
@@ -558,8 +550,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('referralCodeが無い注文はconfirm APIを呼ばず即成功する', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: null });
@@ -574,8 +565,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
     it('confirmが失敗した場合は再試行できる', async () => {
       process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-      await setSetting('sennokuni_hmac_key_id', 'key-123');
-      await setSetting('sennokuni_hmac_secret', 'secret-abc');
+      await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
       await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
       const order = await createOrder({ referralCode: 'SGI0094' });
@@ -632,6 +622,9 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   // referral_confirm_purchaseが同じバッチで成功できる。
   it('job_type優先順位: common_user_resolveがreferral_confirm_purchaseより先に同一バッチ内で処理される', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
+    // common_user_resolveはsennokuni_agency_hub_api_key、referral_confirm_purchaseは
+    // まだ旧HMAC実装(externalReferralClient.ts)のsennokuni_hmac_*を使う。両方必要。
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_hmac_key_id', 'key-123');
     await setSetting('sennokuni_hmac_secret', 'secret-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
@@ -675,8 +668,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
   it('ORDER_LINKING_BATCH_LIMITで1回あたりのclaim件数を制限できる', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
     process.env.ORDER_LINKING_BATCH_LIMIT = '1';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const userA = await createUser();
@@ -708,8 +700,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
   it('二重処理防止: 同時に複数回claimしても1件のジョブは1回しか処理されない', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const user = await createUser();
@@ -724,8 +715,7 @@ describe('orderLinkingJobDispatcher(残課題指示書Stage4)', () => {
 
   it('triggerImmediateOrderLinkingDispatchは例外を投げない(呼び出し元を巻き込まない)', async () => {
     process.env.SENNOKUNI_INTEGRATION_ENABLED = 'true';
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('boom')));
 

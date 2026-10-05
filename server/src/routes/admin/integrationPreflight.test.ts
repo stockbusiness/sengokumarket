@@ -29,8 +29,7 @@ describe('管理API: 外部連携Preflight・段階(本番安定化指示書Stag
       where: {
         key: {
           in: [
-            'sennokuni_hmac_key_id',
-            'sennokuni_hmac_secret',
+            'sennokuni_agency_hub_api_key',
             'sennokuni_agency_hub_base_url',
             'sennokuni_integration_stage',
           ],
@@ -94,8 +93,7 @@ describe('管理API: 外部連携Preflight・段階(本番安定化指示書Stag
   });
 
   it('必須設定・HMAC自己診断が揃っていればproductionへ変更でき、監査ログに記録される', async () => {
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
 
     const { agent, userId } = await createAdminAgent(app);
@@ -136,8 +134,7 @@ describe('管理API: 外部連携Preflight・段階(本番安定化指示書Stag
       data: { productId: product.id, entitlementTargetSystemKey: 'ove-wallet', entitlementType: 'digital_collectible', assetCode: 'SGK-CARD-001', enabled: true },
     });
     // 基本のintegration-preflight(sennokuni hub・ove_reward向けove-wallet設定)は満たしておく。
-    await setSetting('sennokuni_hmac_key_id', 'key-123');
-    await setSetting('sennokuni_hmac_secret', 'secret-abc');
+    await setSetting('sennokuni_agency_hub_api_key', 'api-key-abc');
     await setSetting('sennokuni_agency_hub_base_url', 'https://agency-hub.example.com');
     await setSetting('ove_wallet_base_url', 'https://ove-wallet.example.com');
     await setSetting('ove_wallet_api_key_id', 'ove-key-123');

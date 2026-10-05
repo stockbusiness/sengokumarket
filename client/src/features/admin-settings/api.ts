@@ -30,6 +30,10 @@ export interface AdminSettings {
   sennokuni_agency_hub_base_url: AdminSettingInfo;
   sennokuni_hmac_key_id: AdminSettingInfo;
   sennokuni_hmac_secret: AdminSettingInfo;
+  // 2026-10: 代理店HUB(sengoku-ai.com)の実際の認証方式が単純な1本のAPIキー(x-api-key)と
+  // 判明したため追加。common_user resolveはこちらを使う(sennokuni_hmac_*はHMAC前提で
+  // 作られた旧実装で、referral capture/confirmのみが引き続き使用中)。
+  sennokuni_agency_hub_api_key: AdminSettingInfo;
 }
 
 export function fetchAdminSettings() {
