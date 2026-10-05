@@ -837,12 +837,16 @@
 
 /* テーブル/一覧をカードとして囲み、データが少なくても余白だけが伸びないようにする。
    列数が多い表(商品管理等)が画面幅を超えても右側の列が切れて操作不能にならないよう、
-   縦方向(角丸)はhidden、横方向はスクロールできるようにする。 */
+   横方向はスクロールできるようにする。
+   行数が多い表(Order Linking Jobs等)は、縦方向もページ全体ではなくこのカード自身の中で
+   スクロールさせる(max-height + overflow-y: auto)。ページ全体のスクロールに任せると、
+   横スクロールバーが表の最下部(ページのはるか下)にしか出ず、実質操作できなくなるため。 */
 .admin-table-card {
   border: 1px solid var(--border);
   border-radius: 12px;
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  max-height: 70vh;
   background: var(--bg-elevated);
   box-shadow: var(--shadow);
   margin: 16px 0;
@@ -850,6 +854,13 @@
 
 .admin-table-card table {
   margin: 0;
+}
+
+.admin-table-card thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+  z-index: 1;
 }
 
 .admin-table-card:last-child {
