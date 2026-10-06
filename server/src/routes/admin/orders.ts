@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { Router } from 'express';
 import { prisma } from '../../lib/prisma';
 import { sendError } from '../../lib/apiError';
@@ -58,11 +59,23 @@ function serializeOrder(order: {
   };
 }
 
+// 仕様書外の拡張: 注文番号・購入者名・メールアドレスでの検索。作成日時降順で全件返す
+// (既存の挙動)のみだと、古い注文を手探りで探すのが事実上不可能だったため追加する。
 router.get('/orders', async (req, res) => {
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : undefined;
   const { page, pageSize, skip, take } = parsePagination(req.query);
+  const where: Prisma.OrderWhereInput = search
+    ? {
+        OR: [
+          { orderNumber: { contains: search, mode: 'insensitive' as const } },
+          { customerName: { contains: search, mode: 'insensitive' as const } },
+          { customerEmail: { contains: search, mode: 'insensitive' as const } },
+        ],
+      }
+    : {};
   const [orders, total] = await Promise.all([
-    prisma.order.findMany({ orderBy: { createdAt: 'desc' }, skip, take }),
-    prisma.order.count(),
+    prisma.order.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }),
+    prisma.order.count({ where }),
   ]);
   res.json({ orders: orders.map(serializeOrder), total, page, pageSize });
 });
