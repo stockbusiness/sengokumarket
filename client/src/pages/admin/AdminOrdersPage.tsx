@@ -17,18 +17,26 @@ type StatusMessage = { type: 'success' | 'error'; text: string };
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [pageSize, setPageSize] = useState(50);
 
   function load() {
-    fetchAdminOrders(page).then((d) => {
+    fetchAdminOrders(page, { search: search || undefined }).then((d) => {
       setOrders(d.orders);
       setTotal(d.total);
       setPageSize(d.pageSize);
     });
   }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(load, [page]);
+
+  function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    setPage(1);
+    load();
+  }
 
   function notify(type: StatusMessage['type'], text: string) {
     setStatusMessage({ type, text });
@@ -75,12 +83,23 @@ export default function AdminOrdersPage() {
       >
         CSV出力
       </button>
+
+      <form className="admin-search-form" onSubmit={handleSearch}>
+        <label>
+          注文番号・購入者名・メールアドレス
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="SG-20260726-0001 など" />
+        </label>
+        <button type="submit" className="btn-secondary btn-small">
+          検索
+        </button>
+      </form>
+
       {statusMessage && (
         <p className={statusMessage.type === 'success' ? 'checkout-success' : 'checkout-error'}>{statusMessage.text}</p>
       )}
       {total === 0 ? (
         <div className="admin-table-card">
-          <EmptyState message="まだ注文がありません" />
+          <EmptyState message={search ? '該当する注文がありません' : 'まだ注文がありません'} />
         </div>
       ) : (
         <>

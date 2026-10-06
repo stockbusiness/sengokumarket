@@ -23,8 +23,14 @@ export interface AdminOrder {
   explainerMatched: boolean;
 }
 
-export function fetchAdminOrders(page: number) {
-  return adminFetch<{ orders: AdminOrder[]; total: number; page: number; pageSize: number }>(`/orders?page=${page}`);
+export interface OrderSearchFilters {
+  search?: string;
+}
+
+export function fetchAdminOrders(page: number, filters: OrderSearchFilters = {}) {
+  const q = new URLSearchParams({ page: String(page) });
+  if (filters.search) q.set('search', filters.search);
+  return adminFetch<{ orders: AdminOrder[]; total: number; page: number; pageSize: number }>(`/orders?${q.toString()}`);
 }
 
 export interface UpdateOrderRequest {

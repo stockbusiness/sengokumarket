@@ -336,3 +336,88 @@ describe('注文一覧のページネーション(仕様書外の拡張・保守
     expect(rowCount).toBeGreaterThanOrEqual(TOTAL_ORDERS);
   });
 });
+
+// 仕様書外の拡張: 注文番号・購入者名・メールアドレスでの検索(全件を作成日時降順で返すだけでは、
+// 古い注文をページをめくって手探りで探すしかなく事実上見つけられなかったため追加)。
+describe('注文一覧の検索(仕様書外の拡張)', () => {
+  const marker = `admin-orders-searchtest-${Date.now()}`;
+
+  beforeAll(async () => {
+    await prisma.order.create({
+      data: {
+        orderNumber: `SG-SEARCHTEST-${marker}`,
+        totalAmount: 1000,
+        originalAmount: 1000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: `検索太郎-${marker}`,
+        customerEmail: `search-${marker}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+    await prisma.order.create({
+      data: {
+        orderNumber: `SG-OTHERTEST-${marker}`,
+        totalAmount: 1000,
+        originalAmount: 1000,
+        paymentStatus: 'paid',
+        orderStatus: 'paid',
+        customerName: `無関係花子-${marker}`,
+        customerEmail: `other-${marker}@example.com`,
+        termsAgreedAt: new Date(),
+        termsVersion: '2026-07-01',
+      },
+    });
+  });
+
+  afterAll(async () => {
+    const orderIds = (
+      await prisma.order.findMany({ where: { customerEmail: { contains: marker } }, select: { id: true } })
+    ).map((o) => o.id);
+    await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
+    await prisma.$disconnect();
+  });
+
+  it('注文番号の一部で検索できる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/orders').query({ search: `SEARCHTEST-${marker}` }).set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.orders[0].orderNumber).toBe(`SG-SEARCHTEST-${marker}`);
+  });
+
+  it('購入者名の一部で検索できる', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent.get('/api/admin/orders').query({ search: `検索太郎-${marker}` }).set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.orders[0].orderNumber).toBe(`SG-SEARCHTEST-${marker}`);
+  });
+
+  it('メールアドレスの一部で検索でき、大文字小文字を区別しない', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .get('/api/admin/orders')
+      .query({ search: `SEARCH-${marker}`.toUpperCase() })
+      .set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toHaveLength(1);
+    expect(res.body.orders[0].orderNumber).toBe(`SG-SEARCHTEST-${marker}`);
+  });
+
+  it('該当しない検索語は0件を返す', async () => {
+    const { agent } = await createAdminAgent(app);
+    const res = await agent
+      .get('/api/admin/orders')
+      .query({ search: `no-such-order-${marker}` })
+      .set('Origin', TEST_ORIGIN);
+
+    expect(res.status).toBe(200);
+    expect(res.body.orders).toHaveLength(0);
+    expect(res.body.total).toBe(0);
+  });
+});
