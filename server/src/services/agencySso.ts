@@ -91,6 +91,13 @@ async function resolveOrProvisionAgency(sub: string, payload: jwt.JwtPayload): P
     return existing;
   }
 
+  // 診断用ログ(2026-10): 本来既存のはずの代理店が見つからない(= 先方のsubクレームが
+  // 以前と変わった等)場合、ここで新規作成されてしまう。原因切り分けのため記録する。
+  console.warn('agency SSO: no existing agency for externalId(sub); provisioning new', {
+    sub,
+    agencyNameClaim: stringClaim(payload, 'agency_name'),
+  });
+
   const agencyName = stringClaim(payload, 'agency_name') ?? sub;
   try {
     return await prisma.$transaction(async (tx) => {
@@ -114,6 +121,15 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
   const existing = await prisma.user.findFirst({ where: { agencyId: agency.id, role: 'agency' } });
   if (existing) return existing;
 
+  // 診断用ログ(2026-10): 本来既存のはずのログインアカウントが見つからない場合に、
+  // 先方トークンのクレーム有無を記録する(sub変化により新規agencyとして扱われた場合、
+  // ここに来てしまう)。
+  console.warn('agency SSO: no existing login user for agency; need actor_email/contact_email claim', {
+    agencyId: agency.id,
+    hasActorEmailClaim: Boolean(stringClaim(payload, 'actor_email')),
+    hasContactEmailClaim: Boolean(stringClaim(payload, 'contact_email')),
+  });
+
   const rawEmail = stringClaim(payload, 'actor_email') ?? stringClaim(payload, 'contact_email');
   if (!rawEmail) {
     throw new HttpError(401, 'agency_not_linked', 'ログイン用のメールアドレス情報がSSOトークンに含まれていません');
@@ -131,6 +147,13 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
     // それ以外(役割問わず別アカウント)は自動昇格させず、必ず連携API(login_email)経由の
     // 明示的な紐付けを要求する。SSOトークンのメールクレームだけを根拠に既存アカウントの
     // 権限を変更しない(未承認の権限昇格を避けるための保守的なデフォルト)。
+    console.error('agency SSO: claimed email already belongs to a different account', {
+      agencyId: agency.id,
+      claimedEmail: email,
+      existingUserId: existingByEmail.id,
+      existingUserRole: existingByEmail.role,
+      existingUserAgencyId: existingByEmail.agencyId,
+    });
     throw new HttpError(409, 'agency_not_linked', 'このメールアドレスは既に別のアカウントで使用されています');
   }
 
