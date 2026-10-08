@@ -175,6 +175,75 @@ describe('verifyAndConsumeAgencySsoToken(仕様書外の拡張・先方仕様書
     expect(user?.agencyId).toBeNull();
   });
 
+  it('既存の一般会員のメールアドレスが、代理店の連絡先メール(外部階層同期で取得済み)と一致する場合は自動的に代理店へ昇格する', async () => {
+    const agency = await prisma.agency.create({
+      data: {
+        name: 'agency-sso-test 連絡先一致代理店',
+        code: 'agency-sso-test-contact-match-code',
+        externalId: 'agency-sso-test-contact-match-code',
+        status: 'active',
+        defaultCommissionRate: 0,
+        contactEmail: 'agency-sso-test-contact-match@example.com',
+      },
+    });
+    const existingUser = await prisma.user.create({
+      data: {
+        name: 'agency-sso-test 一般会員(後に代理店申請予定)',
+        email: 'agency-sso-test-contact-match@example.com',
+        passwordHash: 'unused',
+        role: 'user',
+        agencyApplicationSubmittedAt: new Date(),
+      },
+    });
+
+    const { token, publicKey, kid } = await buildSignedToken({
+      sub: 'agency-sso-test-contact-match-code',
+      actor_email: 'agency-sso-test-contact-match@example.com',
+    });
+
+    stubJwks(publicKey, kid);
+    const result = await verifyAndConsumeAgencySsoToken(token);
+    expect(result.userId).toBe(existingUser.id);
+
+    const user = await prisma.user.findUnique({ where: { id: existingUser.id } });
+    expect(user?.role).toBe('agency');
+    expect(user?.agencyId).toBe(agency.id);
+    expect(user?.agencyApplicationSubmittedAt).toBeNull();
+  });
+
+  it('既存アカウントがadmin等の内部管理者ロールの場合は、連絡先メールが一致しても昇格させない', async () => {
+    await prisma.agency.create({
+      data: {
+        name: 'agency-sso-test 管理者衝突代理店',
+        code: 'agency-sso-test-admin-collision-code',
+        externalId: 'agency-sso-test-admin-collision-code',
+        status: 'active',
+        defaultCommissionRate: 0,
+        contactEmail: 'agency-sso-test-admin-collision@example.com',
+      },
+    });
+    await prisma.user.create({
+      data: {
+        name: 'agency-sso-test 管理者',
+        email: 'agency-sso-test-admin-collision@example.com',
+        passwordHash: 'unused',
+        role: 'admin',
+      },
+    });
+
+    const { token, publicKey, kid } = await buildSignedToken({
+      sub: 'agency-sso-test-admin-collision-code',
+      actor_email: 'agency-sso-test-admin-collision@example.com',
+    });
+
+    stubJwks(publicKey, kid);
+    await expect(verifyAndConsumeAgencySsoToken(token)).rejects.toMatchObject({ code: 'agency_not_linked' });
+
+    const user = await prisma.user.findUnique({ where: { email: 'agency-sso-test-admin-collision@example.com' } });
+    expect(user?.role).toBe('admin');
+    expect(user?.agencyId).toBeNull();
+  });
+
   it('同一subの新規SSOトークンが同時に処理されても代理店・アカウントは1件だけ作成され、両方ログイン成功する(競合状態)', async () => {
     const issuer = `https://sso-test-${crypto.randomUUID()}.example.com`;
     await setSetting('external_agency_system_base_url', issuer);
