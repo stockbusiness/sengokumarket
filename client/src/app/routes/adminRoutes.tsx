@@ -31,6 +31,7 @@ const AdminExternalIdentityConflictsPage = lazyWithReload(() => import('../../pa
 const AdminWalletTransactionsPage = lazyWithReload(() => import('../../pages/admin/AdminWalletTransactionsPage'));
 const AdminIntegrationPreflightPage = lazyWithReload(() => import('../../pages/admin/AdminIntegrationPreflightPage'));
 const AdminWalletClaimsPage = lazyWithReload(() => import('../../pages/admin/AdminWalletClaimsPage'));
+const AdminAgencySsoFailuresPage = lazyWithReload(() => import('../../pages/admin/AdminAgencySsoFailuresPage'));
 const AdminWalletClaimDetailPage = lazyWithReload(() => import('../../pages/admin/AdminWalletClaimDetailPage'));
 const AdminCollectibleDeliveriesPage = lazyWithReload(() => import('../../pages/admin/AdminCollectibleDeliveriesPage'));
 const AdminCollectibleDeliveryDetailPage = lazyWithReload(() => import('../../pages/admin/AdminCollectibleDeliveryDetailPage'));
@@ -202,6 +203,15 @@ export function adminRoutes() {
         element={
           <RequireFullAdmin>
             <AdminWalletClaimDetailPage />
+          </RequireFullAdmin>
+        }
+      />
+      {/* 仕様書外の拡張(2026-10・緊急障害対応): 代理店SSOログイン失敗ログ。 */}
+      <Route
+        path="agency-sso-failures"
+        element={
+          <RequireFullAdmin>
+            <AdminAgencySsoFailuresPage />
           </RequireFullAdmin>
         }
       />

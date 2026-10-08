@@ -264,6 +264,9 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
     // JITプロビジョニング(仕様書外の拡張)によりcodeは連番AGxxxで自動採番されるため、
     // codeではなくexternalIdで絞り込む(codeで絞ると自動作成された代理店が消えずに残る)。
     await prisma.agency.deleteMany({ where: { externalId: { contains: 'auth-route-sso-test' } } });
+    await prisma.agencySsoLoginFailureLog.deleteMany({
+      where: { detail: { path: ['sub'], equals: 'auth-route-sso-test-unlinked' } },
+    });
     await prisma.$disconnect();
   });
 
@@ -340,6 +343,17 @@ describe('POST /auth/agency-sso(仕様書外の拡張)', () => {
 
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('agency_not_linked');
+
+    // 仕様書外の拡張(2026-10・緊急障害対応): 失敗時にDBへ診断ログが残り、
+    // 管理画面(/admin/agency-sso-failures)から確認できること。
+    const log = await prisma.agencySsoLoginFailureLog.findFirst({
+      where: { detail: { path: ['sub'], equals: 'auth-route-sso-test-unlinked' } },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(log).toBeTruthy();
+    expect(log!.errorCode).toBe('agency_not_linked');
+    expect((log!.detail as Record<string, unknown>).hasActorEmailClaim).toBe(false);
+    expect((log!.detail as Record<string, unknown>).hasContactEmailClaim).toBe(false);
 
     vi.unstubAllGlobals();
   });

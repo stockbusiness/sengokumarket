@@ -237,3 +237,30 @@ export async function verifyAndConsumeAgencySsoToken(token: string): Promise<Age
 
   return { userId: user.id, returnTo: isSafeInternalPath(payload.return_to) ? payload.return_to : null };
 }
+
+// 仕様書外の拡張(2026-10・緊急障害対応): SSOログイン失敗をDBへ記録し、管理画面
+// (/admin/agency-sso-failures)からスマートフォンでも確認できるようにする。署名検証は
+// 行わず(失敗時に呼ばれるため検証は既に済んでいないことが多い)、クレームは表示用の
+// 参考情報として入れるのみ。rawトークン・署名そのものは保存しない。
+export async function recordAgencySsoLoginFailure(errorCode: string, token: string): Promise<void> {
+  const decoded = jwt.decode(token) as jwt.JwtPayload | null;
+  try {
+    await prisma.agencySsoLoginFailureLog.create({
+      data: {
+        errorCode,
+        detail: decoded
+          ? {
+              sub: typeof decoded.sub === 'string' ? decoded.sub : null,
+              iss: typeof decoded.iss === 'string' ? decoded.iss : null,
+              agencyNameClaim: stringClaim(decoded, 'agency_name'),
+              hasActorEmailClaim: Boolean(stringClaim(decoded, 'actor_email')),
+              hasContactEmailClaim: Boolean(stringClaim(decoded, 'contact_email')),
+            }
+          : Prisma.JsonNull,
+      },
+    });
+  } catch (e) {
+    // 診断ログの保存自体が失敗しても、本来のログインエラー応答は妨げない。
+    console.error('failed to record agency SSO login failure log', e);
+  }
+}

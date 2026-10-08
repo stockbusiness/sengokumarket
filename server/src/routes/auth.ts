@@ -8,7 +8,7 @@ import { setAuthCookie, clearAuthCookie } from '../lib/authCookie';
 import { isLocked, recordLoginFailure, recordLoginSuccess } from '../services/loginAttempts';
 import { requireAuth } from '../middleware/auth';
 import { consumePasswordResetToken } from '../services/passwordReset';
-import { verifyAndConsumeAgencySsoToken } from '../services/agencySso';
+import { verifyAndConsumeAgencySsoToken, recordAgencySsoLoginFailure } from '../services/agencySso';
 import { HttpError } from '../lib/httpError';
 import { enqueueCommonUserResolveJob } from '../services/orderLinkingJobs';
 import { dbRateLimit } from '../middleware/dbRateLimit';
@@ -166,7 +166,10 @@ router.post('/auth/agency-sso', agencySsoLimiter, async (req, res) => {
   try {
     result = await verifyAndConsumeAgencySsoToken(token);
   } catch (e) {
-    if (e instanceof HttpError) return sendError(res, e.status, e.code, e.message);
+    if (e instanceof HttpError) {
+      await recordAgencySsoLoginFailure(e.code, token);
+      return sendError(res, e.status, e.code, e.message);
+    }
     throw e;
   }
 
