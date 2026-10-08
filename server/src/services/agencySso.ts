@@ -144,9 +144,33 @@ async function resolveOrProvisionLoginUser(agency: Agency, payload: jwt.JwtPaylo
     if (existingByEmail.role === 'agency' && existingByEmail.agencyId === agency.id) {
       return existingByEmail;
     }
-    // それ以外(役割問わず別アカウント)は自動昇格させず、必ず連携API(login_email)経由の
-    // 明示的な紐付けを要求する。SSOトークンのメールクレームだけを根拠に既存アカウントの
-    // 権限を変更しない(未承認の権限昇格を避けるための保守的なデフォルト)。
+    // 仕様書外の拡張(2026-10・緊急障害対応): 先に一般会員として登録済みだが、マイページの
+    // 「代理店になる」申請を行っていないために連携されていないケースが実際に多数確認された
+    // (SSOのみを使い、こちらのマイページを訪れたことがない代理店担当者)。外部代理店システムの
+    // 階層同期(agencyHierarchySync.ts)で既に取得済みのagency.contactEmailと、今回の署名済み
+    // SSOトークンのメールクレームの両方が一致する場合に限り、外部システム側で既に本人確認済みの
+    // 情報と二重に一致しているとみなし、本人の申請操作を待たずに自動で代理店ロールへ昇格する。
+    // role='user'の会員のみを対象とし、admin/admin_viewer/staff等の内部管理者アカウントは
+    // 対象外とする(内部アカウントの権限が外部トークンの主張だけで変化することを防ぐ)。
+    const contactEmailVerified =
+      existingByEmail.role === 'user' &&
+      typeof agency.contactEmail === 'string' &&
+      normalizeEmail(agency.contactEmail) === email;
+
+    if (contactEmailVerified) {
+      console.warn('agency SSO: auto-linking existing user via matching agency contactEmail', {
+        agencyId: agency.id,
+        userId: existingByEmail.id,
+      });
+      return prisma.user.update({
+        where: { id: existingByEmail.id },
+        data: { role: 'agency', agencyId: agency.id, agencyApplicationSubmittedAt: null, sessionVersion: { increment: 1 } },
+      });
+    }
+
+    // それ以外(役割問わず別アカウント、またはcontactEmail不一致)は自動昇格させず、必ず連携API
+    // (login_email)経由の明示的な紐付けを要求する。SSOトークンのメールクレームだけを根拠に
+    // 既存アカウントの権限を変更しない(未承認の権限昇格を避けるための保守的なデフォルト)。
     console.error('agency SSO: claimed email already belongs to a different account', {
       agencyId: agency.id,
       claimedEmail: email,
