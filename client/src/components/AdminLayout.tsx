@@ -56,6 +56,7 @@ const NAV_GROUPS: {
       { to: '/admin/coupons', label: 'クーポン管理', icon: IconYen, staffHidden: true },
       { to: '/admin/referrals', label: '代理店・紹介成果', icon: IconChart, badgeKey: 'alerts', staffHidden: true },
       { to: '/admin/agencies', label: '代理店一覧', icon: IconBuilding, staffHidden: true },
+      { to: '/admin/agency-sso-failures', label: '代理店SSOログイン失敗ログ', icon: IconHistory, staffHidden: true },
     ],
   },
   {

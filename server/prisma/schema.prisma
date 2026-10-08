@@ -598,6 +598,19 @@ model WalletClaimAuditLog {
   @@map("wallet_claim_audit_logs")
 }
 
+// 仕様書外の拡張(2026-10・緊急障害対応): 代理店SSOログイン失敗の診断ログ。Vercelの
+// 実行ログは管理者がスマートフォンから確認しづらいため、管理画面(/admin/agency-sso-failures)
+// からも見られるようDBへ永続化する。agencyが特定できない失敗もあるためagencyへのFKは張らない。
+model AgencySsoLoginFailureLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  errorCode String   @map("error_code")
+  detail    Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("agency_sso_login_failure_logs")
+}
+
 // 戦国マーケット NFTカード受取・送付 実装指示書(2026-07-25)8章: Claim確認APIのHMAC認証で
 // 使うnonceのリプレイ防止用記録。wallet_verification_noncesは会員自身のpersonal_sign用で
 // 用途が異なるため分離する(このテーブルは千ノ国ウォレット側が生成したnonceを記録するのみで、
